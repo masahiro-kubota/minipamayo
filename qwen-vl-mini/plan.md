@@ -112,10 +112,15 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
   - 学習率: 2e-5（全パラメータ共通。DINOv2 の特徴崩壊が見られたら layer-wise lr decay を検討）
   - スケジューラ: cosine with warmup
   - micro-batch=1, grad_accum=16
-  - エポック: 1
+  - エポック: 1（最大 2。**3 エポック以上は過学習リスク** — Imp 知見）
   - bf16 mixed precision
   - gradient checkpointing ON（DINOv2 + LLM）
   - AdamW (β1=0.9, β2=0.95)
+- [ ] **チェックポイントを 25 ステップごとに保存**（SmolVLM 知見: 最適点は訓練終了時とは限らない）
+- [ ] **訓練不安定時の段階的対策**:
+  1. まず全解凍で試行
+  2. 発散したら DINOv2 の後半 6 層のみ解凍（TinyLLaVA Share recipe）
+  3. それでも不安定なら LoRA rank=256 を LLM に適用（Imp, Idefics2 知見）
 - [ ] wandb ロギング
 
 ### 3.3 Adapter トークン圧縮（推奨）
@@ -128,6 +133,10 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
 - [ ] **方式 B: Cross-Attention Pooling**
   - learnable query 16 個、DINOv2 パッチ特徴を key/value
   - 256 → 16 トークン。最も圧縮率が高い
+- [ ] **方式 C: Pixel Shuffle r=4**（SmolVLM 推奨）
+  - Space-to-Depth 変換で空間特徴をチャネル方向に再配置 → MLP で射影
+  - 256 → 16 トークン。**~500M モデルでは r=4 が最適**（SmolVLM 知見）
+  - パラメータフリーで実装が容易
 - [ ] 圧縮ありと圧縮なしの性能比較
 - [ ] トークン圧縮を変更した場合、Stage 1 からやり直す必要あり
 
@@ -184,3 +193,26 @@ Phase 3 (Stage 2: Visual Instruction Tuning — DINOv2 + Adapter + LLM)
 | Stage 2 で LLM のテキスト能力が劣化 | 一般的な言語能力の喪失 | 学習率を小さく保つ、テキストのみのデータも混合 |
 | 256 ビジョントークンが LLM に多すぎる | 計算コスト増、性能低下 | トークン圧縮（隣接4パッチグループ化 or Cross-Attention Pooling） |
 | DINOv2 にテキスト対応がない（CLIP と異なる） | Adapter の学習負担が大きい | Stage 1 で十分な学習を行う。学習率やデータ量の調整で対応 |
+
+---
+
+## 小規模 VLM 論文からの注意事項
+
+詳細は [小規模 VLM 構築の知見まとめ](../small-vlm-research.md) を参照。実装時に特に注意すべき点:
+
+### アーキテクチャ（Phase 1）
+
+1. **Adapter は 2 層 MLP を維持**: TinyLLaVA で MLP > Resampler が確認済み。COMM 論文で DINOv2 には 2 層以上の MLP が必須
+2. **トークン圧縮は Pixel Shuffle r=4 を第一候補に**: SmolVLM で ~500M モデルには r=4（16 倍圧縮）が最適と報告。256→16 トークンで Attention オーバーヘッドを大幅削減
+3. **ViT-LLM サイズバランスは適切**: DINOv2 86M + Qwen2.5-0.5B 494M（エンコーダ比率 ~15%）は SmolVLM-500M と同等
+
+### Stage 1: Feature Alignment（Phase 2）
+
+4. **DINOv2 はフローズンで正しい**: DINOv2 の汎用特徴は高品質。Stage 1 では Adapter だけで十分なアライメントが得られる（LLaVA-1.5, TinyLLaVA と同方式）
+
+### Stage 2: Visual Instruction Tuning（Phase 3）
+
+5. **全解凍で発散したら段階的に対処**: まず全解凍 → DINOv2 後半のみ解凍 → LoRA rank=256（TinyLLaVA, Idefics2, Imp）
+6. **2 エポック以内**: 3 エポック以上で過学習（Imp: 3 エポックで -0.4pt）
+7. **チェックポイント 25 ステップごとに保存**: 最適点は訓練終了時とは限らない（SmolVLM）
+8. **位置トークンを追加する場合は学習可能な埋め込みを使用**: 文字列トークンは「OCR loss plague」を引き起こす（SmolVLM）
