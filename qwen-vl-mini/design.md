@@ -707,6 +707,199 @@ Qwen3-VL が既製の SigLIP-2 を fine-tune する方式に移行したこと�
 
 **設計思想への裏付け**: 3B クラスのモデルが適切な学習戦略（LoRA、2 エポック、高品質データ）で 7B/13B を凌駕できるという事実は、~600M の Qwen2.5-VL Mini で「実用的な VLM を構築する」という設計思想が妥当であることを示す。ただし 3B と 600M の間には大きなギャップがあるため、性能目標は控えめに設定する。訓練時間は非常に短いため、多数の実験イテレーションが可能。
 
+### 10.15 実装上の落とし穴と注意事項
+
+実装時にバグや学習失敗の原因になりうる具体的な注意点をまとめる。
+
+**MoE-LLaVA [arXiv:2401.15947] Appendix A.2**: 小規模モデル（Qwen-1.8B クラス）を **fp16 で学習すると loss が NaN になる**ことがある。fp16 のダイナミックレンジの狭さに起因し、パラメータ数が少ないモデルで発生しやすい。Qwen2.5-0.5B（494M）はさらに小さいため、**bf16 が必須**。bf16 が使えない GPU（V100 等）では fp16 の loss scaling 設定に細心の注意が必要。
+
+**LLaVA [arXiv:2304.08485] Appendix C**: 学習精度は **BF16 + TF32** の両方を有効化。TF32 は matmul 精度設定として `torch.backends.cuda.matmul.allow_tf32 = True` および `torch.backends.cudnn.allow_tf32 = True` で明示的に有効化すべき。
+
+**DINOv2 [arXiv:2304.07193] / dino-meets-text**: `facebook/dinov2-base`（register token なし）の出力は **[CLS] + 256 パッチトークン = 257 トークン**。一方 `facebook/dinov2-base-reg`（register token あり版）は **[CLS] + 4 register + 256 パッチトークン = 261 トークン**。register token は「potential register tokens are discarded as they are not used」（dino-meets-text §3.1）と明記されており、**reg 版使用時は register token を出力から明示的に除外**してから Adapter に入力する必要がある。
+
+**DINOv2 入力前処理**: DINOv2 論文本文には正規化パラメータが明示されていない。公式リポジトリおよび HuggingFace 実装では **ImageNet 正規化**（mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]）がデフォルト。**誤った正規化は特徴量の品質を大幅に劣化させる**ため、必ず確認すること。
+
+**Idefics2 [arXiv:2405.02246] §3.2, Table 3**: Fully autoregressive アーキテクチャで事前学習済み backbone を**全パラメータ unfreeze すると loss divergence が発生**する。学習率を下げても安定化不可能。LoRA を使うことで安定した学習が可能になる。Stage 2 で全解凍する際は、**まず LoRA で安定することを確認してから full FT を試す**のが安全。
+
+**gradient clipping**: LLaVA 系論文ではいずれも gradient clipping 値を明示記載していない。LLaVA コードベースのデフォルト値が暗黙的に使用されている。Qwen2.5 系のデフォルト **max_grad_norm=1.0** を採用し、特に DINOv2 unfreeze 時の安定化に寄与させることを推奨。
+
+**DINOv2 ViT-B/14 のアーキテクチャ確認**: Appendix B Table 17 より、蒸留版 ViT-B/14 は **standard MLP FFN**（SwiGLU ではない）。Embedding dim=768, Heads=12, Blocks=12, Stochastic depth drop rate=**0**（蒸留版）。推論時に dropout は不要。
+
+**設計への反映**:
+- bf16 必須。fp16 は使用禁止
+- TF32 を明示的に有効化
+- `facebook/dinov2-base`（register token なし）を使用。reg 版を使う場合は register token 除外コードが必要
+- ImageNet 正規化を適用。公式リポジトリの transform 設定を確認
+- gradient clipping = 1.0 を設定
+- Stage 2 の全解凍は loss diverge リスクあり。LoRA → full FT の順で試行
+
+### 10.16 DINOv2 の特徴量の詳細な性質
+
+§10.7 を補完する、DINOv2 の特徴量のより詳細な性質。
+
+**dino-meets-text Table 2**: DINOv2 の画像表現として **[CLS] + avg-pooled パッチの結合が全タスク最適**。[CLS] 単体は classification に強い（IN1K=79.2）が segmentation が壊滅的（ADE=8.3）。avg-pooling 単体は逆。結合（concat）すると IN1K=79.2, COCO=34.7, ADE=18.2 と全タスクで最良。
+
+**dino-meets-text Table 3**: 凍結した DINOv2 の上に **2 つの学習可能な vision transformer block を追加**すると retrieval が大幅向上（COCO: 35.1→42.1, +7pt）。1 block で +6.1、2 blocks で +7.4。DINOv2 の特徴空間をテキスト空間に近づける「vision adapter」として有効。
+
+**DINOv2 [arXiv:2304.07193] §4, Appendix B.1**: KoLeo 正則化（`L_koleo = -(1/n) Σ log(d_{n,i})`、重み 0.1）により、DINOv2 の**特徴空間は一様に広がる**性質を持つ。これは MLP Adapter での射影時に有利（特徴量が潰れにくい）。DINO head と iBOT head は**パラメータ非共有**で、[CLS] トークンとパッチトークンが異なる空間にある。
+
+**DINOv2 [arXiv:2304.07193] §7.5, Figure 9**: パッチ特徴量の **PCA 第 1 成分を閾値処理すると前景/背景が自動分離**される。PCA 第 2-3 成分は物体の「パーツ」（翼、体、頭など）に対応。DINOv2 の特徴は空間的に非常に構造化されており、**パッチトークンの空間的順序を保持し、pooling で潰さない設計が重要**。
+
+**DINOv2 [arXiv:2304.07193] §4, §6.6**: 高解像度適応は **position embedding を双線形補間**して実現。518x518 で追加 10K イテレーションの fine-tuning。224→416 への短期高解像度訓練でも、最初から 416 で訓練した場合とほぼ同等の性能。ViT-B/14 で 518x518 の場合 518/14=37 → 37x37=**1369 トークン**となり小規模 LLM には重すぎる。
+
+**COMM [arXiv:2310.08825] §5**: 入力解像度を 224→**336x336** にアップすると fine-grained perception 能力が向上。336/14=24 → 24x24=**576 パッチトークン**。1369 トークンの 518x518 に比べ現実的。
+
+**DINOv2 [arXiv:2304.07193] Table 16**: 蒸留版 ViT-B/14 は **LayerScale 初期値 1e-5** で訓練。各ブロック出力のスケールが小さいため、特徴量の数値範囲が影響を受ける。
+
+**SAIL Figure 2**: DINOv2 の **k-NN クラスタリング品質**がクロスモーダルアライメント性能と強く相関（Pearson r=0.991）。DINOv2 の k-NN 性能が高いことが、テキストとのアライメント学習を容易にしている理論的根拠。
+
+**SAIL Figure 2 右**: 言語モデル（LLM）の **MTEB スコアとアライメント品質に Pearson r=0.994 の相関**。LLM の言語能力が弱いとアライメントも弱くなるため、Qwen2.5-0.5B の容量制約下では Stage 1 にデータ・ステップを追加投入する必要がある可能性。
+
+**設計への反映**:
+- パッチトークンに加え、[CLS] トークンを global context として含める設計を検討。具体的には [CLS] を先頭に prepend して 257 トークンを Adapter に入力
+- DINOv2 と Adapter の間に 1-2 層の軽量 Transformer block を追加する「vision adapter」を検討。Stage 1 で学習させる
+- 入力解像度は **336x336（576 トークン）** を第一候補に。トークン圧縮（Pixel Shuffle r=2 で 144 トークン、r=3 で 64 トークン）と組み合わせ
+- パッチトークンの空間的順序を保持する設計を維持
+
+### 10.17 データ処理の実践的テクニック
+
+学習データの構築・前処理に関する実践的な知見。
+
+**LLaVA [arXiv:2304.08485] Table 11, Appendix E**: Stage 1 の質問プロンプトは**11 種類のバリエーション**からランダムサンプリング。「Describe the image concisely.」「Provide a brief description of the given image.」「Summarize the visual content of the image.」など。同じ意味だが自然言語表現を変えることで、**特定フレーズへの過学習を防止**。
+
+**LLaVA [arXiv:2304.08485] Appendix E**: CC3M フィルタリングは**名詞句ベースの概念カバレッジ**で実施。SpaCy で名詞句抽出 → 頻度 3 未満はスキップ → 残りの名詞句ごとにランダムサンプリング → 595K に絞り込み。概念カバレッジを維持しつつデータ量を削減。
+
+**LLaVA-1.5 [arXiv:2310.03744] Appendix A.2**: 同一画像の QA ペアを**単一マルチターン会話に統合**。画像エンコードの重複を減らし学習効率を向上。
+
+**LLaVA-1.5 [arXiv:2310.03744] Appendix A.2**: **バッチ内モダリティ分離で 25% 高速化**。言語のみ会話は視覚付き会話より長い傾向があり、混在させると padding が増える。各バッチは単一モダリティからのみサンプリング。最終性能に影響なし。
+
+**LLaVA-1.5 [arXiv:2310.03744] Appendix A.2**: ShareGPT データの処理では **2048 トークンを超える会話は分割ではなく切り詰め（truncate）**。分割すると文脈が断裂し学習の質が低下する可能性。
+
+**SmolVLM [arXiv:2504.05299] §3.3**: テキストのみのデータ比率は **14% 上限**。それ以上は negative transfer で画像タスク -6.5%、動画タスク -3.7% の劣化。
+
+**ShareGPT4V [arXiv:2311.12793] Figure 6**: Pre-training 用高品質合成キャプションの**飽和点は ~1000K**。100K→600K で急激な向上、600K→1000K でゆるやか、1000K→1200K でほぼ飽和。558K→1246K の増量計画は妥当な範囲。
+
+**ShareGPT4V [arXiv:2311.12793] Figure 2**: SFT データの**わずか 3.5%（23K）を高品質 ShareGPT4V キャプションに置換するだけで全体性能が一貫して向上**。全体を高品質化する必要はなく、description 系タスクの一部（3-5%）の置換で十分。
+
+**Imp [arXiv:2405.12107] §4.3, Table 1**: **TextCaps (22K) は TextVQA と同じ画像セット**。除去すると TextVQA -4.8pt だが、これが真の zero-shot 性能。zero-shot 評価したい場合は訓練データから TextCaps を必ず除去。
+
+**Cambrian-1 [arXiv:2406.16860] Appendix E.3**: データエンジンの品質基準として **50 語未満のテキストサンプルをフィルタ除外**。シンプルだが効果的。
+
+**Cambrian-1 [arXiv:2406.16860] Table 20**: SFT データの最適バランシング比率（1.35M 実験）: **General 34.5%, Language 27.2%, Science 10.0%, OCR 8.7%, Counting 7.2%, Math 4.5%, Code 4.5%**。OCR 比率を上げすぎると General/Vision-Centric が劣化。
+
+**Cambrian-1 [arXiv:2406.16860] §5.3, Table 18**: **Answer Machine Phenomenon** — VQA ベンチマーク最適化データ（短答 QA 過多）で訓練するとモデルが会話能力を喪失。10 種のフォーマットプロンプトを各データセットに割り当てて短答/会話を明示的に分離して緩和。
+
+**OpenVLA [arXiv:2406.09246] §3.3**: 複数データソース混合時、**データソースごとの loss/accuracy を個別にモニタリング**。学習が進まないデータソースを特定・途中除外する仕組みが重要。OpenVLA では DROID データセットが低 accuracy のまま推移したため、学習の最後 1/3 で除外。
+
+**Idefics2 [arXiv:2405.02246] Appendix A.2.1**: Vision-language データに加え、**text-only instruction data**（OpenHermes-2.5, MetaMathQA, OrcaMath 等）を**全トークンの約 25%** 混合。LLM のテキスト能力保持（catastrophic forgetting 対策）と数学能力向上に寄与。
+
+**設計への反映**:
+- Stage 1: 質問プロンプトを 11 種類用意しランダム割り当て
+- Stage 2: 同一画像 QA を multi-turn 統合。バッチ内モダリティ分離。テキスト会話は 2048 トークンで truncate
+- Stage 2 データ比率: General ~35%, Language/text-only ~15-25%, Science ~10%, OCR ~9%, Counting ~7%, Math+Code ~5%
+- テキストデータ比率は 14% 以下。text-only instruction data を 10-15% 混合して catastrophic forgetting を緩和
+- SFT データの 3-5% を ShareGPT4V キャプションに置換
+- Pre-training データは ~1000K で飽和
+- データソースごとの loss を wandb で個別トラッキング。学習が進まないデータは途中除外
+- TextCaps は TextVQA 評価用に除去
+- 50 語未満のテキストはフィルタ除外
+
+### 10.18 学習テクニック補足
+
+§10.11 を補完する、追加の学習テクニック。
+
+**OpenVLA [arXiv:2406.09246] Table 1**: **Sandwich fine-tuning** — Vision Encoder + token embedding + LLM 最終層のみ解凍、LLM バックボーンは凍結。Full FT (69.7%) に対し Sandwich (62.1%) だが、**LoRA rank=32 (68.2%) で Full FT にほぼ匹敵**。メモリ効率と性能のバランスが良い選択肢。
+
+**MoE-LLaVA [arXiv:2401.15947] Table 5a**: **FFN-only fine-tuning** — Attention 層を凍結し FFN 層のみ学習すると、全パラメータ fine-tune とほぼ同等の性能で**学習時間が 75% に削減**（20h vs 27h）。Stage 2 でメモリ不足の場合の代替策。
+
+**TinyLLaVA [arXiv:2402.14289] §4.1.2**: **Share Recipe の具体設定** — Pre-training 段階で ViT の前半 12 層を凍結し残りを解凍。コネクタは **Base Recipe の事前学習済み重みで初期化**（ゼロからではない）。lr=2e-5, batch=256。ViT-B/14（12 層）に適用するなら**前半 6 層凍結、後半 6 層解凍**が対応。
+
+**TinyLLaVA [arXiv:2402.14289] §4.2.2**: **小型 LLM（~1B）では ViT unfreeze が POPE を改善する可能性**がある。大型 LLM（~3B）では unfreeze で POPE が低下する逆パターン。Qwen2.5-0.5B は最も小さいクラスのため、unfreeze によるハルシネーション低下が期待できる。
+
+**ShareGPT4V [arXiv:2311.12793] Table 6**: 高品質キャプション使用時は **Stage 1 で ViT 後半レイヤーも解凍可能**。24 層中 12 層目から解凍が最良（MME^P=1567.4）。全層解凍より部分解凍のほうが良い。DINOv2 ViT-B/14 では後半 6 層解凍が対応。ただし Stage 1 の設計変更を伴うため慎重に検証。
+
+**LLaVA [arXiv:2304.08485] Table 8**: ScienceQA で **reasoning-first CoT（理由→答え）は answer-first の半分のエポックで同等精度**（6ep vs 12ep で 89.77%）。推論タスクでは「まず理由を述べさせ、次に答えを出させる」フォーマットが収束を加速。
+
+**SAIL Table 1**: アライメント層として **GLU（Gated Linear Unit with ReLU）が Linear/MLP より大幅に優秀**。ImageNet-1K 零ショットで +12.4%（33.2→45.4）、T2I retrieval で +6.4%。Qwen2.5-VL の ViT も SwiGLU FFN を採用しており、Adapter の活性化関数として **SwiGLU/GEGLU への変更**を検討する価値がある。
+
+**OpenVLA [arXiv:2406.09246] §3.4**: 固定学習率 2e-5 が最良で、**学習率 warmup の効果が見られなかった**ケースあり。小規模データセットでは warmup 期間が学習ステップを浪費する可能性。warmup なしの設定も試す価値がある。
+
+**Qwen2.5-VL [qwen2.5-vl.pdf] §2.3.4**: post-training（SFT + DPO）では **ViT パラメータは凍結**。十分に align された ViT は SFT 段階では凍結して LLM 側のみ調整するのが本家の方式。
+
+**Qwen2.5-VL [qwen2.5-vl.pdf] §2.3.3**: 推論タスクに対して **rejection sampling** を使用。中間モデルで回答を生成し、正解と一致するもののみ保持。コードスイッチング・過度な長さ・繰り返しパターンをフィルタリング。CoT データの品質確保に有効。
+
+**Qwen2.5-VL [qwen2.5-vl.pdf] §2.3.2**: SFT データの **2 段階フィルタリング**。Stage 1: ドメイン特化分類モデルで 8 ドメイン 30 サブカテゴリに自動分類。Stage 2: ドメインごとのルールベース + モデルベースフィルタリング。繰り返しパターン除去、不完全レスポンス除去、コードスイッチング除去が重要。
+
+**設計への反映**:
+- Stage 2 でメモリ不足時: FFN-only FT（75% 時間削減）または Sandwich FT を検討
+- Share Recipe 適用時: Adapter を Stage 1 の学習済み重みで初期化してから ViT 後半 6 層を解凍
+- 0.5B LLM では ViT unfreeze が POPE 改善に寄与する可能性。ただし安全策として部分 unfreeze から開始
+- 推論タスクのデータでは reasoning-first フォーマットを採用
+- Adapter 活性化関数として SwiGLU/GEGLU を検討（GLU 系 > MLP）
+- warmup なし設定も探索対象に含める
+
+### 10.19 評価プロトコル
+
+VLM の評価に関する具体的な設定・プロトコル。
+
+**LLaVA-1.5 [arXiv:2310.03744] Appendix A.3**: 評価時は**再現性のため greedy decoding を使用**。beam search や sampling は使わない。
+
+**Idefics2 [arXiv:2405.02246] Appendix A.3**: 全評価は **batch size=1, greedy decoding**。タスク別プロンプト:
+- Multi-choice（MMMU, MathVista, MMBench）: `"Question: {question}\nChoices:\nA. {choice_a}\nB. {choice_b}\n...\nAnswer with the letter."`
+- Open-ended（TextVQA, DocVQA, VQAv2）: `"Question: {question}\nGive a very brief answer."`
+
+**Idefics2 [arXiv:2405.02246] Appendix A.3**: **ストップワード**設定: `Question`, `User`, `<end_of_utterance>`, `<eos>` で生成停止。Qwen2.5 の場合は `<|im_end|>` や `<|endoftext|>` が対応。
+
+**LLaVA-1.5 [arXiv:2310.03744] Appendix A.2**: データセット別の **response formatting prompt** の具体的使い分け:
+- VQAv2, GQA, TextVQA, MME, POPE → "Answer the question using a single word or phrase."
+- ScienceQA, MMBench, SEED-Bench → "Answer with the option's letter from the given choices directly."
+- VizWiz → "When the provided information is insufficient, respond with 'Unanswerable'. Answer the question using a single word or phrase."
+- LLaVA-Bench, MM-Vet → フォーマット指示なし（自由回答）
+
+**Idefics2 [arXiv:2405.02246] Appendix A.3**: VQAv2 等の open-ended evaluation は ground truth と完全一致判定のため、「large」vs「big」等の言い換えで不正解。**5pt 程度の差は評価ノイズの範囲**。
+
+**設計への反映**:
+- 評価時は greedy decoding、batch size=1
+- Qwen2.5 のストップワード `<|im_end|>` を設定
+- タスクに応じた formatting prompt を付与（学習時・評価時で一致させる）
+- open-ended 評価の 5pt 程度の差はノイズとして解釈
+
+### 10.20 SAIL / dino-meets-text: DINOv2 のテキストアライメント研究
+
+DINOv2 とテキストのアライメントに特化した研究から得られた知見。
+
+**SAIL Table 5**: SAIL でアライメント学習した DINOv2-L を LLaVA-1.5 に統合した結果、**7 タスク中 5 タスクで CLIP-L/14 を上回った**。GQA +1.55、VizWiz +5.88、POPE +0.76、VQAv2 +2.37。ただし TextVQA と MMBench では CLIP が優位。DINOv2 は事前アライメントを施せば CLIP なしでも競争力のある VLM が構築できる。
+
+**SAIL Table 1**: contrastive loss として InfoNCE の代わりに **Sigmoid（SigLIP 形式）を使うと大幅改善**。ImageNet +5.3%、T2I +9.3%、I2T +13.5%。DINOv2 とテキストの事前アライメントを行う場合は SigLIP 形式の Sigmoid Loss を推奨。
+
+**SAIL Table 1**: 各画像に元の短いキャプション + ShareGPT4 生成の高品質合成キャプションを positive pair として追加する **Multi-Pos 手法**で retrieval が向上（COCO T2I +4.0%、I2T +8.7%）。Stage 1 データで同一画像に短いキャプションと長い詳細キャプションの両方を含めることでアライメント品質が向上。
+
+**dino-meets-text Table 4**: データキュレーションは**テキスト側（頻出テキストの確率的除去）とイメージ側（DINOv2 特徴の k-means バランシング）の両方向**から行うと全タスクで性能向上。片方のみより両方で改善（81.4/45.4/20.6 vs 80.9/43.7/20.4 or 80.8/43.9/20.5）。
+
+**設計への反映**: 直接的には Stage 1 の Adapter 学習で補うが、将来的に SAIL 的な事前アライメント（DINOv2 → テキスト空間への射影学習）を Stage 0 として追加する選択肢がある。その場合は SigLIP 形式の Sigmoid Loss + Multi-Pos + 両方向キュレーションが推奨設定。
+
+### 10.21 追加論文からの補足知見
+
+**MoE-LLaVA [arXiv:2401.15947] Table 2, 6**: Stage II のデータを LLaVA-FT 665k から **Hybrid-FT 964k**（SViT-157k + LVIS-220k + LRV-331k + MIMIC-IT-256k を追加）に拡充すると大幅性能向上。LLM から LVLM への変換には十分なデータ量が必要。特に SViT（空間理解）、LRV（ハルシネーション軽減）が小規模モデルで効果的。
+
+**OpenVLA [arXiv:2406.09246] §3.1**: Prismatic VLM のバックボーンは **DINOv2 + SigLIP の二重エンコーダ**で、それぞれの出力を**チャネル方向に結合**。DINOv2 の低レベル空間情報と SigLIP の高レベルセマンティック情報を融合。将来的に SigLIP-Base 等を追加してチャネル結合する拡張が検討可能。
+
+**OpenVLA [arXiv:2406.09246] Table 1**: **Sandwich fine-tuning**（VE + token embedding + 最終層解凍、LLM バックボーン凍結）は Frozen VE (47.0%) → Sandwich (62.1%) → Full FT (69.7%)。LoRA rank=32 (68.2%) でも Full FT にほぼ匹敵。
+
+**ShareGPT4V [arXiv:2311.12793] Figure 8**: 合成キャプション生成時、**画像のデータソースごとに異なる専用プロンプト**を使用。ランドマーク画像には位置情報を促すプロンプト、テキスト画像には OCR 内容への言及を促すプロンプト。全画像に同一プロンプトを使うより品質が大幅向上。
+
+**Qwen2.5-VL [qwen2.5-vl.pdf] §2.1**: Merger の具体構造は**空間的に隣接する 4 パッチをグルーピング → 結合 → 2 層 MLP で射影**。入力チャネル = 4 × vision_dim、出力 = LLM hidden_size。Pixel Shuffle r=2 と概念的に同等。
+
+**Qwen2.5-VL [qwen2.5-vl.pdf] Table 1**: 3B モデルでは **Embedding Tying**（入力 embedding と出力 projection の重み共有）を使用。7B/72B では不使用。Qwen2.5-0.5B は小規模のため Embedding Tying が有効になっている可能性が高い。LoRA 適用時に入力 embedding と lm_head が連動する点に注意。
+
+**Cambrian-1 [arXiv:2406.16860] Table 22**: SVA のアテンション分布分析。DINOv2 は **DocVQA（文書画像）に対する貢献が最低（11.0%）** で、ConvNeXt が 44.5% を占める。一方 GQA（自然画像）では 24.1% と健闘。DINOv2 単体 VLM では文書理解が弱点となることを定量的に確認。
+
+**Eagle [arXiv:2408.15998] Table 4**: 5 つの fusion 戦略の比較で **Channel Concatenation が最高性能**（avg 681.5）。Sequence Append (675.0)、LLaVA-HR (678.7)、Mini-Gemini (672.5)、Deformable Attention (674.3) を上回る。複雑な fusion architecture は不要で、単純な連結で十分。
+
+**COMM [arXiv:2310.08825] §4, Equation (1)**: MFM モジュールの具体構造 — 各レイヤー出力に **LayerNorm → Linear → 学習可能なスカラー重み（α, β）の加重和**。DINOv2 側は深層のみ（ViT-L で layer 19-24）を使用。ViT-B/14 に適用する場合は **layer 7-12 の Layerscale 統合**が対応。各レイヤーの寄与度を自動調整する仕組み。
+
+**Cambrian-1 [arXiv:2406.16860] Table 23**: 最終 Cambrian モデルの **Adapter lr は 1e-4**（探索実験の 1e-3 より低い）。大規模データ（2.5M）で事前学習する場合は lr=1e-4 がより安定する可能性。
+
 ---
 
 ### 参考スコア比較

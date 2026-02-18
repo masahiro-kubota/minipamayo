@@ -17,10 +17,12 @@ Phase 1 (基盤) → Phase 2 (Stage 1: Feature Alignment) → Phase 3 (Stage 2: 
 ### 1.1 モジュール実装
 
 - [ ] **Vision Encoder**: DINOv2 ViT-B/14 ロード + forward
-  - `facebook/dinov2-base`
-  - 入力: (B, 3, 224, 224) → 出力: (B, 256, 768)
-  - **深層レイヤーのみ使用を検討**: COMM Table 4 より DINOv2 は深層に有用情報が集中。ViT-B/14（12 層）なら後半 6 層（7-12 層）の Mean を使用（§10.12 参照）
-  - **CLS トークンではなくパッチトークン全体を出力**: LLaVA §4.1 に準拠
+  - `facebook/dinov2-base`（register token なし版を使用。`dinov2-base-reg` を使う場合は register token 4 個を出力から除外する処理が必須）
+  - **入力前処理**: ImageNet 正規化（mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]）を適用。公式リポジトリの transform 設定と一致させること（§10.15 参照）
+  - 入力: (B, 3, 224, 224) → 出力: (B, 256, 768)。**336x336 への解像度アップを検討**（576 トークン、COMM §5 で採用。position embedding を双線形補間で拡大）
+  - **深層レイヤーのみ使用を検討**: COMM Table 4 より DINOv2 は深層に有用情報が集中。ViT-B/14（12 層）なら後半 6 層（7-12 層）の Layerscale 統合を使用（§10.12, §10.21 COMM MFM 参照）
+  - **CLS トークンではなくパッチトークン全体を出力**: LLaVA §4.1 に準拠。ただし **[CLS] トークンを global context として prepend する設計も検討**（dino-meets-text Table 2: [CLS]+avg-pooled が全タスク最適）
+  - **bf16 必須**: fp16 では小規模モデルで loss NaN が発生する（MoE-LLaVA Appendix A.2）。TF32 も明示的に有効化（§10.15 参照）
 - [ ] **Adapter**: 2層 MLP（初期実装）
   - Linear(768, 3072) → GELU → Linear(3072, 896)（COMM [arXiv:2310.08825] Table 6: Ratio 4 が最適）
   - 入力: (B, 256, 768) → 出力: (B, 256, 896)
@@ -60,24 +62,27 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
   - **DINOv2 は text-alignment がないため、558K で Alignment が不十分な場合は ShareGPT4V-PT 1,246K に増量を検討**（TinyLLaVA Figure 7, Cambrian-1 Figure 7）
   - ただし Qwen2.5-0.5B は 494M と小型のため、データ過多によるハルシネーション増加にも注意（TinyLLaVA §4.2.2: TinyLlama 1.1B で POPE 劣化の事例）
 - [ ] DataLoader 実装
-  - 画像: リサイズ (224×224) + ImageNet 正規化
-  - テキスト: "Describe the image briefly.\n" + キャプション
-  - Loss マスク: キャプション部分のみ（指示テキスト部分は無視）
+  - 画像: リサイズ (224×224 or 336×336) + ImageNet 正規化（mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]）
+  - テキスト: **11 種類の質問プロンプトからランダム選択**（LLaVA Table 11）。"Describe the image concisely." / "Provide a brief description of the given image." / "Summarize the visual content of the image." 等
+  - Loss マスク: キャプション部分のみ（指示テキスト部分は `ignore_index=-100` でマスク）
   - **合成キャプション（synthetic captions）は alt-text より品質が高い**: Idefics2 Table 6 で +3.1pt
+  - **Pre-training データの飽和点は ~1000K**（ShareGPT4V Figure 6）。558K→1246K の増量は妥当だが、それ以上はコスト対効果低い
 - [ ] 単体テスト: バッチが正しく取り出せることを確認
 
 ### 2.2 学習
 
 - [ ] **Adapter のみ trainable**、DINOv2 + Qwen2.5-0.5B は frozen
 - [ ] ハイパーパラメータ:
-  - 学習率: 1e-3（Adapter のみなので大きめ）
-  - スケジューラ: cosine with warmup
-  - micro-batch=4, grad_accum=4（≈ global batch 16）
+  - 学習率: 1e-3（Adapter のみなので大きめ。MLP 使用時は Linear の 2e-3 から半減。LLaVA-1.5 Table 9）
+  - スケジューラ: cosine with warmup（warmup ratio 0.03）。**warmup なしも試す価値あり**（OpenVLA §3.4: warmup の効果が見られなかったケース）
+  - micro-batch=4, grad_accum=4（≈ global batch 16。**目標 batch size=256** に近づけるよう grad_accum を調整）
   - エポック: 1
-  - bf16 mixed precision
+  - **bf16 mixed precision**（fp16 禁止: loss NaN リスク。MoE-LLaVA App.A.2）
+  - **TF32 有効化**: `torch.backends.cuda.matmul.allow_tf32 = True`
   - AdamW (β1=0.9, β2=0.95)
-- [ ] wandb ロギング
-- [ ] 学習時間の見積もり: Adapter のみなので高速（数時間〜半日）
+  - **gradient clipping: max_grad_norm=1.0**
+- [ ] wandb ロギング（**データソースごとの loss を個別トラッキング**: OpenVLA §3.3）
+- [ ] 学習時間の見積もり: Adapter のみなので高速（数時間〜半日。LLaVA-Phi: 8xA100 で 1.5 時間）
 
 ### 2.3 評価
 
@@ -113,12 +118,22 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
     User: {質問}
     Assistant: {回答}
     ```
-  - **Loss マスク: completion 部分（Assistant の回答）のみ**: SmolVLM §3.2 でユーザープロンプトマスクの有効性を確認。マスクしないとモデルが表面的な繰り返しを学習してしまう
-  - **VQA データには formatting prompt を付加**: "Answer the question using a single word or phrase"（LLaVA-1.5 §3.2 Table 1b）で short-answer overfit を回避
-  - **データの多様性を確保**: Conversation + Detail description + Complex reasoning の 3 種混合が最高性能（LLaVA Table 4）
-- [ ] （任意）ShareGPT4V-100K も混合してデータ品質を向上
+  - **Loss マスク: completion 部分（Assistant の回答）のみ**: `ignore_index=-100` をシステムプロンプト + ユーザー質問 + visual tokens に適用。Qwen2.5 の場合 `<|im_start|>assistant` 〜 `<|im_end|>` のみ loss 対象
+  - **VQA データには formatting prompt を付加**（LLaVA-1.5 Appendix A.2 のデータセット別使い分け）:
+    - VQAv2, GQA, TextVQA, POPE → "Answer the question using a single word or phrase."
+    - ScienceQA, MMBench → "Answer with the option's letter from the given choices directly."
+    - 自由回答系 → フォーマット指示なし
+  - **Answer Machine Phenomenon 対策**: 短答 QA 過多で会話能力喪失を防ぐため、フォーマットプロンプトで短答/会話を明示的に分離（Cambrian-1 §5.3）
+  - **データの多様性を確保**: 推奨比率 General ~35%, Language/text-only ~15%, Science ~10%, OCR ~9%, Counting ~7%, Math+Code ~5%（Cambrian-1 Table 20 参考）
+  - **同一画像の QA ペアを単一マルチターン会話に統合**: 画像エンコード重複を削減（LLaVA-1.5 Appendix A.2）
+  - **バッチ内モダリティ分離**: 言語のみ/視覚付きを同一バッチに混在させない。25% 高速化（LLaVA-1.5 Appendix A.2）
+  - **テキスト会話は 2048 トークンで truncate**（split ではなく。LLaVA-1.5 Appendix A.2）
+  - **50 語未満のテキストはフィルタ除外**（Cambrian-1 Appendix E.3）
+- [ ] （任意）SFT データの **3-5% を ShareGPT4V キャプションに置換**するだけで全体性能向上（ShareGPT4V Figure 2）
 - [ ] （任意）GPT4V-annotated データ追加: ShareGPT-4V 20K + LAION-GPT-V 10K + ALLaVA 300K で +1.4pt（Imp Table 1 §3.2）
-- [ ] （任意）OCR/Chart データ追加: DVQA + ChartQA + DocVQA + AI2D + InfographicVQA = 32K（Imp §3.1）。DINOv2 の OCR 弱点を補うために特に重要
+- [ ] （任意）OCR/Chart データ追加: DVQA 10K + ChartQA 4K + DocVQA 10K + AI2D 4K + InfographicVQA 4K = 32K（Imp §3.1, Table 2）。DINOv2 の OCR 弱点を補うために特に重要
+- [ ] （任意）**text-only instruction data を 10-15% 混合**: OpenHermes-2.5, MetaMathQA 等で LLM の catastrophic forgetting を緩和（Idefics2 Appendix A.2.1）
+- [ ] （任意）**TextCaps (22K) は TextVQA と同じ画像セット**。zero-shot 評価したい場合は除去（Imp §4.3）
 
 ### 3.2 学習
 
@@ -126,27 +141,31 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
 - [ ] Stage 1 の学習済み Adapter 重みを初期値として使用
 - [ ] ハイパーパラメータ:
   - LLM + Adapter 学習率: **2e-5**（全論文で一致）
-  - **DINOv2 学習率: 1e-5**（メイン LR の半分。Cambrian-1 Table 23 準拠）
-  - スケジューラ: cosine with warmup（warmup ratio 0.03）
-  - micro-batch=1, grad_accum=16
+  - **DINOv2 学習率: 1e-5**（メイン LR の半分。Cambrian-1 Table 23 準拠。Eagle では SFT と同じ 2e-5 も使用）
+  - スケジューラ: cosine with warmup（warmup ratio 0.03）。**warmup なしも試す価値あり**（OpenVLA §3.4）
+  - micro-batch=1, grad_accum=16（**目標 batch size=128-256**）
   - エポック: **2**（Imp [arXiv:2405.12107] Table 1 §2.2: 1ep は学習不足 (71.6)、2ep が最適 (72.1)。**3 エポック以上は過学習リスク** -0.4pt）
-  - bf16 mixed precision
+  - **bf16 mixed precision**（fp16 禁止。TF32 有効化）
   - gradient checkpointing ON（DINOv2 + LLM）
   - AdamW (β1=0.9, β2=0.95)
   - **weight decay: 0.1**（LLaVA-Phi §3.1: 小型モデルでは weight decay による正則化が重要。LLaVA/LLaVA-1.5 の 0 とは異なる）
+  - **gradient clipping: max_grad_norm=1.0**（全論文で明示記載なし → Qwen2.5 デフォルト値を採用。DINOv2 unfreeze 安定化に寄与）
 - [ ] **過学習対策**:
   - **NEFTune（Noisy Embedding Fine-Tuning）**: 入力埋め込みにノイズ注入で汎化向上（Idefics2 §4.2）。過学習の兆候が見られたら導入
   - 画像解像度のランダムスケールアップ（Idefics2 §4.2）
   - multi-turn 会話のシャッフル（Idefics2 §4.2）
 - [ ] **チェックポイントを 25 ステップごとに保存**（SmolVLM 知見: 最適点は訓練終了時とは限らない）
-- [ ] **訓練不安定時の段階的対策**（設計書 §10.4 参照）:
+- [ ] **訓練不安定時の段階的対策**（設計書 §10.4, §10.15, §10.18 参照）:
   1. まず全解凍で試行（DINOv2 lr=**1e-5**、LLM lr=**2e-5**）
-  2. 発散したら DINOv2 の後半 6 層のみ解凍（TinyLLaVA [arXiv:2402.14289] Table A1: Share recipe）
+  2. 発散したら DINOv2 の後半 6 層のみ解凍（TinyLLaVA [arXiv:2402.14289] Table A1: Share recipe。**コネクタは Stage 1 の学習済み重みで初期化**）
   3. それでも不安定なら LoRA rank=256 を LLM に適用（Imp [arXiv:2405.12107] Table 1 §2.1: rank=256 が最適、Idefics2 [arXiv:2405.02246] Table 3: LoRA で +9.2pt）
-  4. DINOv2 を frozen にしたまま adapter + LLM のみ学習（COMM の知見）
+  4. **FFN-only fine-tuning**: Attention 層凍結、FFN 層のみ学習で 75% 時間で同等性能（MoE-LLaVA Table 5a）
+  5. **Sandwich fine-tuning**: VE + token embedding + LLM 最終層のみ解凍（OpenVLA Table 1: LoRA rank=32 で Full FT にほぼ匹敵）
+  6. DINOv2 を frozen にしたまま adapter + LLM のみ学習（COMM の知見）
   - **推奨手順**: まず frozen で設計を固め（データ、Adapter、ハイパーパラメータの検証）→ 設計が固まったら unfreeze で最終訓練（Cambrian-1 方式: +4.88pt avg, Vision-Centric +11.47pt）
   - **注意**: DINOv2 解凍で訓練速度 50-55% 低下（Cambrian-1 Appendix F）
-- [ ] wandb ロギング
+  - **0.5B LLM の特性**: 小型 LLM では ViT unfreeze が POPE 改善する可能性あり（大型 LLM とは逆。TinyLLaVA §4.2.2）
+- [ ] wandb ロギング（**データソースごとの loss/accuracy を個別モニタリング**。学習が進まないデータソースは途中除外。OpenVLA §3.3）
 
 ### 3.3 Adapter トークン圧縮（推奨）
 
@@ -176,6 +195,14 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
   - **Tier 1（必須）**: POPE（物体存在判定）、ScienceQA-IMG（多肢選択）
   - **Tier 2（推奨）**: VQAv2（一般 QA）、GQA（シーン理解）
   - 参考目標: SmolVLM-256M（ScienceQA 73.8%, POPE ~75%）に近づくか
+- [ ] **評価プロトコル**（§10.19 参照）:
+  - **greedy decoding（temperature=0, do_sample=False）**: LLaVA-1.5 Appendix A.3。全ベンチマークで統一し再現性を確保
+  - **データセット別評価プロンプト**:
+    - VQAv2, GQA, TextVQA, POPE → "Answer the question using a single word or phrase."
+    - ScienceQA, MMBench → "Answer with the option's letter from the given choices directly."
+    - 自由回答系（LLaVA-Bench, MM-Vet）→ フォーマット指示なし
+  - **ストップワード設定**: VQA 系は `\n` で生成停止。多肢選択はオプション文字後に停止
+  - **ベンチマーク結果のノイズ ±5pt**: プロンプト・シード・データ構成で変動する。改善が 5pt 未満の場合は有意差なしと判断
 
 ### 3.5 Exit 条件
 
@@ -222,6 +249,10 @@ Phase 3 (Stage 2: Visual Instruction Tuning — DINOv2 + Adapter + LLM)
 | DINOv2 にテキスト対応がない（CLIP と異なる） | OCR/テキスト系タスクが弱い | OCR/Chart データ 32K を追加。Pre-alignment を十分に行う | Cambrian-1 Table 12, Eagle Table 5 |
 | DINOv2 解凍でハルシネーション増加 | POPE スコア低下 | POPE を常時監視、Share recipe（後半のみ解凍）で緩和 | TinyLLaVA Table A1 |
 | CC3M のダウンロードが困難 | データ不足 | ShareGPT4V-PT 等の代替データを使用 | — |
+| fp16 で loss NaN | 学習が進まない | bf16 必須。TF32 明示的有効化 | MoE-LLaVA App.A.2 |
+| Answer Machine Phenomenon | 短答のみ学習し会話能力喪失 | データ比率管理、formatting prompt で短答/会話分離 | Cambrian-1 §5.3 |
+| DINOv2 の DocVQA 弱点（11%） | テキスト読解系タスク低性能 | OCR/Chart 32K データ追加、text-only mixing 10-15% | §10.21, Imp §3.1 |
+| text-only データ過多 | negative transfer で視覚タスク劣化 | 14% 上限を厳守 | SmolVLM §3.3 |
 
 ---
 
@@ -267,3 +298,29 @@ Phase 3 (Stage 2: Visual Instruction Tuning — DINOv2 + Adapter + LLM)
 28. **小規模 LM は 8k トークン超で学習不安定**: SmolVLM [arXiv:2504.05299] Finding 2 で 135M/360M LM が 8k 超で不安定と報告。トークン圧縮の必要性を補強
 29. **DINOv2 は ViT-g/14 からの蒸留モデル**: DINOv2 Table 4, 17。教師モデルの知識を効率的に保持（ImageNet 82.1 vs 86.5）
 30. **小型 LLM では ViT fine-tuning が有効（大型 LLM とは逆）**: TinyLLaVA §4.2.2。ただし訓練パラメータ増加でハルシネーション増加リスクあり
+
+### 実装・学習の落とし穴（全 Phase 共通）
+
+31. **bf16 必須、fp16 禁止**: MoE-LLaVA Appendix A.2 で Qwen-1.8B クラスの小型モデルが fp16 で loss NaN を報告。全 Phase で bf16 mixed precision を使用。TF32 も明示的に有効化（`torch.backends.cuda.matmul.allow_tf32 = True`）
+32. **DINOv2 register token に注意**: `dinov2-base-reg` を使う場合、4 個の register token を出力から除外必須。推奨は `dinov2-base`（register token なし）を使用（§10.15）
+33. **ImageNet 正規化を忘れずに適用**: DINOv2 は mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]。公式リポジトリの transform 設定と一致させること（§10.15）
+34. **gradient clipping = 1.0**: DINOv2 unfreeze 時の安定化に寄与。全 Phase で適用（§10.15）
+
+### DINOv2 活用の追加テクニック
+
+35. **[CLS]+avg-pooled patch 連結を検討**: dino-meets-text Table 2 で分類・セグメンテーション・検索の全タスクで最適。パッチトークンのみより高品質な表現（§10.16）
+36. **DINOv2 上に 1-2 層の learnable vision block 追加を検討**: dino-meets-text Table 3 で検索 +7pt 改善。frozen DINOv2 の出力に learnable Transformer block を追加する設計（§10.16）
+37. **GLU 活性化関数 > 標準 MLP**: SAIL Table 1 で +12.4%（ImageNet zero-shot）。Adapter の GELU を GLU に置換する候補（§10.18）
+
+### データ・学習の追加知見
+
+38. **Answer Machine Phenomenon に注意**: 短答 QA データ過多で会話能力が喪失する。フォーマットプロンプトで短答/会話を明示的に分離し、データ比率を管理（Cambrian-1 §5.3、§10.17）
+39. **text-only instruction data は 14% 以下**: SmolVLM §3.3 で超過すると negative transfer が発生。10-15% を推奨（§10.17）
+40. **Stage 1 での VE 解凍は高品質データが条件**: Cambrian-1 Figure 7 で低品質データ + 解凍は逆効果。ShareGPT4V-PT 以上の品質が必要（§10.18）
+
+### 評価プロトコル
+
+41. **評価は greedy decoding（temperature=0, do_sample=False）**: LLaVA-1.5 Appendix A.3。再現性確保のため必須（§10.19）
+42. **データセット別評価プロンプトを使い分ける**: VQAv2 は "Answer the question using a single word or phrase."、ScienceQA は "Answer with the option's letter..."、自由回答は指示なし（§10.19）
+43. **ストップワードを設定**: VQA 系は `\n` で停止。多肢選択はオプション文字で停止（§10.19）
+44. **ベンチマーク結果には ±5pt のノイズ**: 同一手法でもプロンプト・シード・データで 5pt 変動する。絶対値より傾向に注目（§10.19）
