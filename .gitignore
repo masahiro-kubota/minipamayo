@@ -45,3 +45,14 @@ Thumbs.db
 
 # Jupyter
 .ipynb_checkpoints/
+
+related_repos/
+
+# Reference papers (not project docs)
+docs/qwen2.5/
+docs/qwen2.5-vl/
+docs/qwen3/
+docs/qwen3-vl/
+docs/cosmos-reason1/
+docs/cosmos-reason2/
+docs/alpamayo/
