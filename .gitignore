@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data
+data/
+*.tar.gz
+*.zip
+*.h5
+*.hdf5
+*.pkl
+
+# Model checkpoints
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+!configs/*.yaml
+
+# Logs
+logs/
+wandb/
+runs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
