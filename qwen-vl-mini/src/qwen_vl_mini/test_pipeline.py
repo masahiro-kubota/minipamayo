@@ -5,7 +5,6 @@ with a tiny subset of data before committing to full training.
 """
 
 import json
-import tempfile
 from pathlib import Path
 
 import torch
@@ -125,22 +124,21 @@ def test_forward_backward(model, dataloader, device):
     assert loss.item() > 0, "Loss should be positive!"
 
     loss.backward()
-    print(f"  ✓ Backward pass succeeded")
+    print("  ✓ Backward pass succeeded")
 
     # Check gradients exist on adapter
     has_grad = any(
-        p.grad is not None and p.grad.abs().sum() > 0
-        for p in model.adapter.parameters()
+        p.grad is not None and p.grad.abs().sum() > 0 for p in model.adapter.parameters()
     )
     assert has_grad, "Adapter has no gradients!"
-    print(f"  ✓ Adapter gradients present")
+    print("  ✓ Adapter gradients present")
 
     # Check no gradients on frozen modules
     ve_grads = any(p.grad is not None for p in model.vision_encoder.parameters())
     llm_grads = any(p.grad is not None for p in model.llm.parameters())
     assert not ve_grads, "VisionEncoder should have no gradients (frozen)!"
     assert not llm_grads, "LLM should have no gradients (frozen)!"
-    print(f"  ✓ Frozen modules have no gradients")
+    print("  ✓ Frozen modules have no gradients")
 
     return loss.item()
 
@@ -180,7 +178,7 @@ def test_optimizer_step(model, dataloader, device):
     after = model.adapter.state_dict()
     changed = any(not torch.equal(before[k], after[k]) for k in before)
     assert changed, "Adapter weights didn't change after optimizer step!"
-    print(f"  ✓ Adapter weights updated")
+    print("  ✓ Adapter weights updated")
 
     return output.loss.item()
 
@@ -226,11 +224,11 @@ def test_overfit_mini(model, dataloader, device, n_steps: int = 20):
 
     print(f"\n  Loss: {first_loss:.4f} → {last_loss:.4f} (ratio: {ratio:.3f})")
     if last_loss < first_loss:
-        print(f"  ✓ Loss decreased — model is learning!")
+        print("  ✓ Loss decreased — model is learning!")
     else:
-        print(f"  ⚠ Loss did NOT decrease — something may be wrong")
+        print("  ⚠ Loss did NOT decrease — something may be wrong")
 
-    assert not any(torch.isnan(torch.tensor(l)) for l in losses), "NaN loss during overfit test!"
+    assert not any(torch.isnan(torch.tensor(v)) for v in losses), "NaN loss during overfit test!"
 
 
 def main():

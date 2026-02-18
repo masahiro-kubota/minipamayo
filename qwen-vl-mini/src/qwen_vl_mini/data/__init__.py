@@ -1,3 +1,3 @@
-from qwen_vl_mini.data.pretrain_dataset import PretrainDataset, PretrainCollator
+from qwen_vl_mini.data.pretrain_dataset import PretrainCollator, PretrainDataset
 
-__all__ = ["PretrainDataset", "PretrainCollator"]
+__all__ = ["PretrainCollator", "PretrainDataset"]

@@ -1,3 +1,3 @@
-from qwen_vl_mini.model import QwenVLMini, VisionEncoder, Adapter
+from qwen_vl_mini.model import Adapter, QwenVLMini, VisionEncoder
 
-__all__ = ["QwenVLMini", "VisionEncoder", "Adapter"]
+__all__ = ["Adapter", "QwenVLMini", "VisionEncoder"]

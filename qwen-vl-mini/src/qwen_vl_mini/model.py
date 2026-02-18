@@ -2,16 +2,17 @@
 
 import torch
 import torch.nn as nn
-from transformers import AutoModelForCausalLM, AutoTokenizer, Dinov2Model
 from torchvision import transforms
-
+from transformers import AutoModelForCausalLM, AutoTokenizer, Dinov2Model
 
 # ImageNet normalization (DINOv2 standard)
-IMAGE_TRANSFORM = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
+IMAGE_TRANSFORM = transforms.Compose(
+    [
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ]
+)
 
 
 class VisionEncoder(nn.Module):
@@ -80,9 +81,7 @@ class QwenVLMini(nn.Module):
             vision_dim=self.vision_encoder.hidden_size,
             llm_dim=896,
         )
-        self.llm = AutoModelForCausalLM.from_pretrained(
-            llm_model_name, dtype=torch.bfloat16
-        )
+        self.llm = AutoModelForCausalLM.from_pretrained(llm_model_name, dtype=torch.bfloat16)
         self.tokenizer = AutoTokenizer.from_pretrained(llm_model_name)
 
     def _embed_text(self, input_ids: torch.Tensor) -> torch.Tensor:

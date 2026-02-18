@@ -70,9 +70,7 @@ def main():
             do_sample=False,
         )
 
-    generated_text = model.tokenizer.decode(
-        generated_ids[0], skip_special_tokens=True
-    )
+    generated_text = model.tokenizer.decode(generated_ids[0], skip_special_tokens=True)
     print(f"Generated ({generated_ids.shape[1]} tokens): {generated_text[:200]}")
     assert generated_ids.shape[1] > input_ids.shape[1], "Should generate new tokens"
     print("generate OK")

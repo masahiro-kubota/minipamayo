@@ -6694,5 +6694,3 @@ and Junyang Lin. AutoLogi: Automated generation of logic puzzles for evaluating 
 of large language models. CoRR, abs/2502.16906, 2025.
 
 35
-
-

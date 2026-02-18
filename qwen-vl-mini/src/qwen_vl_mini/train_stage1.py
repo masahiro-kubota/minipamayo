@@ -18,7 +18,7 @@ DEFAULTS = {
     "output_dir": "checkpoints/stage1",
     "lr": 1e-3,
     "batch_size": 4,
-    "grad_accum": 64,       # global batch = 256
+    "grad_accum": 64,  # global batch = 256
     "epochs": 1,
     "warmup_ratio": 0.03,
     "weight_decay": 0.0,
@@ -34,12 +34,15 @@ DEFAULTS = {
 def save_checkpoint(model, optimizer, scheduler, global_step, output_dir):
     path = Path(output_dir) / f"checkpoint-{global_step}.pt"
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({
-        "adapter_state_dict": model.adapter.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-        "scheduler_state_dict": scheduler.state_dict(),
-        "global_step": global_step,
-    }, path)
+    torch.save(
+        {
+            "adapter_state_dict": model.adapter.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "global_step": global_step,
+        },
+        path,
+    )
     print(f"Saved checkpoint: {path}")
 
 
@@ -130,9 +133,7 @@ def main():
             loss.backward()
 
             if (step + 1) % args.grad_accum == 0:
-                grad_norm = torch.nn.utils.clip_grad_norm_(
-                    model.parameters(), args.max_grad_norm
-                )
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
@@ -150,9 +151,7 @@ def main():
 
                 # === T2 Check 3: Adapter weights updating ===
                 if global_step == 0:
-                    adapter_snapshot = {
-                        k: v.clone() for k, v in model.adapter.state_dict().items()
-                    }
+                    adapter_snapshot = {k: v.clone() for k, v in model.adapter.state_dict().items()}
                 if global_step == 1 and adapter_snapshot is not None:
                     changed = any(
                         not torch.equal(adapter_snapshot[k], v)
@@ -165,16 +164,20 @@ def main():
 
                 # Logging
                 if global_step % args.logging_steps == 0:
-                    print(f"[Step {global_step}] loss={loss_value:.4f} "
-                          f"lr={scheduler.get_last_lr()[0]:.2e} grad_norm={grad_norm:.2f}")
+                    print(
+                        f"[Step {global_step}] loss={loss_value:.4f} "
+                        f"lr={scheduler.get_last_lr()[0]:.2e} grad_norm={grad_norm:.2f}"
+                    )
                     if use_wandb:
-                        wandb.log({
-                            "loss": loss_value,
-                            "lr": scheduler.get_last_lr()[0],
-                            "grad_norm": grad_norm.item(),
-                            "epoch": epoch,
-                            "global_step": global_step,
-                        })
+                        wandb.log(
+                            {
+                                "loss": loss_value,
+                                "lr": scheduler.get_last_lr()[0],
+                                "grad_norm": grad_norm.item(),
+                                "epoch": epoch,
+                                "global_step": global_step,
+                            }
+                        )
 
                 # Checkpoint
                 if (global_step + 1) % args.save_steps == 0:

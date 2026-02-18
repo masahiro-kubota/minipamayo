@@ -127,18 +127,30 @@ class PretrainCollator:
             pad_len = max_len - seq_len
 
             if pad_len > 0:
-                input_ids.append(torch.cat([
-                    s["input_ids"],
-                    torch.full((pad_len,), self.pad_token_id, dtype=torch.long),
-                ]))
-                attention_mask.append(torch.cat([
-                    s["attention_mask"],
-                    torch.zeros(pad_len, dtype=torch.long),
-                ]))
-                labels.append(torch.cat([
-                    s["labels"],
-                    torch.full((pad_len,), IGNORE_INDEX, dtype=torch.long),
-                ]))
+                input_ids.append(
+                    torch.cat(
+                        [
+                            s["input_ids"],
+                            torch.full((pad_len,), self.pad_token_id, dtype=torch.long),
+                        ]
+                    )
+                )
+                attention_mask.append(
+                    torch.cat(
+                        [
+                            s["attention_mask"],
+                            torch.zeros(pad_len, dtype=torch.long),
+                        ]
+                    )
+                )
+                labels.append(
+                    torch.cat(
+                        [
+                            s["labels"],
+                            torch.full((pad_len,), IGNORE_INDEX, dtype=torch.long),
+                        ]
+                    )
+                )
             else:
                 input_ids.append(s["input_ids"][:max_len])
                 attention_mask.append(s["attention_mask"][:max_len])

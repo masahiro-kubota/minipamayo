@@ -71,15 +71,15 @@ user_prompt: |
 ```yaml
 # 例: av_cot.yaml（自動運転向け）
 user_prompt: |
-  The video depicts the observation from the vehicle's camera. 
-  You need to think step by step and identify the objects in the scene 
+  The video depicts the observation from the vehicle's camera.
+  You need to think step by step and identify the objects in the scene
   that are critical for safe navigation.
 ```
 
 ```yaml
 # 例: robot_cot.yaml（ロボット向け）
 user_prompt: |
-  You are given the task "{task_instruction}". 
+  You are given the task "{task_instruction}".
   Specify the 2D trajectory your end effector should follow in pixel space.
   Return the trajectory coordinates in JSON format.
 ```
