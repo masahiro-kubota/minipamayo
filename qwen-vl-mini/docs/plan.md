@@ -10,6 +10,25 @@ Phase 1 (基盤) → Phase 2 (Stage 1: Feature Alignment) → Phase 3 (Stage 2: 
 
 完了後、学習済み重みを Cosmos Reason Mini に引き継ぐ。
 
+### 実装アプローチ: Simplest-First Fail-Fast
+
+design.md / plan.md には論文サーベイに基づく多数の「検討」事項（336x336 解像度、[CLS] トークン連結、トークン圧縮、GLU 活性化、深層レイヤー選択、vision block 追加 等）が記載されているが、**Phase 1 ではすべて最もシンプルな選択で実装し、まず動くものを作る**。改善は実測に基づいて段階的に行う。
+
+**Phase 1 の初期構成（最小構成）**:
+
+| 項目 | 選択 | 理由 |
+|---|---|---|
+| 入力解像度 | **224×224** | DINOv2 のデフォルト。336 は後で試す |
+| Vision Encoder 出力 | **全 12 層の最終層パッチトークン** | 深層選択・Layerscale 統合は後で試す |
+| [CLS] トークン | **使わない**（パッチトークンのみ） | LLaVA §4.1 準拠。連結は後で試す |
+| Adapter | **2 層 MLP, GELU** | COMM Table 6 準拠。GLU は後で試す |
+| トークン圧縮 | **なし**（256 トークンそのまま） | まず動作確認。Pixel Shuffle は後で導入 |
+| Vision block 追加 | **なし** | dino-meets-text の知見だが初期は不要 |
+
+**改善サイクル**: Phase 1 完了後、Phase 2/3 の学習結果を見ながら一つずつ変更を試し、効果を実測で確認する。**同時に複数変更しない**（どの変更が効いたか分からなくなる）。
+
+具体的な Phase 1 の実装手順は [phase1-implementation.md](phase1-implementation.md) を参照。
+
 ---
 
 ## Phase 1: 基盤構築
@@ -49,6 +68,8 @@ Phase 1 (基盤) → Phase 2 (Stage 1: Feature Alignment) → Phase 3 (Stage 2: 
 ---
 
 ## Phase 2: Stage 1 — Feature Alignment
+
+具体的な実装手順は [phase2-implementation.md](phase2-implementation.md) を参照。
 
 ### 目的
 
@@ -100,6 +121,8 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
 ---
 
 ## Phase 3: Stage 2 — Visual Instruction Tuning
+
+具体的な実装手順は [phase3-implementation.md](phase3-implementation.md) を参照。
 
 ### 目的
 
