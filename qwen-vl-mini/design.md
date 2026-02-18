@@ -444,60 +444,307 @@ Qwen3-VL が既製の SigLIP-2 を fine-tune する方式に移行したこと�
 
 ## 10. 小規模 VLM 論文からの知見（設計への反映）
 
-詳細は [小規模 VLM 構築の知見まとめ](../small-vlm-research.md) を参照。以下は Qwen2.5-VL Mini の設計に直接影響する知見を抜粋。
+以下は Qwen2.5-VL Mini の設計に直接影響する知見を、出典論文とともに記載する。論文 PDF は [paper/](paper/) ディレクトリに格納。
 
 ### 10.1 Adapter 設計: MLP > Resampler
 
-**TinyLLaVA の発見**: 小規模 VLM（~3B 以下）では **2 層 MLP が Resampler を全ベンチマークで上回る**。小規模モデルでは MLP の方が情報損失が少ない。
+**TinyLLaVA [arXiv:2402.14289] Figure 6**: CLIP ViT + TinyLlama + LLaVA-1.5 データで MLP connector と Resampler connector を比較。**MLP が Resampler を全体的な性能で上回る**。全後続実験で MLP を採用。具体的な数値差は図中のバーチャートのみで、テーブルでの記載はない。
 
-**COMM 論文の発見**: DINOv2 を VLM のビジョンエンコーダとして使う場合、**2 層以上の MLP が必須**。1 層 Linear では大幅に性能低下。
+**COMM [arXiv:2310.08825] Table 6**: DINOv2 ViT-L を VLM のビジョンエンコーダとして使う場合の射影層アブレーション。**2 層 MLP が最適**で、1 層 Linear に対して RefCOCO+ test-A で **+15.7pt**（77.5 vs 61.8）、RefCOCO val で **+11.8pt**（74.7 vs 62.9）の大差。4 層以上にすると急激に性能が崩壊する（4 層で -23.8pt、8 層でほぼ壊滅）。「Ratio 4」は隠れ層次元が入力の 4 倍を意味する。
 
-**設計への反映**: §3.2 の初期実装（2 層 MLP: 768→896→896）は論文知見と一致しており妥当。
+**COMM [arXiv:2310.08825] Table 6（Ratio アブレーション）**: 2 層 MLP の隠れ層次元は **Ratio 4（入力の 4 倍）が最適**。Ratio 8 (77.4) や Ratio 16 (76.2) でも Ratio 4 の 1 層 MLP (75.3) と同等以上だが、2 層 MLP + Ratio 4 (77.5) が最高。
+
+**SmolVLM [arXiv:2504.05299] Idefics3 ソースコード**: Pixel Shuffle 導入時の MLP は **`nn.Linear(input, output, bias=False)` の単一 Linear 層**。Pixel Shuffle で次元を拡張した後は非線形 MLP が不要になる。
+
+**Idefics2 [arXiv:2405.02246] Table 11, Appendix A.1.3**: Perceiver Resampler 以外の pooling 戦略（simple linear layer, Mapping Network）は Perceiver Resampler に大幅に劣る。ただし Perceiver Resampler は追加パラメータが大きいため（3 層）、~600M の小型モデルでは軽量な MLP の方が適切。
+
+**Idefics2 [arXiv:2405.02246] Appendix A.1.3**: Perceiver Resampler のレイヤー数は **3 層**が最適。レイヤー数増加は統計的に有意な改善なし。
+
+**設計への反映**: §3.2 の初期実装は `Linear(768, 3072) → GELU → Linear(3072, 896)` とする（COMM Table 6: Ratio 4 が最適）。**Pixel Shuffle を導入する場合は、Pixel Shuffle + 1 層 Linear（バイアスなし）で十分**（SmolVLM 実装）。Perceiver Resampler は高い圧縮性能を持つが、~600M モデルには追加パラメータが重いため MLP を優先する。
 
 ### 10.2 トークン圧縮: Pixel Shuffle r=4 が有力
 
-**SmolVLM の発見**: ~500M モデルでは **Pixel Shuffle r=4（16 倍圧縮）** が最適。大型モデル（~2B）の r=2 よりも積極的な圧縮が有効。Attention のオーバーヘッドが軽減され、限られたパラメータで長いコンテキストを扱える。
+**SmolVLM [arXiv:2504.05299] Figure 3 右**: ~500M モデルでは **Pixel Shuffle r=4（16 倍圧縮）** が最適。大型モデル（~2B）の r=3 よりも積極的な圧縮が有効。SmolVLM-500M の実装（HuggingFace config.json + Idefics3 ソースコードから確認）:
+- SigLIP-B/16 出力: 32×32 = 1,024 トークン × 768 次元
+- Pixel Shuffle r=4: `(B, 1024, 768)` → reshape `(B, 32, 32, 768)` → `(B, 8, 8, 768×16)` = `(B, 64, 12288)`
+- MLP 射影: `nn.Linear(12288, 960, bias=False)` — **単一 Linear 層（バイアスなし）**
+- 最終出力: 64 トークン × 960 次元
 
-**Idefics2 の発見**: Perceiver Resampler で **729→64 トークンに削減しても +8.5pt 改善**（ただし 8B モデル）。
+**Idefics2 [arXiv:2405.02246] Table 11**: Fully autoregressive + frozen バックボーンにおける Vision-Language Connector 比較。Perceiver（729→64 トークン）が Linear Projection (44.5) や Mapping Network (51.8) に対して **60.3**（+8.5pt）。Table 4 では 64 トークン (71.7) が 128 トークン (71.2) と同等以上。
 
-**設計への反映**: §3.2 のトークン圧縮候補に **Pixel Shuffle（方式 C）** を追加すべき。DINOv2 の 256 トークンに対して:
+**設計への反映**: §3.2 のトークン圧縮候補。**DINOv2 ViT-B/14 は 16×16 = 256 トークン**なので r=4 だと 1×1 = 1 トークンになってしまう点に注意。r=2 で 4×4 = 16 トークンが現実的:
 
 | 方式 | トークン数 | 実装 | 備考 |
 |---|---|---|---|
 | なし（初期） | 256 | MLP のみ | 動作確認用 |
-| 隣接パッチグループ化 | 64 | Qwen2.5-VL 方式 | r=2 相当 |
-| **Pixel Shuffle r=4** | **16** | Space-to-Depth + MLP | **SmolVLM 推奨** |
+| 隣接パッチグループ化 | 64 | Qwen2.5-VL 方式（4 パッチ→1） | r=2 相当 |
+| **Pixel Shuffle r=2** | **64** | Space-to-Depth + Linear | SmolVLM 方式を 256 パッチに適用 |
+| Pixel Shuffle（4 パッチグループ + r=2） | **16** | グループ化 → Space-to-Depth + Linear | 最も積極的な圧縮 |
 | Cross-Attention Pooling | 任意 | learnable query | 柔軟だが学習が必要 |
+
+> **注意**: SmolVLM-500M は SigLIP-B/16（512×512、32×32 = 1,024 パッチ）に r=4 を適用して 64 トークンに圧縮している。DINOv2 ViT-B/14 は 224×224、16×16 = 256 パッチなので、同じ 64 トークンを得るには r=2 で十分。
+
+**SmolVLM [arXiv:2504.05299] Finding 2**: 小規模 LM（135M, 360M）は**コンテキスト長 8k トークンを超えると学習が不安定**になる。1.7B LM は 16k まで安定。Qwen2.5-0.5B（494M）は中間に位置するため、ビジョントークン + テキストの合計が 8k を超えないようトークン圧縮が重要。256 ビジョントークン + テキストでは上限に余裕があるが、将来的にマルチ画像や長いテキスト指示を扱う場合にリスクとなる。
+
+**Idefics2 [arXiv:2405.02246] Table 9**: instruction-tuned Idefics2（8B）はわずか **64 視覚トークンで LLaVA-NeXT 13B、DeepSeek-VL 7B、MM1-Chat 7B を凌駕**（MMMU 43.5, MathVista 51.6, TextVQA 70.4, MMBench 76.8）。320 トークンにしても大差なし（TextVQA +2.6pt のみ）。**64 トークンへの圧縮は性能を損なわないどころか有利**という強いエビデンス。
+
+**Idefics2 [arXiv:2405.02246] Table 3**: LoRA 適用時、fully autoregressive (69.5) が cross-attention (67.3) を **+2.2pt 逆転**。Cross-Attention Pooling を Adapter として使う場合、LoRA との相性に注意が必要。
+
+**Idefics2 [arXiv:2405.02246] Table 5, Finding 5**: **アスペクト比保持**が有効。正方形リサイズ (768px) とアスペクト比保持 (378-768px) で性能はほぼ同等（73.1 vs 72.1）だが、アスペクト比保持は GPU メモリ節約に寄与。
+
+**Idefics2 [arXiv:2405.02246] Table 9, Finding 6**: **Image splitting（サブ画像分割）** が特に OCR タスクで効果的。画像を 4 つのクロップ + オリジナルに分割し、各画像 64 トークン（計 320 トークン）として入力。TextVQA と DocVQA で特に大きな改善。50% のサンプルにのみ適用しても 100% と同等の効果。
+
+**LLaVA-1.5 [arXiv:2310.03744] §3.4, Figure 2**: 高解像度対応は**グリッド分割 + 独立エンコード + グローバルコンテキスト連結**方式で実現。グローバルコンテキストの連結が重要（+0.9 GQA, +71 MME, +3.2 MM-Vet）。
+
+**LLaVA-1.5 [arXiv:2310.03744] §5.2**: **高解像度化でハルシネーションが減少**。入力解像度が低いと訓練データの詳細を識別できず、モデルがハルシネーションを「学習」してしまう。
 
 ### 10.3 Vision Encoder と LLM のバランス
 
-**SmolVLM の発見**: 428M エンコーダ + 135M LM で性能低下。小さい LLM に大きすぎるエンコーダは逆効果。
+**SmolVLM [arXiv:2504.05299] Figure 3 左**: 428M エンコーダ (SigLIP-SO400M) + 135M LM (SmolLM2-135M) で性能が著しく低下。360M LM に 428M エンコーダを使うとパラメータ 66% 増加に対し +11.6% の改善のみ → 小さいエンコーダ (93M SigLIP-B/16) の方が効率的。
 
-**Idefics2 の発見**: LLM の品質改善（+5.1pt）が Vision Encoder 改善（+3.3pt）より VLM 性能に寄与。
+**Idefics2 [arXiv:2405.02246] Table 1, 2**: LLM を LLaMA-1-7B → Mistral-7B に変更で **+5.1pt**。Vision Encoder を CLIP-ViT-H → SigLIP-SO400M に変更で **+3.3pt**。さらに EVA-CLIP-5B (4.4B) と SigLIP-SO400M (400M) の差はわずか 0.5pt で、パラメータ 11 倍でも Vision Encoder 側の改善は限定的。
 
-**設計への反映**: DINOv2 ViT-B/14（86M）+ Qwen2.5-0.5B（494M）のエンコーダ比率 ~15% は、SmolVLM-500M（SigLIP-B 93M + SmolLM2 360M、~21%）と同等で適切なバランス。
+**Imp [arXiv:2405.12107] Table 1, §1.1**: **LLM の品質がビジュアルエンコーダより重要**。同じ 2.7B スケールで Phi-2 は MobileLLAMA より平均スコア 68.6 vs 65.1 と大幅に優れる。LLM の事前学習データの質が VLM 性能に直結する。
 
-### 10.4 DINOv2 のフローズン戦略
+**LLaVA-Phi [arXiv:2401.02330] §4, Figure 3**: **基盤 LLM の事前訓練分野が特定タスクの成功/失敗を決定的に左右する**。Phi-2（コード生成訓練）は数学 OCR で正確な計算が可能だが、LLaVA-1.5-13B は数字と数学記号の認識に失敗。**Qwen2.5-0.5B は多言語・コード・数学を含むバランスの取れた事前訓練**が行われており、幅広いタスクへの適応が期待できる。
 
-**TinyLLaVA の発見**: 小規模モデルでは ViT の一部 unfreeze が有効。「Share recipe」では **前半 12 層をフローズン、後半のみ解凍**することで性能向上。
+**Imp [arXiv:2405.12107] Table 3**: Imp-2B（**Qwen-1.5 1.8B** + SigLIP-SO400M）のベンチマーク。特に **MMBCN（中国語ベンチマーク）63.8** で他の LLM（Phi-2: 49.4、MobileLLaMA: 27.1）を大幅に上回る。多言語 LLM の能力がそのまま VLM に引き継がれる証拠。
 
-**Idefics2 の発見**: バックボーンの完全 unfreeze は訓練発散を引き起こす。**LoRA/DoRA で安定化**する方が +12.9pt 改善。
+**設計への反映**: DINOv2 ViT-B/14（86M）+ Qwen2.5-0.5B（494M）のエンコーダ比率 ~15% は、SmolVLM-500M（SigLIP-B 93M + SmolLM2 360M、~21%）と同等で適切なバランス。Qwen2.5-0.5B は同ファミリーの Qwen-1.5 1.8B の多言語能力を縮小版で受け継いでおり、特にアジア言語タスクでの優位性が期待される。
 
-**設計への反映**: §1.2 の Stage 2 で DINOv2 を全解凍する方針は維持するが、訓練が不安定な場合の対策を明確化:
-1. まず全解凍で試行
-2. 発散したら DINOv2 の**後半 6 層のみ解凍**（TinyLLaVA Share recipe）
-3. それでも不安定なら **LoRA（rank=256）** を LLM に適用（Imp, Idefics2）
+### 10.4 DINOv2 のフローズン戦略と訓練安定性
+
+**TinyLLaVA [arXiv:2402.14289] Table A1**: 「Share recipe」（前半 12 層凍結、後半のみ解凍、lr=2e-5）の効果。TextVQA で +2.6~+3.5pt 改善する一方、**POPE は全モデルで低下**（Sig-TL -1.0pt、Sig-Phi -0.7pt）。ViT 解凍はハルシネーション増加のリスクがある。
+
+**Idefics2 [arXiv:2405.02246] Table 3**: Fully autoregressive + frozen (60.3) → LoRA (69.5) で **+9.2pt**（論文本文では "+12.9 points increase" と記述、実験条件の差異あり）。完全 unfreeze は訓練発散を引き起こし安定化不可能。LoRA の具体的な rank 等のハイパーパラメータは論文中に未開示。最終モデルでは DoRA（LoRA の変種）を使用。
+
+**Imp [arXiv:2405.12107] Table 1 §2.1**: LoRA rank のアブレーション。Full-parameter FT (71.2) < LoRA rank=128 (71.4) < **rank=256 (71.6)** > rank=512 (71.5)。小規模 LLM では完全微調整よりも LoRA の方が過学習を防ぎ、メモリ効率も高い。
+
+**COMM [arXiv:2310.08825] 訓練設定**: COMM は **DINOv2 を frozen にしたまま** LLM + alignment 層 + MFM モジュールのみを学習し、高い性能を達成（Table 2: RefCOCO val 91.73, test-A 94.06 等）。DINOv2 を解凍せずとも十分な VLM 性能が得られる可能性を示唆。ただし COMM は 7B LLM を使用しており、0.5B の Mini では LLM 容量が限られるため frozen DINOv2 だけでは不足する可能性もある。
+
+**Imp [arXiv:2405.12107] Table 1 §2.1（LoRA vs Full FT ベンチマーク別）**: LoRA rank=256 は平均で Full FT を +0.4pt 上回るが、**MMBench では -0.5pt 劣る**（唯一の劣位指標）。LoRA 適用時は MMBench 系タスクの性能に注意。
+
+**Cambrian-1 [arXiv:2406.16860] Finding 4, §3.3**: 「ビジョンエンコーダのアンフリーズは広く有益であり、特に **SSL モデル（DINOv2）は vision-centric ベンチマークで特に恩恵**を受ける」。DINOv2 ViT-L/14@336 の Frozen → Unfrozen: Average +4.88, Vision-Centric **+11.47**。解凍時のビジョンエンコーダ lr=**1e-5**。ただし訓練速度は 50-55% 低下。
+
+**TinyLLaVA [arXiv:2402.14289] §4.2.2**: **小型 LLM では ViT の fine-tuning が有効**（大型 LLM とは逆パターン）。大型 LLM では ViT fine-tuning が性能を劣化させるとの報告があるが、小型 LLM では逆に改善する。ただし**訓練パラメータ増加がハルシネーション増加のリスク**と直結（POPE 低下）。
+
+**Eagle [arXiv:2408.15998] Table 3**: DINOv2 ViT-L/14-Reg@448 の Frozen avg=520.7 → Unfrozen avg=**537.3 (+16.6)**。解凍の効果を独立して確認。
+
+**設計への反映**: §1.2 の Stage 2 で DINOv2 を全解凍する方針は維持するが、訓練が不安定な場合の段階的対策:
+1. まず全解凍で試行（DINOv2 lr=**1e-5**、LLM lr=**2e-5**。Cambrian-1 Table 23 準拠）
+2. 発散したら DINOv2 の**後半 6 層のみ解凍**（TinyLLaVA Share recipe 準拠。ただし POPE 低下に注意）
+3. それでも不安定なら **LoRA rank=256** を LLM に適用（Imp Table 1 §2.1 が根拠。Idefics2 でも LoRA による安定化を確認。MMBench -0.5pt に注意）
+4. DINOv2 を frozen にしたまま adapter + LLM のみ学習も選択肢（COMM の知見）
+
+**推奨手順**: まず frozen で設計を固め（データ、Adapter、ハイパーパラメータの検証）、**設計が固まったら unfreeze で最終訓練**（Cambrian-1 方式）。解凍時は 50-55% の訓練速度低下を見込む。
 
 ### 10.5 エポック数と過学習
 
-**Imp の発見**: 小型 VLM では **2 エポックが最適**。1 エポックで -0.5pt、3 エポック以上で -0.4pt（過学習）。
+**Imp [arXiv:2405.12107] Table 1 §2.2**: エポック数のアブレーション（SigLIP-SO400M + Phi-2、LoRA rank=256）。
 
-**SmolVLM の発見**: 訓練を長く続けると一部指標（DocVQA 等）が低下。**チェックポイントを頻繁に保存**し、複数指標で最適を選択。
+| エポック | 平均スコア | VQAv2 | TextVQA | SQA-I | POPE |
+|---|---|---|---|---|---|
+| 1 | 71.6 | 79.9 | 57.9 | 71.0 | 87.8 |
+| **2** | **72.1** | 81.2 | 59.4 | 71.2 | 87.8 |
+| 3 | 71.7 | 81.5 | 57.7 | 70.0 | 87.5 |
+
+1→2 で +0.5pt、2→3 で **-0.4pt**（TextVQA -1.7、SQA-I -1.2 が主因）。**2 エポックが最適**。Imp は 1 エポックでは「学習不足（undertrained）」と明示的に診断しており、**Stage 2 のデフォルトは 2 エポックとすべき**。
+
+**SmolVLM [arXiv:2504.05299]**: チェックポイントを **25 最適化ステップごとに保存**し、最適点は訓練終了時とは限らないことを前提に設計。
 
 **設計への反映**: §4.1, §4.2 のエポック数は 1 で設計済みだが、2 エポック目を追加する余地がある。ただし 3 エポック以上は避ける。チェックポイントは 25 ステップごとに保存し、POPE + ScienceQA の重み付き平均で最適を選択。
 
 ### 10.6 位置トークンの設計
 
-**SmolVLM の発見**: 文字列ベースの位置トークン（`<row_1_col_2>` 等）は「OCR loss plague」を引き起こし、学習が不安定になる。**学習可能な位置埋め込み**で安定化。
+**SmolVLM [arXiv:2504.05299] §2.2 Finding 5**: 文字列ベースの位置トークン（`<row_1_col_2>` 等）は「OCR loss plague」を引き起こし、学習が不安定になる。**学習可能な位置埋め込み**で安定化。
 
 **設計への反映**: DINOv2 のパッチ順序は空間的に並んでおり、§1.3 で述べたように暗黙的な位置情報を持つ。明示的な位置トークンを追加する場合は、文字列ではなく学習可能な埋め込みを使用する。
+
+### 10.7 DINOv2 の特徴特性
+
+**COMM [arXiv:2310.08825] Table 1**: DINOv2 単独（MFM なし）の VLM 性能。グラウンディング (Avg REC 54.8) では CLIP (47.3) を **+7.5pt** 上回るが、VQA (63.1 vs 68.8) やキャプション生成 (Flickr30k CIDEr 68.9 vs 80.7) では CLIP に劣る。MFM 適用後も DINOv2 w/ MFM (72.8) が CLIP w/ MFM (70.0) をグラウンディングで **+2.8pt** 上回る。
+
+**COMM [arXiv:2310.08825] MFM モジュール**: DINOv2 ViT-L（24 層）からは**深い層（19-24 層）のみ**を使用。浅い層はセマンティック情報が不足し、全層の平均 Mean(all) は Mean(19-24) より顕著に劣る（Figure 3、数値はグラフのみ）。DINOv2 ViT-B/14（12 層）に適用する場合は後半 6 層（7-12 層）が対応。
+
+**COMM [arXiv:2310.08825] Table 7**: 画像のみで事前学習された他のモデル（MAE, DeiT）との比較。MAE は DINOv2 に対して RefCOCO+ test-A で -9.4pt、DeiT は -50.0pt と壊滅的。DINOv2 の self-supervised contrastive learning が VLM に有効な特徴を獲得していることの根拠。
+
+**Cambrian-1 [arXiv:2406.16860] Table 2**: 23 種のビジョンエンコーダを体系的評価。DINOv2 は**自己教師あり学習モデルの中で全カテゴリ 1 位**、全体でも第 5 位。言語教師あり（CLIP/SigLIP 系）を除けば最強のエンコーダ。
+
+**Cambrian-1 [arXiv:2406.16860] Figure 17**: DINOv2 ViT-L/14@336 の Frozen → Unfrozen の効果。Average **+4.88pt**、Vision-Centric **+11.47pt**（MMMU +11.11、RealWorldQA +21.99）。**DINOv2 は解凍時の改善幅が特に大きい**。解凍時のビジョンエンコーダ学習率は **1e-5**（メイン LR 2e-5 の半分）。ただし訓練速度は **50-55% 低下** する（Appendix F）。
+
+**Cambrian-1 [arXiv:2406.16860] Figure 7**: DINOv2 はデータ量を増やすことで CLIP とのギャップを縮められる。0M → 0.5M → 1.2M Adapter データで一貫して性能向上。5M instruction tuning データで Unfrozen DINOv2 avg=47.40 を達成。
+
+**Cambrian-1 [arXiv:2406.16860] Table 12**: DINOv2 ViT-L/14@336（Frozen）の弱点の具体値。OCRBench=**3.10**、ChartQA=**16.48**、DocVQA=**11.90**。OCR/テキスト認識は DINOv2 の根本的弱点であり、テキスト系タスクでは CLIP の半分以下。
+
+**DINOv2 [arXiv:2304.07193] Table 4, 17**: DINOv2 ViT-B/14 は **ViT-g/14 からの蒸留モデル**。ImageNet-1k Linear 精度 ViT-B=82.1、ViT-L=84.5、ViT-g=86.5。ViT-B は ViT-g の知識を効率的に保持しつつパラメータを 1/13 に圧縮。
+
+**Eagle [arXiv:2408.15998] Table 5**: Pre-alignment 段階を経ない non-text-aligned encoder は有意に低い性能。DINOv2 のような自己教師あり学習エンコーダには **Pre-alignment（Stage 1）が必須**。
+
+**設計への反映**: DINOv2 はテキスト対応がないため VQA・キャプションでは CLIP に劣るが、空間的な詳細情報に強い。Stage 1 の Feature Alignment で十分な学習を行い、このギャップを Adapter で補う必要がある。DINOv2 はグラウンディング・3D 理解に強みを持つため、自動運転シーンの空間理解には特に適している。解凍時の改善幅が大きいことから、Stage 2 での解凍は特に重要。
+
+### 10.8 データ品質に関する知見
+
+**SmolVLM [arXiv:2504.05299] Figure 7 左**: LLM-SFT テキストデータ（SmolTalk）の再利用は、画像タスクで最大 **-6.5%**、動画タスクで **-3.7%** の性能低下を引き起こす。LLM-SFT データの再利用は避け、新しいテキスト SFT データを使用すべき。
+
+**SmolVLM [arXiv:2504.05299] Figure 7 中央**: CoT（Chain-of-Thought）データは全体の **0.02-0.05%** が最適。高い比率では性能が顕著に劣化、特に画像タスクで悪化。小規模 VLM の限られた容量を CoT データが圧迫するため。
+
+**Idefics2 [arXiv:2405.02246] Table 6**: 合成キャプション (52.9) が人手の alt テキスト (49.8) を **+3.1pt** 上回る。Web 上の alt テキストはノイジーで品質が低い。
+
+**Imp [arXiv:2405.12107] Table 1, Section 3.2**: GPT4V-annotated データ（ShareGPT-4V 20K + LAION-GPT-V 10K + ALLaVA 300K = 計 330K）の追加で平均スコア **71.8 → 73.2 (+1.4pt)**。特にキャプションと会話データの相乗効果が大きい。OCR & chart データ（DVQA, ChartQA, DocVQA, AI2D, InfographicVQA = 計 32K）も TextVQA, ScienceQA を大幅改善。
+
+**TinyLLaVA [arXiv:2402.14289] Figure 7**: Stage 1 Pre-training データとして ShareGPT4V (1,246K) が LLaVA-1.5 (558K) より一貫して良い結果を示す。ただし **TinyLlama (1.1B) は大量データで POPE が顕著に劣化**。パラメータ不足により大量データへの適合が不十分で、ハルシネーション増加が生じる（§4.2.2）。
+
+**Cambrian-1 [arXiv:2406.16860] Figure 7**: DINOv2 はデータ量を増やすことで CLIP とのギャップを縮められる。**DINOv2 は text-alignment がないため、Stage 1 の Alignment データが CLIP 以上に重要**。558K で不足なら 1,246K への増量を検討すべき。
+
+**LLaVA [arXiv:2304.08485] Table 8, Ablation (iii)**: Pre-training をスキップすると精度が **90.92% → 85.81% (-5.11%)**。**DINOv2 はテキスト対応がないため、Pre-training スキップの影響は CLIP 以上に深刻**と予想される。
+
+**LLaVA [arXiv:2304.08485] Table 4**: 3 種類の Instruction-following データ混合が最高性能。Conversation + Detail description + Complex reasoning の全 3 種 = **85.1%**、Detail + Complex のみ = 81.9%、Conversation のみ = 73.8%。**データの多様性が重要**。
+
+**LLaVA-1.5 [arXiv:2310.03744] §5.1, Figure 4**: データの **50% にランダムダウンサンプリングしても 98% 以上の性能を維持**。30% まで減らしても MMBench, ScienceQA, POPE では低下なし。**小規模実験での検証が有効**であることの根拠。
+
+**LLaVA-1.5 [arXiv:2310.03744] §3.2, Table 1b**: VQA データに **Response formatting prompt**（"Answer the question using a single word or phrase"）を付加するだけで、short-answer VQA と long-form 会話の両立が可能。InstructBLIP のような short-answer overfit を回避。
+
+**設計への反映**: Stage 1 の CC3M-595K データは LLaVA [arXiv:2304.08485] でフィルタリング済みのため品質は確保されている。ただし **DINOv2 は text-alignment がないため、558K では不足する可能性がある**。まず 558K で開始し、Alignment が不十分な場合は **ShareGPT4V-PT 1,246K に増量**を検討する（TinyLLaVA Figure 7）。ただし Qwen2.5-0.5B は 494M と小型のため、データ過多によるハルシネーション増加にも注意（TinyLlama の事例）。Stage 2 で追加データを混合する場合は、CoT データの割合を 0.05% 以下に抑え、テキストのみのデータも新規データを使用する。データの多様性（会話 + 詳細記述 + 推論）を確保し、VQA データには formatting prompt を付加する。
+
+### 10.9 プロンプト設計と Loss マスク
+
+**SmolVLM [arXiv:2504.05299] Finding 6**: **システムプロンプト**（例: "You are a visual agent and should provide concise answers."）と**メディアイントロ/アウトロトークン**（例: "Here is an image..." / "Given this image..."）が小規模 VLM の性能を大幅に向上させる。特に動画タスクで顕著。さらに、**SFT 時にはユーザープロンプト部分をマスクし completion 部分のみで学習する**ことで過学習を抑制。
+
+**SmolVLM [arXiv:2504.05299] §3.2**: **ユーザープロンプトマスク（completion のみで loss 計算）** の効果。Multimodal QA では質問が繰り返し的であり、マスクしないとモデルが表面的な繰り返しを学習してしまう。画像タスク・動画タスク両方で一貫した性能向上を確認。
+
+**LLaVA-1.5 [arXiv:2310.03744] §3.2, Table 1b**: **Response formatting prompt** の追加で short-answer VQA と long-form 会話を両立。VQA データに "Answer the question using a single word or phrase" を付加するだけで overfit を回避。
+
+**SmolVLM [arXiv:2504.05299] §3.1, Finding 5**: サブ画像位置を示す**文字列ベースの位置トークン**（`<row_1_col_2>` 等）は「**OCR loss plague**」を引き起こす — 学習初期の loss plateau 後に OCR 性能が一切改善しなくなる現象。**学習可能な位置埋め込み（learned positional tokens）** に切り替えることで学習収束が改善し、OCR 精度・汎化性能が向上。特に 256M/500M の小型モデルで差が顕著。
+
+**設計への反映**:
+- §5 の入出力仕様の改善として、Stage 2 でシステムプロンプトとメディアマーカーを含む入力テンプレートを設計する
+- Loss マスクはシステムプロンプト + ユーザー質問部分を除外し、アシスタント回答部分のみに適用する（§4.2 と一貫）
+- VQA データには formatting prompt を付加して short-answer overfit を回避
+- 位置トークンを追加する場合は文字列ではなく学習可能な埋め込みを使用
+
+### 10.11 訓練テクニック: 正則化と最適化
+
+**LLaVA-Phi [arXiv:2401.02330] §3.1**: 小型 VLM (Phi-2 2.7B) では **weight decay = 0.1** を使用。LLaVA / LLaVA-1.5 の weight decay = 0 とは異なる。小型モデルではパラメータが少なく過学習しやすいため、weight decay による正則化がより重要になる。Optimizer は Adam (momentum 0.9, 0.98, epsilon 1e-7)。
+
+**Idefics2 [arXiv:2405.02246] §4.2**: **NEFTune（Noisy Embedding Fine-Tuning）** を Instruction Fine-tuning 時に適用して過学習を防止。入力埋め込みにノイズを注入することで汎化性能を向上。さらに**画像解像度のランダムスケールアップ**と **multi-turn 会話のシャッフル**も過学習対策として併用。
+
+**Idefics2 [arXiv:2405.02246] §4.2**: 最終モデルでは LoRA ではなく **DoRA（Weight-Decomposed Low-Rank Adaptation）** を使用。DoRA は LoRA の変種で、重みを方向と大きさに分解して適応する。
+
+**LLaVA [arXiv:2304.08485] Appendix C**: 全 Stage で **Adam optimizer, cosine learning rate schedule, warmup ratio 3%** を使用。精度は **BF16 + TF32**。
+
+**LLaVA-1.5 [arXiv:2310.03744] Table 9**: MLP projector 使用時の Stage 1 学習率は **1e-3**（Linear 時の 2e-3 から半減）。MLP は Linear より表現力が高いが学習が不安定になりやすいため、学習率を下げる必要がある。
+
+**Cambrian-1 [arXiv:2406.16860] Table 23**: ビジョンエンコーダ解凍時の学習率設定。Adapter 事前訓練 lr=**1e-3**, Instruction Tuning lr=**2e-5**, **ビジョンエンコーダ lr=1e-5**（メイン LR の半分）。
+
+**Imp [arXiv:2405.12107] §5**: 8×A100 GPU (40GB) で 32 時間以内に完了。4-bit 量子化でモデルサイズ 2.3GB、性能低下は軽微（SQA: 72.88 vs 73.03@8bit）。
+
+**設計への反映**:
+- Stage 2 の optimizer 設定: **weight decay = 0.1**（LLaVA-Phi の小型モデル向け設定）
+- Stage 2 で過学習の兆候が見られたら **NEFTune** を導入（Idefics2 知見）
+- DINOv2 解凍時の学習率: **1e-5**（Cambrian-1 Table 23 に準拠、メイン LR 2e-5 の半分）
+- MLP projector のため Stage 1 学習率は **1e-3**（LLaVA-1.5 Table 9 に準拠）
+
+### 10.12 Adapter の入力: パッチトークン vs CLS トークン
+
+**LLaVA [arXiv:2304.08485] §4.1**: CLIP ViT の **grid features（全パッチトークン）** を使用。CLS トークンではなくパッチトークン全体を Projector への入力とする。
+
+**LLaVA [arXiv:2304.08485] Table 8, Ablation (i)**: **penultimate layer（最終層の一つ前）** の特徴が最終層より +0.96% 高い（90.92 vs 89.96）。最終層はグローバルで抽象的な性質に集中し、一つ前の層の方が局所的な画像詳細に有用。
+
+**COMM [arXiv:2310.08825] Table 4**: DINOv2 では**深層レイヤーのみ**使用すべき。ViT-L（24 層）で Mean(19-24)=71.7 vs Mean(all)=69.1（**-2.6pt**）。浅層特徴はセマンティック情報が不足。CLIPとは逆のパターン。
+
+**設計への反映**:
+- DINOv2 の出力として **CLS トークンではなくパッチトークン全体**（256 個）を Adapter に入力
+- DINOv2 ViT-B/14（12 層）では**後半 6 層（7-12 層）の出力**を使用することを検討（ViT-L の 19-24 層に対応）
+- penultimate layer の使用も試す価値がある（LLaVA Table 8）
+
+### 10.13 2 段階訓練の具体的設定値（全論文の横断サマリ）
+
+全論文で一貫する 2 段階訓練の設定値をまとめる:
+
+**Stage 1（Feature Alignment / Pre-training）**:
+
+| パラメータ | 推奨値 | 根拠 |
+|-----------|--------|------|
+| 学習率 | **1e-3**（MLP 使用時） | LLaVA-1.5 Table 9, TinyLLaVA, LLaVA-Phi 共通 |
+| バッチサイズ | **256** | LLaVA-1.5 Table 9, LLaVA-Phi §3.1, TinyLLaVA 共通 |
+| エポック | **1** | 全 4 論文（LLaVA, LLaVA-1.5, TinyLLaVA, LLaVA-Phi）で一致 |
+| 訓練対象 | **Projector のみ** | LLM + Vision Encoder = frozen |
+| optimizer | **AdamW** | LLaVA-1.5 Table 9 |
+| lr schedule | **cosine decay** | LLaVA Appendix C, LLaVA-1.5 Table 9 |
+| warmup ratio | **0.03** | LLaVA-1.5 Table 9 |
+| weight decay | **0**（Stage 1 は Adapter のみなので正則化不要） | LLaVA Appendix C |
+| DeepSpeed | Stage 2 | LLaVA-1.5 Table 9 |
+| 精度 | **bf16** | 全論文共通 |
+| データ | **558K** image-caption pairs（最低ライン）| LLaVA-1.5 Table 3 |
+
+**Stage 2（Instruction Tuning / SFT）**:
+
+| パラメータ | 推奨値 | 根拠 |
+|-----------|--------|------|
+| 学習率 | **2e-5** | 全論文で一致 |
+| DINOv2 学習率 | **1e-5**（メイン LR の半分） | Cambrian-1 Table 23 |
+| バッチサイズ | **128-256** | LLaVA-1.5: 128, LLaVA-Phi: 256, TinyLLaVA-base: 128 |
+| エポック | **2** | Imp Table 1 §2.2: 1ep=71.6, 2ep=72.1, 3ep=71.7（過学習） |
+| LLM 更新方法 | **LoRA rank=256** or 全解凍 | Imp Table 1: LoRA > Full FT, Idefics2: unfreeze は発散リスク |
+| Vision Encoder | **まず frozen → 最終最適化で unfreeze** | Cambrian-1 Figure 17: +4.88pt avg |
+| optimizer | **AdamW** | 全論文共通 |
+| lr schedule | **cosine decay** | 全論文共通 |
+| warmup ratio | **0.03** | LLaVA-1.5 Table 9 |
+| weight decay | **0.1**（小型モデル） | LLaVA-Phi §3.1 |
+| 精度 | **bf16** | 全論文共通 |
+| Loss マスク | **completion 部分のみ** | SmolVLM §3.2 |
+| データ | **665K** 混合（VQA + 会話 + OCR + 詳細記述） | LLaVA-1.5 Table 7 |
+
+### 10.14 小規模 VLM の実績（設計思想の妥当性根拠）
+
+**Imp [arXiv:2405.12107] Table 3**: Imp-3B（Phi-2 + SigLIP-SO400M、2 エポック + LoRA rank=256）が LLaVA-1.5-7B を多数のベンチマークで凌駕。特に MM-Vet +13.1pt (43.3 vs 30.2)、MMB +6.8pt (72.9 vs 66.1)。LLaVA-1.5-13B も VQAv2 で上回る (81.2 vs 80.0)。
+
+**TinyLLaVA [arXiv:2402.14289] Table 3**: TinyLLaVA-3.1B（Phi-2 + SigLIP、Share recipe）が LLaVA-1.5-7B を VQAv2 (79.9 vs 78.5)、TextVQA (59.1 vs 58.2)、MMBench (66.9 vs 64.3) で上回る。
+
+**LLaVA-Phi [arXiv:2401.02330] §3.1**: LLaVA-Phi（CLIP ViT-L/14 + Phi-2 = 3B）は Pre-training **1.5 時間** + Fine-tuning **8 時間** = 合計 **9.5 時間**（8×A100）で完了。小型モデルの訓練は非常に高速。600M モデルならさらに短時間で完了する見込み。
+
+**LLaVA-Phi [arXiv:2401.02330] Table 1**: LLaVA-Phi (3B) は ScienceQA-IMG で **68.4%** を達成し、LLaVA-1.5-7B (66.8) と InstructBLIP (60.5) を上回る。これは Phi-2 がコード生成と数学コーパスで事前訓練されていることに起因。
+
+**設計思想への裏付け**: 3B クラスのモデルが適切な学習戦略（LoRA、2 エポック、高品質データ）で 7B/13B を凌駕できるという事実は、~600M の Qwen2.5-VL Mini で「実用的な VLM を構築する」という設計思想が妥当であることを示す。ただし 3B と 600M の間には大きなギャップがあるため、性能目標は控えめに設定する。訓練時間は非常に短いため、多数の実験イテレーションが可能。
+
+---
+
+### 参考スコア比較
+
+| ベンチマーク | SmolVLM-256M | SmolVLM-500M | LLaVA-Phi (3B) | Imp-3B | Qwen2.5-VL Mini 目標 |
+|---|---|---|---|---|---|
+| ScienceQA | 73.8% | 80.0% | 68.4% | 72.9% | ~75%（ランダム 25% を大幅に上回る） |
+| POPE | — | — | 85.0% | 88.0% | ~85% |
+| VQAv2 | — | — | 71.4% | 81.2% | 参考値 |
+| TextVQA | 50.2% | 60.2% | 48.6% | 59.4% | ~50%（DINOv2 の OCR 弱点を考慮） |
+| MME | — | — | 1335 | 1434 | ~1300 |
+| MMBench | — | — | 59.8% | 72.9% | 参考値 |
+| MMMU | 29.0% | 33.7% | — | — | 参考値 |
+| DocVQA | 58.3% | 70.5% | — | — | — |
+| MathVista | 35.9% | 40.1% | — | — | — |
+| OCRBench | 52.6 | 61.0 | — | — | —（DINOv2 の OCR 弱点により低い可能性） |
+
+> SmolVLM-500M (SigLIP-B 93M + SmolLM2 360M = 453M) と Qwen2.5-VL Mini (DINOv2 86M + Qwen2.5-0.5B 494M = 582M) はパラメータ数が近い。ただし DINOv2 はテキスト対応がないため、OCR/テキスト系タスクで同等スコアの達成は容易ではない。一方、グラウンディング・空間理解タスクでは DINOv2 の強みが発揮される可能性がある。
+
+---
+
+### 論文一覧（paper/ ディレクトリ）
+
+| ファイル名 | 論文 | arXiv |
+|---|---|---|
+| llava.pdf | Visual Instruction Tuning (LLaVA) | 2304.08485 |
+| llava-1.5.pdf | Improved Baselines with Visual Instruction Tuning (LLaVA-1.5) | 2310.03744 |
+| dinov2.pdf | DINOv2: Learning Robust Visual Features without Supervision | 2304.07193 |
+| tinyllava.pdf | TinyLLaVA: A Framework of Small-scale Large Multimodal Models | 2402.14289 |
+| imp.pdf | Imp: Highly Capable Large Multimodal Models for Mobile Devices | 2405.12107 |
+| smolvlm.pdf | SmolVLM: Redefining Small and Efficient Multimodal Models | 2504.05299 |
+| idefics2-what-matters.pdf | What Matters When Building Vision-Language Models? (Idefics2) | 2405.02246 |
+| comm-clip-to-dino.pdf | From CLIP to DINO: Visual Encoders Shout in Multi-Modal LLMs (COMM) | 2310.08825 |
+| llava-phi.pdf | LLaVA-Phi: Efficient Multi-Modal Assistant with Small Language Model | 2401.02330 |
+| moe-llava.pdf | MoE-LLaVA: Mixture of Experts for Large Vision-Language Models | 2401.15947 |
+| cambrian-1.pdf | Cambrian-1: A Fully Open, Vision-Centric Exploration of Multimodal LLMs | 2406.16860 |
+| eagle.pdf | Eagle: Exploring The Design Space for Multimodal LLMs | 2408.15998 |
+| sail.pdf | SAIL: Steering Approaches for Improved Language Models | — |
+| dino-meets-text.pdf | When DINO Meets Text | — |
+| openvla.pdf | OpenVLA: An Open-Source Vision-Language-Action Model | 2406.09246 |
+| sharegpt4v.pdf | ShareGPT4V: Improving Large Multi-Modal Models with Better Captions | 2311.12793 |
