@@ -1,6 +1,6 @@
 # Alpamayo 0.5B vs MiniPamayo 設計書：差分分析
 
-本ドキュメントは、[Alpamayo-R1 論文](alpamayo/alpamayo-paper.md)の **0.5B 構成**（DINOv2 + Qwen2.5-0.5B）と [MiniPamayo 設計書 v0.2](design.md) を比較し、差分を整理する。
+本ドキュメントは、[Alpamayo-R1 論文](alpamayo/alpamayo-paper.md)の **0.5B 構成**（DINOv2 + Qwen2.5-0.5B）と [MiniPamayo 設計書 v0.3](design.md) を比較し、差分を整理する。
 
 > **比較対象の選定理由**: Alpamayo には 0.5B / 3B / 7B（10B）の構成がある。MiniPamayo は RTX 4090 単体での技術理解が目的であり、アーキテクチャ構成が最も近い **0.5B 構成**（DINOv2 + Qwen2.5-0.5B）を比較対象とする。10B 構成（Cosmos-Reason-7B + 内蔵 ViT + 2B Flow デコーダ）は規模が異なりすぎるため、特記事項として言及するにとどめる。
 
@@ -12,22 +12,22 @@
 
 | 観点 | Alpamayo 0.5B | MiniPamayo | 差分 |
 |---|---|---|---|
-| Vision Encoder | DINOv2 | DINOv2 ViT-S/14 | **同系列**（サイズは後述） |
-| LLM | Qwen2.5-0.5B | SmolLM2-360M | 同規模の decoder-only LLM |
-| カメラ | マルチカメラ（7台）＋時系列 | **1台**（フロント） | **大きな差分** |
-| Action Head | Flow Matching | Flow Matching（小規模） | 同思想 |
+| Vision Encoder | DINOv2 | DINOv2 ViT-B/14 (86M) | **同系列**（サイズは後述） |
+| LLM | Qwen2.5-0.5B | **Qwen2.5-0.5B** | **同一モデル** |
+| カメラ | マルチカメラ（7台）＋時系列 | **1台**（フロント） | **差分** |
+| Trajectory Decoder | Flow Matching | Flow Matching (~150M) | 同思想（LLM の ~30%） |
 | 学習戦略 | Action Injection → SFT → RL | 回帰 → 離散 → Flow → SFT → RL | 同思想（MiniPamayo は fail-fast で段階的） |
-| 総パラメータ（LLM + Vision） | ~0.5B + α | ~385M | 同オーダー |
+| 総パラメータ（VLM + Decoder） | ~0.5B + α | ~730M | 同オーダー |
 
 ---
 
 ## 2. Vision Encoder
 
-両者とも DINOv2 を採用しているが、モデルサイズが異なる可能性がある。
+両者とも DINOv2 を採用している。
 
 | 観点 | Alpamayo 0.5B | MiniPamayo | 備考 |
 |---|---|---|---|
-| モデル | DINOv2（ViT-B/L の可能性） | DINOv2 ViT-S/14 (21M) | 0.5B でどのサイズを使うかは論文に明記なし |
+| モデル | DINOv2（サイズは論文に明記なし） | DINOv2 ViT-B/14 (86M) | hidden=768、LLM の 896 に近い |
 | 入力解像度 | 448×280（論文デフォルト） | 224×224 | MiniPamayo は VRAM 節約のため縮小 |
 | マルチカメラ | 7台入力 | 1台 | 0.5B でもマルチカメラを処理 |
 | マルチタイムステップ | 2秒の履歴（複数フレーム） | 単一フレーム | MiniPamayo は時系列未対応 |
@@ -46,7 +46,7 @@
 | 観点 | Alpamayo 0.5B | MiniPamayo | 備考 |
 |---|---|---|---|
 | 方式 | Projector（詳細は論文に明記なし） | Cross-Attention Pooling（16~32 query） | |
-| DINOv2 → LLM の次元変換 | 必要 | 必要（384 → 960） | |
+| DINOv2 → LLM の次元変換 | 必要 | 必要（768 → 896） | 射影ギャップ 1.2倍で小さい |
 | トークン数圧縮 | 不明（マルチカメラなので効率化が必要） | 256 → 16~32（積極的に圧縮） | |
 
 ### 備考
@@ -58,14 +58,14 @@
 
 | 観点 | Alpamayo 0.5B | MiniPamayo | 備考 |
 |---|---|---|---|
-| モデル | Qwen2.5-0.5B | SmolLM2-360M | |
-| パラメータ数 | ~500M | 362M | 同オーダー |
-| アーキテクチャ | decoder-only Transformer | decoder-only Transformer | 同じ |
+| モデル | Qwen2.5-0.5B | **Qwen2.5-0.5B** | **同一モデル** |
+| パラメータ数 | 494M | 494M | **同一** |
+| アーキテクチャ | decoder-only Transformer, GQA | 同一 | hidden=896, 24層, 2 KV heads |
 | 視覚入力の事前学習 | なし（テキスト LLM） | なし（テキスト LLM） | **同条件** |
-| ドメイン SFT | Cosmos-Reason パイプラインで運転データ SFT 済み | なし | **差分** |
+| ドメイン SFT | Cosmos-Reason パイプラインで運転データ SFT 済み | Cosmos Reason Mini で小規模 SFT | 同思想（スケール差） |
 
 ### ドメイン SFT
-Alpamayo では 0.5B であっても、Cosmos-Reason のパイプラインで物理 AI 向けの SFT（運転シーン記述、推論トレース等）が行われている。MiniPamayo でも設計書 §3.4 で同様のドメイン SFT を Stage 0 の前段として実施する方針。教師 VLM による auto-labeling で運転シーンの QA データを作成し、SmolLM2 に運転ドメインの視覚理解を獲得させる。
+Alpamayo では 0.5B であっても、Cosmos-Reason のパイプラインで物理 AI 向けの SFT（運転シーン記述、推論トレース等）が行われている。MiniPamayo でも設計書 §3.4 で同様のドメイン SFT を Stage 0 の前段として実施する方針。教師 VLM による auto-labeling で運転シーンの QA データを作成し、Qwen2.5-0.5B に運転ドメインの視覚理解を獲得させる。
 
 ただし、Alpamayo の Cosmos-Reason パイプラインは大規模データ（Physical AI 全般を含む）で行われているのに対し、MiniPamayo は公開データセットの範囲内での小規模 SFT となる。
 
@@ -73,37 +73,34 @@ Alpamayo では 0.5B であっても、Cosmos-Reason のパイプラインで物
 
 ## 5. アクション表現
 
-設計書 v0.2 では Alpamayo に倣って制御ベース表現を採用しており、**思想は一致**している。
+設計書 v0.3 では Alpamayo と同一の制御ベース表現・予測ホライズンを採用しており、**完全に一致**している。
 
 | 観点 | Alpamayo 0.5B | MiniPamayo | 備考 |
 |---|---|---|---|
-| 表現 | (加速度 a, 曲率 κ) | 同思想 (a, κ) | **一致** |
-| ダイナミクス | ユニサイクル + Euler 積分 | 同じ | **一致** |
-| 予測ホライズン | 6.4秒（64 waypoints @ 10Hz） | 3.2秒（32 waypoints @ 10Hz） | MiniPamayo は短縮 |
-| 離散トークン数 | 128 tokens (64×2) | 64 tokens (32×2) | ホライズンに比例 |
-| GT 逆算 | 最小二乗法 + Tikhonov 正則化 | 同じ | **一致** |
-
-### 差分: 予測ホライズン
-MiniPamayo は 3.2秒に短縮している。短い方が学習は容易だが、長距離の計画能力は制限される。Alpamayo の ablation では予測ホライズンの影響は明示的に議論されていないが、6.4秒は交差点通過や車線変更をカバーするのに十分な長さとして設定されている。
+| 表現 | (加速度 a, 曲率 κ) | (a, κ) | **同一** |
+| ダイナミクス | ユニサイクル + Euler 積分 | 同じ | **同一** |
+| 予測ホライズン | 6.4秒（64 waypoints @ 10Hz） | 6.4秒（64 waypoints @ 10Hz） | **同一** |
+| 離散トークン数 | 128 tokens (64×2) | 128 tokens (64×2) | **同一** |
+| GT 逆算 | 最小二乗法 + Tikhonov 正則化 | 同じ | **同一** |
 
 ---
 
 ## 6. Dual Representation（離散トークン + Flow）
 
-設計書 v0.2 でカバー済み。思想は一致。
+同じ LLM（Qwen2.5-0.5B）の語彙に離散トークンを追加し、同じ GQA 構造の KV-cache で条件付けるため、**実質的に同一の設計**。
 
 | 観点 | Alpamayo 0.5B | MiniPamayo | 備考 |
 |---|---|---|---|
-| 学習時 | 離散トークン（cross-entropy） | 同じ | **一致** |
-| 推論時 | Flow Matching デコーダ | 同じ | **一致** |
-| Flow デコーダ規模 | 不明（10B 版は 2B） | 小さな Transformer | 0.5B 版のデコーダサイズは論文に明記なし |
-| Flow の条件付け | KV-cache（stop-gradient） | 同思想 | **一致** |
+| 学習時 | 離散トークン（cross-entropy） | 同じ | **同一**（同一 LLM vocab） |
+| 推論時 | Flow Matching デコーダ | 同じ | **同一** |
+| Trajectory Decoder 規模 | 不明（10B 版は 2B） | ~150M（LLM の ~30%） | 0.5B 版のサイズは論文に明記なし |
+| Flow の条件付け | KV-cache（stop-gradient） | 同じ GQA の KV-cache | **同一** |
 
 ---
 
 ## 7. Reasoning — Chain of Causation (CoC)
 
-設計書 v0.2 でカバー済み。
+設計書 v0.3 でカバー済み。
 
 | 観点 | Alpamayo 0.5B | MiniPamayo | 備考 |
 |---|---|---|---|
@@ -119,7 +116,7 @@ Alpamayo では専門のアノテーターによる人間ラベリング + VLM a
 
 ## 8. RL ポストトレーニング
 
-設計書 v0.2 でカバー済み。
+同じ LLM に対する GRPO のため、**アルゴリズムは同一**。差分は計算リソースとスケールのみ。
 
 | 観点 | Alpamayo 0.5B | MiniPamayo | 備考 |
 |---|---|---|---|
@@ -175,23 +172,28 @@ MiniPamayo は 1 カメラのため、マルチカメラ効率化は不要。た
 
 ## 12. まとめ: 実質的な差分
 
-設計書 v0.2 では Alpamayo の主要コンセプト（制御ベース表現、Dual Representation、CoC、RL）をすべてカバーしており、**設計思想は 0.5B Alpamayo とほぼ一致している**。残る実質的な差分は以下の通り:
+設計書 v0.3 では Alpamayo 0.5B と**コンポーネント選定がほぼ一致**（同一 LLM、同系列 Vision Encoder、同一予測ホライズン）。残る差分は主に**運用・スケールの制約**に起因する。
 
-### スケールの差（意図的な簡略化）
-| 差分 | 影響 | 対応方針 |
-|---|---|---|
-| DINOv2 サイズ（ViT-S vs ViT-B/L？） | 視覚特徴の表現力 | RTX 4090 で余裕があれば ViT-B に変更可 |
-| LLM サイズ（360M vs 500M） | 言語理解力・推論力 | 同オーダーなので大きな差にはならない |
-| 予測ホライズン（3.2s vs 6.4s） | 長距離計画能力 | 学習が安定すれば延長可能 |
-| Flow デコーダ規模 | 軌道生成の品質 | 小規模から始めて拡大可能 |
+### v0.3 で解消された差分
+| 旧差分（v0.2） | v0.3 での対応 |
+|---|---|
+| LLM が異なる（SmolLM2-360M vs Qwen2.5-0.5B） | **同一モデル**（Qwen2.5-0.5B）を採用 |
+| DINOv2 サイズ（ViT-S vs ViT-B/L？） | **ViT-B/14** に変更。射影ギャップ 1.2倍 |
+| 予測ホライズン（3.2s vs 6.4s） | **6.4秒**に統一。128 離散トークン |
+| Trajectory Decoder の比率不明 | **~150M**（LLM の ~30%、Alpamayo 10B と同比率） |
 
-### 構造的な差（アーキテクチャの違い）
+### 残る構造的な差
 | 差分 | 影響 | 対応方針 |
 |---|---|---|
 | **カメラ数（1台 vs 7台）** | 360度認識不可、側方/後方の推論不可 | MiniPamayo の制約として受け入れ |
 | **時系列入力なし** | 動的な状況変化の推論が弱い | egomotion 入力で部分補完 |
-| **ドメイン SFT のスケール差** | 大規模 Physical AI データで SFT | 公開データで小規模 SFT（§3.4） |
+
+### 残るスケールの差
+| 差分 | 影響 | 対応方針 |
+|---|---|---|
 | **データ規模・品質** | 汎化性能の限界 | 技術理解が目的なので許容 |
+| **ドメイン SFT のスケール差** | 大規模 Physical AI データ vs 小規模公開データ | auto-labeling + RL で補完 |
+| **CoC ラベリング** | 人間ラベリングなし | VLM auto-labeling のみ。論文で「十分有効」と報告 |
 
 ### 10B 構成との追加的な差分（参考）
 10B 構成は 0.5B とも大きく異なる。参考として記載:

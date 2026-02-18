@@ -4,7 +4,7 @@
 
 **fail-fast** で段階的に進める。各 Stage に明確な Exit 条件を設け、クリアしてから次へ進む。
 
-設計書 v0.2（§3.7）に定義された 6 段階の学習パイプラインに対応:
+設計書 v0.3（§3.7）に定義された 6 段階の学習パイプラインに対応:
 
 ```
 ドメイン SFT → Stage 0（回帰）→ Stage 1（離散トークン）→ Stage 2（Flow）→ Stage 3（CoC SFT）→ Stage 4（RL）
@@ -27,12 +27,12 @@ minipamayo/
 ├── src/
 │   └── minipamayo/
 │       ├── models/
-│       │   ├── vision_encoder.py    # DINOv2 ViT-S/14 ラッパー
+│       │   ├── vision_encoder.py    # DINOv2 ViT-B/14 ラッパー
 │       │   ├── adapter.py           # Vision→LLM Adapter
-│       │   ├── llm.py               # SmolLM2-360M ラッパー
+│       │   ├── llm.py               # Qwen2.5-0.5B ラッパー
 │       │   ├── action_head.py       # MLP 回帰ヘッド (Stage 0)
 │       │   ├── discrete_head.py     # 離散トークン化 (Stage 1)
-│       │   ├── flow_head.py         # Flow Matching ヘッド (Stage 2)
+│       │   ├── trajectory_decoder.py # Trajectory Decoder / Flow Matching (Stage 2)
 │       │   ├── dynamics.py          # ユニサイクルダイナミクス・制御表現
 │       │   └── minipamayo.py        # 統合モデル
 │       ├── data/
@@ -81,7 +81,7 @@ minipamayo/
 
 ### 目的
 
-DINOv2 + SmolLM2 から汎用 VLM を構築し、運転ドメインの知識を注入する（§3.4）。後段の全 Stage の土台。
+DINOv2 ViT-B/14 + Qwen2.5-0.5B から汎用 VLM を構築し、運転ドメインの知識を注入する（§3.4）。後段の全 Stage の土台。
 
 ### Phase 2a: Qwen2.5-VL Mini（汎用 VLM 構築）
 
@@ -115,10 +115,10 @@ DINOv2 + SmolLM2 から汎用 VLM を構築し、運転ドメインの知識を�
 
 ### 3.1 各モジュール実装
 
-- [ ] **Vision Encoder**: DINOv2 ViT-S/14 ロード + forward
+- [ ] **Vision Encoder**: DINOv2 ViT-B/14 ロード + forward
 - [ ] **Adapter**: 平均 Pool + Linear（最小実装）
-  - DINOv2 出力 (256×384) → (16×960)
-- [ ] **LLM**: SmolLM2-360M ロード + visual tokens 入力の forward
+  - DINOv2 出力 (256×768) → (16×896)
+- [ ] **LLM**: Qwen2.5-0.5B ロード + visual tokens 入力の forward
   - 視覚トークンを embedding 空間に注入する方法を確定
 - [ ] **Action Head**: MLP（LLM hidden → [steer, throttle]）— fail-fast 用の最小出力
 
@@ -155,7 +155,7 @@ DINOv2 + SmolLM2 から汎用 VLM を構築し、運転ドメインの知識を�
   - 制御入力 (a, κ) → Euler 積分 → (x, y, θ, v) 軌道
   - 逆算: ego pose 軌道 → (a, κ) の GT 制御列
 - [ ] Action Head の出力を `[steer, throttle]` (2,) → `(a, κ)` (K, 2) に拡張
-  - K=32（3.2秒 @ 10Hz）
+  - K=64（6.4秒 @ 10Hz）— Alpamayo と同一
 - [ ] Loss: Huber loss on (a, κ) 制御入力列
 - [ ] 制御入力 → 軌道変換の可視化（予測 vs GT を画像上にプロット）
 
@@ -190,7 +190,7 @@ Alpamayo の Dual Representation 戦略の前半（§3.6 Stage B）。制御入�
 - [ ] 制御入力 (aᵢ, κᵢ) の均一量子化
   - 加速度 a: 所定範囲を N_bins で量子化
   - 曲率 κ: 所定範囲を N_bins で量子化
-- [ ] LLM の語彙に離散アクショントークンを追加（64 トークン = 32 × 2）
+- [ ] LLM の語彙に離散アクショントークンを追加（128 トークン = 64 × 2）
 - [ ] embedding layer と LM head の拡張
 
 ### 5.2 学習
@@ -221,7 +221,7 @@ Alpamayo の Dual Representation 戦略の前半（§3.6 Stage B）。制御入�
 
 LLM 内部表現を条件として、Flow Matching で連続的かつ多様な軌道を生成する（§3.6 Stage C）。Dual Representation の推論側を完成させる。
 
-### 6.1 Flow Head 実装
+### 6.1 Trajectory Decoder 実装（~150M params）
 
 - [ ] Conditional Flow Matching (CFM) の基本実装
   - Gaussian OT path: aₜ = t·a + (1-t)·ε
@@ -236,9 +236,9 @@ LLM 内部表現を条件として、Flow Matching で連続的かつ多様な�
 
 - [ ] Stage 0/1 の学習済み重み（Vision + Adapter + LLM）を初期値として使用
 - [ ] **stop-gradient**: Vision Encoder + Adapter + LLM は frozen（§3.7）
-- [ ] Flow Head のみ trainable
+- [ ] Trajectory Decoder のみ trainable
 - [ ] CFM loss の実装
-- [ ] gradient checkpointing を Flow Head にも適用
+- [ ] gradient checkpointing を Trajectory Decoder にも適用
 
 ### 6.3 評価
 
@@ -248,7 +248,7 @@ LLM 内部表現を条件として、Flow Matching で連続的かつ多様な�
 
 ### 6.4 Exit 条件
 
-- [ ] Flow loss が下がる
+- [ ] CFM loss が下がる
 - [ ] 回帰版より多様な軌道が出る（or ノイズ耐性が上がる）
 - [ ] 推論速度が離散トークン自己回帰より速い
 

@@ -1,10 +1,41 @@
-# MiniPamayo 設計書 v0.2
+# MiniPamayo 設計書 v0.3
 
 ## 1. 目的
 
 - Alpamayo-R1（VLA：Vision-Language-Action）の**技術的理解**を目的に、同種の構成要素と学習段取りを RTX 4090 単体で再現する
 - 目標は「SOTA 性能」ではなく、**学習が回り、Alpamayo の主要コンセプトを段階的に体験する**こと
 - 対象コンセプト: 制御ベースアクション表現、Dual Representation（離散トークン + Flow）、構造化推論（CoC）、RL ポストトレーニング
+
+### 1.1 コンポーネントサイジングの検討（RTX 4090 VRAM 制約）
+
+Alpamayo 0.5B 構成（DINOv2 + Qwen2.5-0.5B）を RTX 4090 単体で全パイプライン学習できるかを検討した結果、**可能**と判断した。以下にその根拠を示す。
+
+#### 全パイプラインの最大 VRAM 見積もり
+
+bf16 学習時の固定コストは **N × 12 bytes**（パラメータ 2B + AdamW 1st moment 4B + 2nd moment 4B + 勾配 2B）で支配される。
+
+**構成: DINOv2 ViT-B/14 (86M) + Adapter (~2M) + Qwen2.5-0.5B (494M) = 582M**
+
+| Stage | Trainable | 固定コスト (N×12) | Activation + overhead | 合計 |
+|---|---|---|---|---|
+| VLM Stage 1 (Adapter のみ) | 2M | 0.02 GB | ~3 GB | **~3 GB** |
+| VLM Stage 2 / ドメイン SFT (全解凍) | 582M | 6.98 GB | ~3 GB | **~10 GB** |
+| **Cosmos RL (全解凍 + ref policy)** | 582M + ref 582M×2 | 6.98 + 1.16 GB | ~3 GB | **~11 GB** |
+| MiniPamayo Stage 0-1 (全解凍) | 582M + head <1M | 6.98 GB | ~3 GB | **~10 GB** |
+| MiniPamayo Stage 2 (Flow 学習) | Traj. Decoder ~150M | 1.80 GB + VLM推論 1.16 GB | ~3 GB | **~6 GB** |
+| **MiniPamayo Stage 4 RL (LLM + ref)** | LLM 494M + ref 582M×2 | 5.93 + 1.16 GB | ~3 GB | **~10 GB** |
+
+**最大 VRAM: ~11 GB（Cosmos RL 時）。RTX 4090 (24 GB) に対して ~13 GB の余裕。**
+
+#### SmolLM2-360M からの変更理由
+
+当初 SmolLM2-360M (362M) を採用していたが、VRAM 計算の結果 Qwen2.5-0.5B (494M) でも全パイプラインが収まることが判明。Qwen2.5-0.5B に変更する利点:
+
+1. **Alpamayo 0.5B と同一の LLM**: アーキテクチャ再現の忠実度が向上
+2. **GQA (2 KV heads)**: SmolLM2 の MHA (15 heads) より KV cache が効率的。RL の rollout 生成に有利
+3. **より強力な事前学習**: 言語理解力が高く、VLM 学習や CoC 推論に有利
+
+同様に DINOv2 も ViT-S/14 (21M, hidden=384) から ViT-B/14 (86M, hidden=768) に変更。hidden dim が LLM の 896 に近く（768→896 = 1.2倍）、Adapter の射影ギャップが小さくなる。
 
 ---
 
@@ -13,7 +44,7 @@
 | 項目 | 値 |
 |---|---|
 | GPU | RTX 4090（24 GB VRAM） |
-| 凍結 | **Stage ごとに制御**（詳細は §3.5 参照） |
+| 凍結 | **Stage ごとに制御**（詳細は §3.7 参照） |
 | カメラ | **1 台** |
 | 解像度 | 224×224（必要に応じて縮小可） |
 | 視覚トークン | **16〜32 tokens / image** |
@@ -23,31 +54,32 @@
 ## 3. アーキテクチャ
 
 ```
-┌──────────┐     ┌──────────────────┐     ┌──────────┐     ┌─────────────┐
-│  Camera   │────▶│  DINOv2 ViT-S/14 │────▶│  Adapter  │────▶│  SmolLM2    │
-│ (224×224) │     │  (Vision Enc.)   │     │ (Pooling) │     │  360M (LLM) │
-└──────────┘     └──────────────────┘     └──────────┘     └──────┬──────┘
+┌──────────┐     ┌──────────────────┐     ┌──────────┐     ┌──────────────┐
+│  Camera   │────▶│  DINOv2 ViT-B/14 │────▶│  Adapter  │────▶│ Qwen2.5-0.5B │
+│ (224×224) │     │  (Vision Enc.)   │     │ (768→896) │     │    (LLM)     │
+└──────────┘     └──────────────────┘     └──────────┘     └──────┬───────┘
                                                                   │
                                                      ┌────────────┴────────────┐
                                                      │                         │
                                               ┌──────▼──────┐          ┌──────▼──────┐
-                                              │ Action Head  │          │  Flow Head   │
+                                              │ Action Head  │          │ Traj Decoder │
                                               │ (MLP回帰)    │          │ (Flow Match) │
                                               │ [Stage 0]    │          │ [Stage 2]    │
                                               └─────────────┘          └─────────────┘
 ```
 
-### 3.1 Vision Encoder — DINOv2 ViT-S/14
+### 3.1 Vision Encoder — DINOv2 ViT-B/14
 
-- モデル: `facebook/dinov2-small`（ViT-S/14、21M params）
+- モデル: `facebook/dinov2-base`（ViT-B/14、86M params）
 - 入力: RGB 224×224
-- 出力: パッチ特徴 (16×16)=256 patches × 384 dim
+- 出力: パッチ特徴 (16×16)=256 patches × 768 dim
+- hidden dim 768 は Qwen2.5-0.5B の 896 に近く（1.2倍）、Adapter の射影ギャップが小さい
 - Stage 0: trainable / Stage 2: frozen（§3.7 参照）
 
 ### 3.2 Vision → LLM Adapter（視覚トークン圧縮）
 
-- 入力: DINOv2 パッチ特徴 (256 × 384)
-- 出力: **N_vis tokens (16〜32) × d_llm (960)**
+- 入力: DINOv2 パッチ特徴 (256 × 768)
+- 出力: **N_vis tokens (16〜32) × d_llm (896)**
 - 方式（実装容易性で選択、後で置換可）:
 
 | 優先度 | 方式 | 概要 |
@@ -58,24 +90,26 @@
 
 **初期実装**: まず方式 3（平均 Pool + Linear）で全パイプラインを通し、後で方式 1 に置き換える。
 
-### 3.3 Language Model — SmolLM2-360M
+### 3.3 Language Model — Qwen2.5-0.5B
 
-- モデル: `HuggingFaceTB/SmolLM2-360M`
+- モデル: `Qwen/Qwen2.5-0.5B`（494M params）
 - アーキテクチャ: decoder-only Transformer
-  - hidden_dim: 960
-  - num_layers: 32
-  - num_heads: 15
-  - vocab_size: 49,152
+  - hidden_dim: 896
+  - num_layers: 24
+  - num_attention_heads: 14
+  - num_kv_heads: 2（GQA — KV cache が効率的、RL rollout に有利）
+  - vocab_size: 151,646
+- Alpamayo 0.5B と**同一の LLM** — アーキテクチャ再現の忠実度が高い
 - Stage 0: trainable / Stage 2: frozen（§3.7 参照）
 - **必須要件**: KV-cache を取り出せること（Stage 2 Flow の条件付けに使用）
 
 ### 3.4 VLM 構築 + ドメイン SFT（前段パイプライン）
 
-MiniPamayo の行動予測（Stage 0〜4）の前に、DINOv2 + Adapter + SmolLM2 を VLM として完成させ、運転ドメインの知識を注入する。この前段パイプラインは 2 つのサブプロジェクトに分離している:
+MiniPamayo の行動予測（Stage 0〜4）の前に、DINOv2 + Adapter + Qwen2.5-0.5B を VLM として完成させ、運転ドメインの知識を注入する。この前段パイプラインは 2 つのサブプロジェクトに分離している:
 
 #### Qwen2.5-VL Mini（汎用 VLM 構築）
 
-Qwen2.5-VL / LLaVA の学習パイプラインに倣い、DINOv2 + SmolLM2 から**汎用 VLM**を構築する。
+Qwen2.5-VL / LLaVA の学習パイプラインに倣い、DINOv2 ViT-B/14 + Qwen2.5-0.5B から**汎用 VLM**を構築する。
 
 1. Feature Alignment: Adapter のみ学習（画像キャプションペアで視覚-言語アライメント）
 2. Visual Instruction Tuning: Adapter + LLM 学習（視覚 QA で VLM 能力を獲得）
@@ -111,8 +145,8 @@ Alpamayo では raw position waypoint はセンサノイズの影響を受けや
 - 制御入力: **a = {(aᵢ, κᵢ)}** — 各タイムステップの加速度 `a` と曲率 `κ`
 - ダイナミクス: Euler 積分で (x, y, θ, v) の軌道に変換
 - **MiniPamayo での設定**:
-  - 予測ホライズン: **3.2秒**（32 waypoints @ 10Hz）— Alpamayo の 6.4秒から縮小
-  - 制御入力: 32 × 2 = **64 値**
+  - 予測ホライズン: **6.4秒**（64 waypoints @ 10Hz）— Alpamayo と同一
+  - 制御入力: 64 × 2 = **128 値**
   - GT 制御列: ego pose の軌道から最小二乗法（Tikhonov 正則化）で逆算
 
 ```
@@ -138,17 +172,22 @@ Alpamayo の核心的設計の一つ。**学習時は離散トークン、推論
 
 - **学習時の離散表現**:
   - 制御入力 (aᵢ, κᵢ) を所定の範囲で均一量子化し、離散トークン化
-  - 32 waypoints × 2 values = **64 離散トークン** を LLM の語彙に特殊トークンとして追加
+  - 64 waypoints × 2 values = **128 離散トークン** を LLM の語彙に特殊トークンとして追加
   - LLM が推論トークン（将来の CoC）とアクショントークンを**同じ自己回帰フレームワーク**で生成
   - Loss: cross-entropy（LLM の標準的な next-token prediction）
 - **Dual Representation のメリット**（Alpamayo 論文 §5.1）:
   1. 推論（Reasoning）と軌道が共通のトークン空間を共有し、密な結合が可能
   2. RL ポストトレーニング時に離散トークンを通じて直接勾配を流せる
   3. 離散表現が車両ダイナミクスの強い教師信号となる
-  4. Flow Matching による推論時デコードは 64 トークンの自己回帰生成より高速
+  4. Flow Matching による推論時デコードは 128 トークンの自己回帰生成より高速
 
-#### Stage C — Flow Matching ヘッド（Stage 2 で使用）
+#### Stage C — Trajectory Decoder / Flow Matching ヘッド（Stage 2 で使用）
 
+Alpamayo の「Trajectory Decoder」に相当。VLM の出力を条件として、Flow Matching で連続軌道を生成する。
+
+- **サイジング**: ~150M params
+  - Alpamayo 10B 版は LLM 7B に対して Trajectory Decoder 2B（約30%）。同比率で LLM 494M の ~30% = **~150M**
+  - Stage 2 では VLM は frozen（推論のみ、~1.16 GB）のため、150M の Decoder 学習には ~1.8 GB（150M×12）+ activation ~3 GB = **~6 GB**。VRAM に十分な余裕あり
 - 条件付け:
   - **Option A（軽量）**: LLM 最終層 hidden states
   - **Option B（Alpamayo 寄り）**: LLM KV-cache
@@ -157,7 +196,7 @@ Alpamayo の核心的設計の一つ。**学習時は離散トークン、推論
 - 出力: velocity field vΘ(aₜ, o) の予測 → Euler 積分で連続軌道を生成
 - Loss: **Conditional Flow Matching (CFM) loss** — Gaussian OT path で `aₜ = t·a + (1-t)·ε`, target field `u = a - ε`
 - Flow steps: 推論時 10（δt = 0.1）
-- **勾配制御**: Flow Head 学習時、VLM（Vision Encoder + LLM）からの KV-cache / hidden states には **stop-gradient** を適用し、Flow Head の勾配が VLM 側に逆伝播しないようにする（Alpamayo 論文 §5.1 と同様）
+- **勾配制御**: Trajectory Decoder 学習時、VLM（Vision Encoder + LLM）からの KV-cache / hidden states には **stop-gradient** を適用し、Decoder の勾配が VLM 側に逆伝播しないようにする（Alpamayo 論文 §5.1 と同様）
 
 ### 3.7 Stage ごとの勾配制御方針
 
@@ -263,7 +302,7 @@ MiniPamayo は単一カメラのため Alpamayo のマルチカメラ効率化�
 
 #### MiniPamayo への示唆
 
-- 現在の DINOv2 ViT-S/14（256 patches）→ Adapter（16~32 tokens）の圧縮は、Alpamayo の Flex に近い思想
+- 現在の DINOv2 ViT-B/14（256 patches）→ Adapter（16~32 tokens）の圧縮は、Alpamayo の Flex に近い思想
 - 将来マルチカメラに拡張する場合は Triplane が候補
 - Single-Image Tokenization の 2× bilinear downsampling は、MiniPamayo の Adapter 前段に導入可能（256 → 64 patches → Adapter → 16 tokens）
 
@@ -285,8 +324,8 @@ MiniPamayo は単一カメラのため Alpamayo のマルチカメラ効率化�
 | Stage | 出力 | 形状 | 備考 |
 |---|---|---|---|
 | Stage 0（回帰 fail-fast） | steer, throttle | (2,) | 最小検証用 |
-| Stage 0（回帰） | 制御入力列 (a, κ) | (K, 2) | 制御ベース表現 |
-| Stage 1（離散トークン） | 離散アクショントークン | (2K,) tokens | LLM 語彙に追加 |
+| Stage 0（回帰） | 制御入力列 (a, κ) | (64, 2) | 制御ベース表現、6.4秒 @ 10Hz |
+| Stage 1（離散トークン） | 離散アクショントークン | (128,) tokens | 64 waypoints × 2 values |
 | Stage 2（Flow） | 制御入力列 (a, κ) | (K, 2) — Flow で生成 | 連続・マルチモーダル |
 | Stage 3（推論 SFT） | CoC 推論 + 離散トークン | テキスト + (2K,) tokens | 自己回帰生成 |
 | Stage 4（RL） | CoC 推論 + 離散トークン | テキスト + (2K,) tokens | RL で品質向上 |
@@ -295,19 +334,46 @@ MiniPamayo は単一カメラのため Alpamayo のマルチカメラ効率化�
 
 ## 5. VRAM 見積もり（概算）
 
+### 5.1 コンポーネント別パラメータ
+
 | コンポーネント | パラメータ数 | bf16 サイズ | 備考 |
 |---|---|---|---|
-| DINOv2 ViT-S/14 | 21M | ~42 MB | |
-| SmolLM2-360M | 362M | ~724 MB | |
-| Adapter | ~1M | ~2 MB | 方式による |
+| DINOv2 ViT-B/14 | 86M | ~172 MB | hidden=768, 12 layers |
+| Adapter | ~2M | ~4 MB | 方式による |
+| Qwen2.5-0.5B | 494M | ~988 MB | hidden=896, 24 layers, GQA |
 | Action Head (MLP) | <1M | ~2 MB | |
-| **パラメータ合計** | **~385M** | **~770 MB** | |
-| オプティマイザ状態 (AdamW) | — | ~3.1 GB | params×8 bytes (fp32 momentum + variance) |
-| 勾配 | — | ~770 MB | params と同サイズ (bf16) |
-| Activation（checkpointing ON） | — | ~2-4 GB | バッチサイズ依存 |
-| **合計推定** | — | **~7-9 GB** | micro-batch=1 時 |
+| Trajectory Decoder | ~150M | ~300 MB | §3.6 参照。LLM の ~30% |
+| **VLM 合計** | **~582M** | **~1.16 GB** | |
+| **全体合計** | **~730M** | **~1.46 GB** | |
 
-**結論**: 24 GB に対して十分余裕あり。micro-batch=2〜4 も試行可能。
+### 5.2 学習時 VRAM 計算式
+
+bf16 学習時の固定コスト: **N × 12 bytes**（パラメータ 2B + AdamW 1st moment 4B + 2nd moment 4B + 勾配 2B）
+
+### 5.3 Stage 別 VRAM 見積もり
+
+§1.1 の VRAM テーブルを再掲（詳細な導出は §1.1 を参照）:
+
+| Stage | Trainable | 固定コスト (N×12) | Activation + overhead | 合計 |
+|---|---|---|---|---|
+| VLM Stage 1 (Adapter のみ) | 2M | 0.02 GB | ~3 GB | **~3 GB** |
+| VLM Stage 2 / ドメイン SFT (全解凍) | 582M | 6.98 GB | ~3 GB | **~10 GB** |
+| **Cosmos RL (全解凍 + ref policy)** | 582M + ref 582M×2 | 6.98 + 1.16 GB | ~3 GB | **~11 GB** |
+| MiniPamayo Stage 0-1 (全解凍) | 582M + head <1M | 6.98 GB | ~3 GB | **~10 GB** |
+| MiniPamayo Stage 2 (Flow 学習) | Traj. Decoder ~150M | 1.80 GB + VLM推論 1.16 GB | ~3 GB | **~6 GB** |
+| **MiniPamayo Stage 4 RL (LLM + ref)** | LLM 494M + ref 582M×2 | 5.93 + 1.16 GB | ~3 GB | **~10 GB** |
+
+**最大 VRAM: ~11 GB（Cosmos RL 時）。RTX 4090 (24 GB) に対して ~13 GB の余裕。**
+
+### 5.4 Trajectory Decoder の VRAM 余裕
+
+Stage 2 では VLM は frozen（推論のみ）のため、Trajectory Decoder に使える VRAM は大きい:
+
+- 利用可能: 24 - 1.16 (VLM推論) - 2 (activation) - 1.5 (overhead) = **~19 GB**
+- 最大 Decoder サイズ: 19 GB / 12 bytes ≈ **1.6B**（Alpamayo 10B の 2B には届かないが十分大きい）
+- 採用サイズ: **~150M**（LLM 494M の ~30%、Alpamayo 10B の LLM:Decoder 比率と同等）
+
+**結論**: 全パイプラインを通じて最大 ~11 GB。RTX 4090 (24 GB) で十分実行可能。
 
 ---
 
@@ -317,20 +383,22 @@ MiniPamayo は単一カメラのため Alpamayo のマルチカメラ効率化�
 
 | 要素 | Alpamayo 0.5B | MiniPamayo | 状態 |
 |---|---|---|---|
-| Vision Encoder | DINOv2 | DINOv2 ViT-S/14 (21M) | **同系列**（サイズは異なる可能性あり） |
-| LLM | Qwen2.5-0.5B | SmolLM2-360M | 同規模の decoder-only LLM |
-| Adapter | DINOv2 → Qwen Projector | DINOv2 → SmolLM2 Adapter | **同じ課題** |
+| Vision Encoder | DINOv2 | DINOv2 ViT-B/14 (86M) | **同系列**（Alpamayo 0.5B の DINOv2 サイズは論文に明記なし） |
+| LLM | Qwen2.5-0.5B | **Qwen2.5-0.5B** | **同一モデル** |
+| Adapter | DINOv2 → Qwen Projector | DINOv2 → Qwen Adapter | **同じ課題** |
+| Trajectory Decoder | Flow Matching（サイズ不明） | Flow Matching (~150M) | 同思想（LLM の ~30%） |
+| 予測ホライズン | 6.4秒（64 waypoints @ 10Hz） | **6.4秒**（64 waypoints @ 10Hz） | **同一** |
 | カメラ | マルチカメラ（7台）＋時系列 | **1 台** | 差分 |
-| アクション表現 | 制御ベース (a, κ) | 同思想 (a, κ) | §3.5 一致 |
-| Dual Representation | 離散トークン（学習）+ Flow（推論） | 同思想 | §3.6 一致 |
-| Flow Head | Flow Matching | Flow Matching（小規模） | 一致 |
-| 条件付け | KV-cache（stop-gradient） | 同思想 | 一致 |
-| Reasoning | CoC（構造化推論） | 同思想（簡略版） | §3.8 一致 |
-| 学習戦略 | ドメインSFT → Action Injection → SFT → RL | ドメインSFT → 回帰 → 離散 → Flow → SFT → RL | §3.7 一致 |
-| RL ポストトレーニング | GRPO + マルチ報酬 | 同思想（簡略版） | §3.9 一致 |
-| 勾配制御 | Stage ごとに stop-grad / KL | 同思想 | §3.7 一致 |
-| ドメイン SFT | Cosmos-Reason パイプラインで実施 | auto-labeling + SFT | §3.4 一致 |
-| データ | 内部データ 80K 時間 | 公開データセット | 差分 |
+| アクション表現 | 制御ベース (a, κ) | 制御ベース (a, κ) | **同一** |
+| Dual Representation | 離散トークン（学習）+ Flow（推論） | 同一（同じ LLM vocab に離散トークン追加） | **同一** |
+| 条件付け | KV-cache（stop-gradient） | 同一（同じ GQA 構造の KV-cache） | **同一** |
+| Reasoning | CoC（構造化推論） | CoC（簡略版サブセット） | 同思想 |
+| 学習戦略 | ドメインSFT → Action Injection → SFT → RL | ドメインSFT → 回帰 → 離散 → Flow → SFT → RL | 同思想 |
+| RL ポストトレーニング | GRPO + マルチ報酬 | GRPO + マルチ報酬（同じ LLM に対する RL） | **同一** |
+| 勾配制御 | Stage ごとに stop-grad / KL | 同一 | **同一** |
+| ドメイン SFT | Cosmos-Reason パイプラインで実施 | auto-labeling + SFT | 同思想 |
+| データ | 内部データ 80K 時間 | 公開データセット | **差分** |
+| 総パラメータ | ~0.5B + α | ~730M | 同オーダー |
 
 ---
 
@@ -338,14 +406,17 @@ MiniPamayo は単一カメラのため Alpamayo のマルチカメラ効率化�
 
 ```yaml
 # 4090 で通すためのデフォルト
+vision_encoder: facebook/dinov2-base  # ViT-B/14, 86M
+llm: Qwen/Qwen2.5-0.5B               # 494M
 image_size: 224
 n_visual_tokens: 16
 text_input: null  # or fixed short prompt
 flow_steps: 10    # Stage 2 開始時
+trajectory_decoder_params: 150M       # LLM の ~30%
 micro_batch_size: 1
 grad_accumulation_steps: 16
 precision: bf16
-gradient_checkpointing: true  # DINO / LLM / Flow すべて
+gradient_checkpointing: true  # DINO / LLM / Trajectory Decoder すべて
 optimizer: AdamW
 learning_rate: 1.0e-4
 weight_decay: 0.01

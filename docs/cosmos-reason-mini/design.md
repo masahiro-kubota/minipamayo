@@ -1,10 +1,10 @@
-# Cosmos Reason Mini 設計書 v0.2
+# Cosmos Reason Mini 設計書 v0.3
 
 ## 1. 目的
 
-Alpamayo-R1 の VLM バックボーンである **Cosmos-Reason** の技術的理解を目的に、同等の学習パイプライン（Physical AI SFT + Physical AI RL）を DINOv2 + SmolLM2 の小規模構成で再現する。
+Alpamayo-R1 の VLM バックボーンである **Cosmos-Reason** の技術的理解を目的に、同等の学習パイプライン（Physical AI SFT + Physical AI RL）を DINOv2 ViT-B/14 + Qwen2.5-0.5B の小規模構成で再現する。
 
-**前提**: [Qwen2.5-VL Mini](../qwen-vl-mini/design.md) で構築した汎用 VLM（DINOv2 + Adapter + SmolLM2、画像→テキストの基礎能力を獲得済み）を入力とする。Cosmos Reason Mini は、この VLM に**運転ドメインの Physical AI 知識**を注入する段階。
+**前提**: [Qwen2.5-VL Mini](../qwen-vl-mini/design.md) で構築した汎用 VLM（DINOv2 ViT-B/14 + Adapter + Qwen2.5-0.5B、画像→テキストの基礎能力を獲得済み）を入力とする。Cosmos Reason Mini は、この VLM に**運転ドメインの Physical AI 知識**を注入する段階。
 
 ```
 Qwen2.5-VL Mini（汎用 VLM）→ Cosmos Reason Mini（本設計書）→ MiniPamayo（行動予測）
@@ -32,7 +32,7 @@ Qwen2.5-VL Mini（汎用 VLM）→ Cosmos Reason Mini（本設計書）→ MiniP
 
 ## 3. アーキテクチャ
 
-Qwen2.5-VL Mini と同一（DINOv2 ViT-S/14 + Adapter + SmolLM2-360M）。アーキテクチャの詳細は [Qwen2.5-VL Mini 設計書 §3](../qwen-vl-mini/design.md) を参照。
+Qwen2.5-VL Mini と同一（DINOv2 ViT-B/14 + Adapter + Qwen2.5-0.5B）。アーキテクチャの詳細は [Qwen2.5-VL Mini 設計書 §3](../qwen-vl-mini/design.md) を参照。
 
 Cosmos Reason Mini では**アーキテクチャの変更は行わず**、Qwen2.5-VL Mini の重みを初期値として、運転ドメインに特化した SFT + RL を行う。
 
@@ -237,28 +237,29 @@ Cosmos-Reason に倣い、MCQ の正解率で評価:
 
 ## 7. VRAM 見積もり（概算）
 
-### SFT 時
+bf16 学習時の固定コスト: **N × 12 bytes**（パラメータ 2B + AdamW 1st moment 4B + 2nd moment 4B + 勾配 2B）
+
+### SFT 時（全解凍）
 
 | コンポーネント | パラメータ数 | bf16 サイズ |
 |---|---|---|
-| DINOv2 ViT-S/14 | 21M | ~42 MB |
-| SmolLM2-360M | 362M | ~724 MB |
-| Adapter | ~1M | ~2 MB |
-| **パラメータ合計** | ~384M | ~768 MB |
-| オプティマイザ状態 (AdamW) | — | ~3.1 GB |
-| 勾配 | — | ~768 MB |
-| Activation（checkpointing ON） | — | ~2-4 GB |
-| **合計推定** | — | **~7-9 GB** |
+| DINOv2 ViT-B/14 | 86M | ~172 MB |
+| Qwen2.5-0.5B | 494M | ~988 MB |
+| Adapter | ~2M | ~4 MB |
+| **パラメータ合計** | **~582M** | **~1.16 GB** |
+| 学習コスト (582M × 12 bytes) | — | ~6.98 GB |
+| Activation（checkpointing ON） | — | ~3 GB |
+| **合計推定** | — | **~10 GB** |
 
 ### RL 時（追加コスト）
 
 | コンポーネント | 追加メモリ |
 |---|---|
-| Reference policy（frozen SFT モデル） | ~768 MB |
+| Reference policy（frozen VLM、推論のみ） | ~1.16 GB |
 | K 個のロールアウトバッファ | ~数百 MB |
-| **RL 合計推定** | **~9-12 GB** |
+| **RL 合計推定** | **~11 GB** |
 
-**結論**: RTX 4090（24 GB）で SFT・RL ともに十分実行可能。
+**結論**: RTX 4090（24 GB）で SFT・RL ともに十分実行可能。~13 GB の余裕。
 
 ---
 

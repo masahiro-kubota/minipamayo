@@ -12,14 +12,14 @@
 
 | 観点 | Cosmos-Reason1-7B | Cosmos Reason Mini | 差分 |
 |---|---|---|---|
-| Vision Encoder | ViT-676M | DINOv2 ViT-S/14 (21M) | **規模差 ~32倍** |
+| Vision Encoder | ViT-676M | DINOv2 ViT-B/14 (86M) | **規模差 ~8倍** |
 | Projector | 2層 MLP + PixelShuffle | Cross-Attention Pooling or MLP | 方式が異なる |
-| LLM | Qwen2.5-7B (Dense Transformer) | SmolLM2-360M | **規模差 ~19倍** |
+| LLM | Qwen2.5-7B (Dense Transformer) | Qwen2.5-0.5B (494M) | **同じ Qwen ファミリー、規模差 ~14倍** |
 | 学習 Stage 1 | Physical AI SFT | 同思想（小規模） | **一致** |
 | 学習 Stage 2 | Physical AI RL (GRPO) | 同思想（小規模） | **一致** |
 | 対象ドメイン | 汎用 Physical AI | 自動運転特化 | **差分** |
 | 入力 | 動画（最大32フレーム） | 画像（1フレーム） | **差分** |
-| 総パラメータ | ~8B | ~384M | **規模差 ~21倍** |
+| 総パラメータ | ~8B | ~582M | **規模差 ~14倍** |
 
 ---
 
@@ -27,12 +27,12 @@
 
 | 観点 | Cosmos-Reason1-7B | Cosmos Reason Mini | 備考 |
 |---|---|---|---|
-| モデル | ViT-676M | DINOv2 ViT-S/14 | 事前学習方法が異なる（後述） |
-| パラメータ数 | 676M | 21M | ~32倍差 |
+| モデル | ViT-676M | DINOv2 ViT-B/14 | 事前学習方法が異なる（後述） |
+| パラメータ数 | 676M | 86M | ~8倍差 |
 | パッチサイズ | 14×14 | 14×14 | **一致** |
 | レイヤー数 | 32 | 12 | |
-| 隠れ次元 | 1,280 | 384 | |
-| FFN 隠れ次元 | 3,456 | 1,536 | |
+| 隠れ次元 | 1,280 | 768 | |
+| FFN 隠れ次元 | 3,456 | 3,072 | |
 | 入力解像度 | 動的（448×448 タイル） | 224×224（固定） | |
 | 動画対応 | 最大32フレーム、2fps | 1フレーム（画像のみ） | **差分** |
 | パッチ数 / フレーム | 1,024 → PixelShuffle で 256 | 256 | 最終的なトークン数は同じ |
@@ -55,9 +55,9 @@
 | 観点 | Cosmos-Reason1-7B | Cosmos Reason Mini | 備考 |
 |---|---|---|---|
 | 方式 | 2層 MLP + 2×2×2 PixelShuffle | Cross-Attention Pooling or MLP | |
-| 入力次元 | 1,280 | 384 | Vision Encoder の出力次元 |
+| 入力次元 | 1,280 | 768 | Vision Encoder の出力次元 |
 | 隠れ次元 | 5,120 | — | |
-| 出力次元 | 3,584（= LLM の hidden_dim） | 960（= SmolLM2 の hidden_dim） | |
+| 出力次元 | 3,584（= LLM の hidden_dim） | 896（= Qwen2.5-0.5B の hidden_dim） | |
 | ダウンサンプリング | 2×2×2（H×W×T） | 256→16（Cross-Attention の場合） | |
 | 出力トークン数 / フレーム | 256（1,024 → PixelShuffle 1/4） | 16〜256（方式による） | |
 
@@ -72,18 +72,18 @@
 
 | 観点 | Cosmos-Reason1-7B | Cosmos Reason Mini | 備考 |
 |---|---|---|---|
-| ベースモデル | Qwen2.5-7B | SmolLM2-360M | |
+| ベースモデル | Qwen2.5-7B | Qwen2.5-0.5B | **同じ Qwen ファミリー** |
 | アーキテクチャ | Dense Transformer | Dense Transformer | **一致** |
-| パラメータ数 | ~7B | 362M | ~19倍差 |
-| 隠れ次元 | 3,584 | 960 | |
-| レイヤー数 | 28 | 32 | Mini の方がレイヤーは多い |
-| アテンションヘッド数 | 28 | 15 | |
-| FFN 隠れ次元 | 18,944 | 不明（SmolLM2 仕様） | |
-| 語彙数 | ~150K（Qwen） | 49,152 | |
+| パラメータ数 | ~7B | 494M | ~14倍差 |
+| 隠れ次元 | 3,584 | 896 | |
+| レイヤー数 | 28 | 24 | |
+| アテンションヘッド数（Q / KV） | 28 / 4（GQA） | 14 / 2（GQA） | 両方 GQA |
+| FFN 隠れ次元 | 18,944 | 4,864 | |
+| 語彙数 | ~150K（Qwen） | 151,646 | **同一語彙** |
 
 ### 影響
 
-- パラメータ数の差は推論品質に直結する。SmolLM2-360M では複雑な因果推論（長い CoT）の表現力に限界がある
+- パラメータ数の差は推論品質に直結する。Qwen2.5-0.5B では複雑な因果推論（長い CoT）の表現力に限界がある
 - ただし Cosmos-Reason の論文でも「モデルサイズが小さいほうが SFT の改善幅（相対値）は大きい」と報告しており（7B: +6.9% vs 56B: +2.0%）、小規模モデルでも SFT の効果は期待できる
 
 ---
@@ -136,7 +136,7 @@ Cosmos Reason Mini は **自律走行車のみ**。これは MiniPamayo の目�
 | 観点 | Cosmos-Reason1-7B | Cosmos Reason Mini | 備考 |
 |---|---|---|---|
 | イテレーション | 12,500 | ~1,000〜3,000 | データ規模に比例 |
-| 学習率スケジュール | cosine: 1e-5 → 1e-6 | cosine: 1e-4 → 1e-5 | Mini の方が大きい LR |
+| 学習率スケジュール | cosine: 1e-5 → 1e-6 | cosine: 2e-5 → 2e-6 | Mini の方が若干大きい LR |
 | グローバルバッチサイズ | 256 | 16（micro=1 × accum=16） | |
 | オプティマイザ | Fused Adam (β1=0.9, β2=0.95) | AdamW (β1=0.9, β2=0.95) | β は **一致** |
 | 重み減衰 | 0.1 | 0.01 | |
@@ -146,7 +146,7 @@ Cosmos Reason Mini は **自律走行車のみ**。これは MiniPamayo の目�
 ### 学習率が異なる理由
 
 - Cosmos-Reason1 は大規模な事前学習済み VLM を微調整するため、小さい LR（1e-5）が適切
-- Cosmos Reason Mini は事前に視覚-言語の対応付けがない（DINOv2 は自己教師あり学習のみ）ため、Adapter の学習に大きめの LR（1e-4）が必要
+- Cosmos Reason Mini は Qwen2.5-VL Mini で視覚-言語アライメント済みだが、規模が小さいため若干大きめの LR（2e-5）で微調整
 
 ---
 
@@ -232,8 +232,8 @@ Cosmos Reason Mini では同水準の絶対精度は期待できないが、**SF
 
 | 差分 | Cosmos-Reason1-7B | Cosmos Reason Mini | 影響 |
 |---|---|---|---|
-| Vision Encoder 規模 | 676M | 21M | 視覚特徴の表現力 |
-| LLM 規模 | ~7B | 362M | 推論品質・CoT の深さ |
+| Vision Encoder 規模 | 676M | 86M | 視覚特徴の表現力 |
+| LLM 規模 | ~7B | 494M | 推論品質・CoT の深さ |
 | SFT データ規模 | ~3.85M | ~5,000〜10,000 | 汎化性能 |
 | RL データ規模 | ~30K | ~1,000〜2,000 | RL の効果量 |
 | バッチサイズ | 256 | 16 | 学習安定性 |

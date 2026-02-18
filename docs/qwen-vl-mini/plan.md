@@ -2,7 +2,7 @@
 
 ## 全体方針
 
-DINOv2 + SmolLM2 から汎用 VLM を構築する。Qwen2.5-VL の学習パイプライン（5 段階）を簡略化し、LLaVA-1.5 方式の **2 段階**で進める。詳細は [設計書](design.md) を参照。
+DINOv2 ViT-B/14 + Qwen2.5-0.5B から汎用 VLM を構築する。Qwen2.5-VL の学習パイプライン（5 段階）を簡略化し、LLaVA-1.5 方式の **2 段階**で進める。詳細は [設計書](design.md) を参照。
 
 ```
 Phase 1 (基盤) → Phase 2 (Stage 1: Feature Alignment) → Phase 3 (Stage 2: Visual Instruction Tuning)
@@ -16,13 +16,13 @@ Phase 1 (基盤) → Phase 2 (Stage 1: Feature Alignment) → Phase 3 (Stage 2: 
 
 ### 1.1 モジュール実装
 
-- [ ] **Vision Encoder**: DINOv2 ViT-S/14 ロード + forward
-  - `facebook/dinov2-small`
-  - 入力: (B, 3, 224, 224) → 出力: (B, 256, 384)
+- [ ] **Vision Encoder**: DINOv2 ViT-B/14 ロード + forward
+  - `facebook/dinov2-base`
+  - 入力: (B, 3, 224, 224) → 出力: (B, 256, 768)
 - [ ] **Adapter**: 2層 MLP（初期実装）
-  - Linear(384, 960) → GELU → Linear(960, 960)
-  - 入力: (B, 256, 384) → 出力: (B, 256, 960)
-- [ ] **LLM**: SmolLM2-360M ロード
+  - Linear(768, 896) → GELU → Linear(896, 896)
+  - 入力: (B, 256, 768) → 出力: (B, 256, 896)
+- [ ] **LLM**: Qwen2.5-0.5B ロード
   - visual tokens を embedding シーケンスの先頭に注入
   - テキスト入力（指示 + 質問）と結合
 - [ ] 統合モデル `QwenVLMini` クラス
@@ -47,7 +47,7 @@ Phase 1 (基盤) → Phase 2 (Stage 1: Feature Alignment) → Phase 3 (Stage 2: 
 
 ### 目的
 
-Adapter が DINOv2 の視覚特徴を SmolLM2 の入力空間にマッピングすることを学ぶ。
+Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピングすることを学ぶ。
 
 ### 2.1 データ準備
 
@@ -62,7 +62,7 @@ Adapter が DINOv2 の視覚特徴を SmolLM2 の入力空間にマッピング�
 
 ### 2.2 学習
 
-- [ ] **Adapter のみ trainable**、DINOv2 + SmolLM2 は frozen
+- [ ] **Adapter のみ trainable**、DINOv2 + Qwen2.5-0.5B は frozen
 - [ ] ハイパーパラメータ:
   - 学習率: 1e-3（Adapter のみなので大きめ）
   - スケジューラ: cosine with warmup
@@ -120,7 +120,7 @@ Adapter が DINOv2 の視覚特徴を SmolLM2 の入力空間にマッピング�
 
 ### 3.3 Adapter トークン圧縮（推奨）
 
-256 ビジョントークンは SmolLM2-360M のコンテキスト長を大量に消費するため、**トークン圧縮の導入は早期に検討すべき**。Qwen2.5-VL でも隣接 4 パッチをグループ化して 4 倍圧縮している。
+256 ビジョントークンはコンテキスト長を大量に消費するため、**トークン圧縮の導入は早期に検討すべき**。Qwen2.5-VL でも隣接 4 パッチをグループ化して 4 倍圧縮している。
 
 - [ ] **方式 A: 隣接パッチグループ化**（Qwen2.5-VL 方式）
   - 隣接 4 パッチを結合 → MLP で射影
@@ -152,7 +152,7 @@ Adapter が DINOv2 の視覚特徴を SmolLM2 の入力空間にマッピング�
 
 ## Cosmos Reason Mini への引き継ぎ
 
-- [ ] 学習済み重み（DINOv2 + Adapter + SmolLM2）を保存
+- [ ] 学習済み重み（DINOv2 + Adapter + Qwen2.5-0.5B）を保存
 - [ ] Cosmos Reason Mini でロードし、forward pass が通ることを確認
 - [ ] 引き継ぎ時の Adapter 方式（MLP or Cross-Attention）を記録
 
@@ -165,7 +165,7 @@ Phase 1 (基盤: モジュール実装)
     ↓
 Phase 2 (Stage 1: Feature Alignment — Adapter のみ)
     ↓
-Phase 3 (Stage 2: Visual Instruction Tuning — Adapter + LLM)
+Phase 3 (Stage 2: Visual Instruction Tuning — DINOv2 + Adapter + LLM)
     ↓
 → Cosmos Reason Mini に引き継ぎ
 ```
@@ -179,9 +179,8 @@ Phase 3 (Stage 2: Visual Instruction Tuning — Adapter + LLM)
 
 | リスク | 影響 | 対策 |
 |---|---|---|
-| DINOv2 特徴と SmolLM2 の空間が遠すぎる | Alignment が進まない | 学習率を上げる、MLP の層数を増やす |
+| DINOv2 特徴と Qwen2.5-0.5B の空間が遠すぎる | Alignment が進まない | 学習率を上げる、MLP の層数を増やす |
 | CC3M のダウンロードが困難 | データ不足 | ShareGPT4V-PT 等の代替データを使用 |
-| SmolLM2 の生成能力が低い | VQA 回答の品質が悪い | 短い回答に限定、会話形式を簡素化 |
 | Stage 2 で LLM のテキスト能力が劣化 | 一般的な言語能力の喪失 | 学習率を小さく保つ、テキストのみのデータも混合 |
 | 256 ビジョントークンが LLM に多すぎる | 計算コスト増、性能低下 | トークン圧縮（隣接4パッチグループ化 or Cross-Attention Pooling） |
 | DINOv2 にテキスト対応がない（CLIP と異なる） | Adapter の学習負担が大きい | Stage 1 で十分な学習を行う。学習率やデータ量の調整で対応 |

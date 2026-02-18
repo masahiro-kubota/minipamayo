@@ -2,7 +2,7 @@
 
 ## 1. 目的
 
-Qwen2.5-VL の学習パイプラインに倣い、DINOv2 + SmolLM2 から**汎用 VLM（Vision-Language Model）**を構築する。
+Qwen2.5-VL の学習パイプラインに倣い、DINOv2 + Qwen2.5-0.5B から**汎用 VLM（Vision-Language Model）**を構築する。
 
 「画像を見てテキストを生成する」基礎能力を獲得させることが目的。この VLM が後段の全パイプラインの土台となる:
 
@@ -16,10 +16,10 @@ Qwen2.5-VL Mini（本設計書）
 
 Cosmos-Reason1 は **Qwen2.5-VL（既に完成した VLM）** の上に Physical AI SFT をかけている。つまり SFT 開始時点で既に「画像→テキスト」の基礎能力がある。
 
-一方、DINOv2 + SmolLM2 の素の状態は:
+一方、DINOv2 + Qwen2.5-0.5B の素の状態は:
 - DINOv2: 自己教師あり学習のみ。テキストとの対応付けなし
 - Adapter: ランダム初期化
-- SmolLM2: テキスト LLM のみ。画像を見たことがない
+- Qwen2.5-0.5B: テキスト LLM のみ。画像を見たことがない
 
 この状態でいきなり Physical AI SFT（運転 QA）をかけると、モデルは同時に 3 つを学ぶ必要があり困難:
 1. Adapter が視覚特徴を LLM に伝える方法（視覚-言語アライメント）
@@ -44,9 +44,9 @@ Qwen2.5-VL Mini では、Phase 1〜2 を小規模に再現し、Phase 3（Long-C
 
 | 観点 | Qwen2.5-VL-7B | Qwen2.5-VL Mini | 備考 |
 |---|---|---|---|
-| Vision Encoder | 独自 ViT（CLIP 事前学習、675M） | DINOv2 ViT-S/14（自己教師あり、21M） | 下記 §1.1 参照 |
+| Vision Encoder | 独自 ViT（CLIP 事前学習、675M） | DINOv2 ViT-B/14（自己教師あり、86M） | 下記 §1.1 参照 |
 | Merger/Adapter | 2層 MLP + 隣接4パッチグループ化 | 2層 MLP（初期）→ トークン圧縮（改善） | 下記 §3.2 参照 |
-| LLM | Qwen2.5-7B | SmolLM2-360M | 同じ decoder-only |
+| LLM | Qwen2.5-7B | Qwen2.5-0.5B | 同じ decoder-only、同じ Qwen ファミリー |
 | Stage 1 | Visual Pre-Training（**ViT のみ**、LLM frozen） | Feature Alignment（**Adapter のみ**、他 frozen） | 同思想、対象が異なる |
 | Stage 2 | Multimodal Pre-Training（**全パラメータ**） | Visual Instruction Tuning（**全パラメータ**） | **同方式** |
 | Stage 3 | Long-Context Pre-Training | —（スキップ） | Mini では不要 |
@@ -59,7 +59,7 @@ Qwen2.5-VL Mini では、Phase 1〜2 を小規模に再現し、Phase 3（Long-C
 
 | | Qwen2.5-VL | Qwen2.5-VL Mini |
 |---|---|---|
-| ViT | 独自設計 ViT（Window Attention、2D-RoPE） | DINOv2 ViT-S/14（標準 ViT） |
+| ViT | 独自設計 ViT（Window Attention、2D-RoPE） | DINOv2 ViT-B/14（標準 ViT） |
 | 事前学習 | **CLIP**（テキストとのコントラスト学習） | **DINO v2**（自己教師あり、テキストなし） |
 | テキスト対応付け | あり（CLIP で学習済み） | **なし** |
 
@@ -78,8 +78,8 @@ Qwen2.5-VL は Phase 2 以降で ViT を全解凍する。Mini でも同方式�
 - 欠点: DINOv2 はテキスト対応がないため、Adapter だけでギャップを埋める必要がある。Qwen2.5-VL / Qwen3-VL の方式と異なる
 
 **DINOv2 を Stage 2 で解凍する場合（Qwen2.5-VL 方式、本設計で採用）**:
-- 利点: fine-tune でテキストと相性の良い特徴に適応できる。本家と同方式。DINOv2 は 21M と小さいので VRAM への影響はわずか（+勾配 ~42MB、+オプティマイザ ~168MB）
-- 欠点: 21M と小さいモデルなので fine-tune で特徴が壊れるリスクがある。データが ~600K と少ないので過学習の可能性
+- 利点: fine-tune でテキストと相性の良い特徴に適応できる。本家と同方式。DINOv2 ViT-B/14 は 86M なので VRAM への影響は限定的（+勾配 ~172MB、+オプティマイザ ~688MB）
+- 欠点: fine-tune で特徴が壊れるリスクがある。データが ~600K と少ないので過学習の可能性
 - 対策: Stage 2 の学習率を小さく保つ（2e-5）。DINOv2 にさらに小さい学習率を設定する layer-wise lr decay も検討可能
 
 ### 1.3 MRoPE（位置エンコーディング）の違い
@@ -88,7 +88,7 @@ MRoPE（Multimodal Rotary Position Embedding）は **LLM 側**の位置エンコ
 
 | | Qwen2.5-VL | Qwen2.5-VL Mini |
 |---|---|---|
-| LLM の位置エンコーディング | **MRoPE**（3 成分: temporal, height, width） | **標準 1D RoPE**（SmolLM2 のデフォルト） |
+| LLM の位置エンコーディング | **MRoPE**（3 成分: temporal, height, width） | **標準 1D RoPE**（Qwen2.5-0.5B のデフォルト） |
 | 画像パッチの空間位置 | LLM が位置エンコーディングで認識 | LLM は位置エンコーディングでは認識しない |
 
 Qwen2.5-VL の MRoPE は通常の 1D RoPE を 3 成分に分解する:
@@ -98,9 +98,9 @@ Qwen2.5-VL の MRoPE は通常の 1D RoPE を 3 成分に分解する:
 
 テキストトークンの場合は 3 成分すべて同じ値にして通常の 1D RoPE と等価になる。
 
-SmolLM2 では標準の 1D RoPE のみなので、画像パッチの空間位置情報は位置エンコーディングでは LLM に伝わらない。ただし **DINOv2 の出力特徴自体にパッチの空間情報が暗黙的に含まれている**（パッチ順序が空間的に並んでいる + DINOv2 が空間関係を学習済み）ため、致命的ではない。
+Qwen2.5-0.5B は標準の 1D RoPE のみなので、画像パッチの空間位置情報は位置エンコーディングでは LLM に伝わらない。ただし **DINOv2 の出力特徴自体にパッチの空間情報が暗黙的に含まれている**（パッチ順序が空間的に並んでいる + DINOv2 が空間関係を学習済み）ため、致命的ではない。
 
-MRoPE の導入は SmolLM2 のアーキテクチャ変更が必要になるため、本設計では見送る。
+> **補足**: Qwen2.5-0.5B は Qwen2.5-VL-7B と同じ Qwen ファミリーだが、VL 版（MRoPE 対応）は 3B 以上のみ。0.5B のテキスト版は標準 RoPE のため、MRoPE の導入にはアーキテクチャ変更が必要。本設計では見送る。
 
 ---
 
@@ -109,9 +109,9 @@ MRoPE の導入は SmolLM2 のアーキテクチャ変更が必要になるた�
 | 項目 | 値 |
 |---|---|
 | GPU | RTX 4090（24 GB VRAM） |
-| Vision Encoder | DINOv2 ViT-S/14（21M params） |
+| Vision Encoder | DINOv2 ViT-B/14（86M params） |
 | Adapter | MLP（初期）→ トークン圧縮方式（改善） |
-| LLM | SmolLM2-360M |
+| LLM | Qwen2.5-0.5B（494M params） |
 | 入力 | 画像（224×224） |
 | 出力 | テキスト（キャプション、VQA 回答） |
 
@@ -123,8 +123,8 @@ MiniPamayo / Cosmos Reason Mini と同じアーキテクチャ:
 
 ```
 ┌──────────┐     ┌──────────────────┐     ┌──────────────┐     ┌──────────────┐
-│  Image    │────▶│  DINOv2 ViT-S/14 │────▶│   Adapter     │────▶│  SmolLM2     │
-│ (224×224) │     │  (Vision Enc.)   │     │  (Projector)  │     │  360M (LLM)  │
+│  Image    │────▶│  DINOv2 ViT-B/14 │────▶│   Adapter     │────▶│ Qwen2.5-0.5B │
+│ (224×224) │     │  (Vision Enc.)   │     │  (768→896)    │     │  494M (LLM)  │
 └──────────┘     └──────────────────┘     └──────────────┘     └──────┬───────┘
                                                                       │
                                                                ┌──────▼───────┐
@@ -133,25 +133,26 @@ MiniPamayo / Cosmos Reason Mini と同じアーキテクチャ:
                                                                └──────────────┘
 ```
 
-### 3.1 Vision Encoder — DINOv2 ViT-S/14
+### 3.1 Vision Encoder — DINOv2 ViT-B/14
 
-- モデル: `facebook/dinov2-small`（21M params）
+- モデル: `facebook/dinov2-base`（86M params）
 - 入力: RGB 224×224
-- 出力: パッチ特徴 (256 patches × 384 dim)
+- 出力: パッチ特徴 (256 patches × 768 dim)
+- hidden dim 768 は Qwen2.5-0.5B の 896 に近く（1.2倍）、Adapter の射影ギャップが小さい
 - **Stage 1 では frozen**、**Stage 2 で解凍**（Qwen2.5-VL と同方式。詳細は §1.2 参照）
 
 ### 3.2 Adapter（Vision → LLM Projector）
 
 | 段階 | 方式 | 入力 → 出力 | 備考 |
 |---|---|---|---|
-| 初期（fail-fast） | 2層 MLP | 256×384 → 256×960 | シンプルな次元変換のみ |
-| 改善 | トークン圧縮付き MLP or Cross-Attention | 256×384 → N×960（N<256） | トークン数を削減 |
+| 初期（fail-fast） | 2層 MLP | 256×768 → 256×896 | シンプルな次元変換のみ |
+| 改善 | トークン圧縮付き MLP or Cross-Attention | 256×768 → N×896（N<256） | トークン数を削減 |
 
 **Qwen2.5-VL の Merger との対応**:
 
 Qwen2.5-VL は **隣接 4 パッチをグループ化 → 結合 → 2 層 MLP** で次元変換とトークン圧縮を同時に行う。これにより画像トークン数が 4 分の 1 に削減される。
 
-初期実装ではまず 2 層 MLP で次元変換のみ行い動作確認する。ただし **256 トークンは SmolLM2-360M にとって多い**（コンテキスト長の大部分を消費する）ため、トークン圧縮の導入は早期に検討すべき:
+初期実装ではまず 2 層 MLP で次元変換のみ行い動作確認する。ただし **256 トークンは多い**ため、トークン圧縮の導入は早期に検討すべき:
 
 | 圧縮方式 | トークン数 | 方式 | 備考 |
 |---|---|---|---|
@@ -159,10 +160,12 @@ Qwen2.5-VL は **隣接 4 パッチをグループ化 → 結合 → 2 層 MLP**
 | 隣接パッチグループ化 | 64 | Qwen2.5-VL 方式（4パッチ→1） | 実装が容易 |
 | Cross-Attention Pooling | 16 | learnable query で圧縮 | 最も圧縮率が高い |
 
-### 3.3 Language Model — SmolLM2-360M
+### 3.3 Language Model — Qwen2.5-0.5B
 
-- モデル: `HuggingFaceTB/SmolLM2-360M`
-- hidden_dim: 960, num_layers: 32, num_heads: 15, vocab_size: 49,152
+- モデル: `Qwen/Qwen2.5-0.5B`（494M params）
+- hidden_dim: 896, num_layers: 24, num_attention_heads: 14, num_kv_heads: 2（GQA）, vocab_size: 151,646
+- Alpamayo 0.5B と**同一の LLM**
+- GQA（2 KV heads）により KV cache が効率的
 - **Stage 1 では frozen**。テキスト LLM としての能力を保持したまま Adapter だけ学習する
 
 ---
@@ -195,7 +198,7 @@ Stage 2: Visual Instruction Tuning（視覚指示調整）
 
 #### 目的
 
-Adapter が DINOv2 の視覚特徴を SmolLM2 の入力空間に正しくマッピングすることを学ぶ。
+Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間に正しくマッピングすることを学ぶ。
 
 #### Qwen2.5-VL での対応
 
@@ -204,7 +207,7 @@ Qwen2.5-VL の Phase 1（Visual Pre-Training）:
 - 1.5T トークン（Image Caption, Knowledge, OCR データ）
 - 目的: 視覚空間と言語空間のアライメント基盤を構築
 
-Mini との違い: Qwen2.5-VL は独自 ViT を CLIP 初期化から fine-tune するため ViT が trainable。Mini では DINOv2 が既に高品質な視覚特徴を持つので frozen とし、Adapter のみ学習する。
+Mini との違い: Qwen2.5-VL は独自 ViT を CLIP 初期化から fine-tune するため ViT が trainable。Mini では DINOv2 ViT-B/14 が既に高品質な視覚特徴を持つので frozen とし、Adapter のみ学習する。
 
 #### Qwen2.5-VL Mini での実装
 
@@ -226,7 +229,7 @@ Mini との違い: Qwen2.5-VL は独自 ViT を CLIP 初期化から fine-tune �
 | 項目 | LLaVA-1.5 | Qwen2.5-VL Mini |
 |---|---|---|
 | trainable | Projector のみ | Adapter のみ |
-| frozen | ViT + LLM | DINOv2 + SmolLM2 |
+| frozen | ViT + LLM | DINOv2 + Qwen2.5-0.5B |
 | データ | CC3M-595K | CC3M-595K（同じ） |
 | 学習率 | 1e-3 | 1e-3 |
 | バッチサイズ | 256 | micro-batch=4, grad_accum=4（≈16） |
@@ -277,7 +280,7 @@ Qwen2.5-VL の Phase 2（Multimodal Pre-Training）:
 
 | 項目 | LLaVA-1.5 | Qwen2.5-VL Mini |
 |---|---|---|
-| trainable | Projector + LLM | **DINOv2 + Adapter + LLM（全解凍）** |
+| trainable | Projector + LLM | **DINOv2 + Adapter + Qwen2.5-0.5B（全解凍）** |
 | frozen | ViT | — |
 | データ | LLaVA-mix665k | LLaVA-Instruct-150K |
 | 学習率 | 2e-5 | 2e-5 |
@@ -325,7 +328,7 @@ Loss:  cross-entropy（next-token prediction、回答部分のみ）
 
 ### 6.2 定量的評価
 
-~383M の小規模 VLM に適したベンチマークを選定。SOTA を目指すのではなく、「VLM として機能するか」の確認が目的。
+~582M の小規模 VLM に適したベンチマークを選定。SOTA を目指すのではなく、「VLM として機能するか」の確認が目的。
 
 #### 評価フレームワーク
 
@@ -363,26 +366,24 @@ Mini の目的は技術理解であり SOTA ではないが、ランダム回答
 
 | コンポーネント | サイズ | 備考 |
 |---|---|---|
-| DINOv2（frozen、推論のみ） | ~42 MB | 勾配・オプティマイザ不要 |
-| SmolLM2（frozen、推論のみ） | ~724 MB | 勾配・オプティマイザ不要 |
-| Adapter（trainable） | ~2 MB | |
-| Adapter オプティマイザ | ~8 MB | 小さい |
+| DINOv2 ViT-B/14（frozen、推論のみ） | ~172 MB | 勾配・オプティマイザ不要 |
+| Qwen2.5-0.5B（frozen、推論のみ） | ~988 MB | 勾配・オプティマイザ不要 |
+| Adapter（trainable） | ~4 MB | |
+| Adapter オプティマイザ | ~16 MB | 小さい |
 | Activation | ~1-2 GB | |
 | **合計** | **~2-3 GB** | **非常に軽量** |
 
-### Stage 2（DINOv2 + Adapter + LLM 全解凍）
+### Stage 2（DINOv2 + Adapter + Qwen2.5-0.5B 全解凍）
+
+bf16 学習時の固定コスト: **N × 12 bytes**（パラメータ 2B + AdamW 1st moment 4B + 2nd moment 4B + 勾配 2B）
 
 | コンポーネント | サイズ | 備考 |
 |---|---|---|
-| DINOv2（trainable） | ~42 MB | |
-| SmolLM2（trainable） | ~724 MB | |
-| Adapter（trainable） | ~2 MB | |
-| オプティマイザ状態 | ~3.2 GB | 全 params × 8 bytes（DINOv2 分 +168MB） |
-| 勾配 | ~768 MB | 全 params（DINOv2 分 +42MB） |
-| Activation（checkpointing ON） | ~2-4 GB | |
-| **合計** | **~7-9 GB** | DINOv2 解凍による増分はわずか（~210MB） |
+| 全パラメータ (582M × 12 bytes) | ~6.98 GB | DINOv2 86M + Adapter ~2M + Qwen2.5-0.5B 494M |
+| Activation（checkpointing ON） | ~2-3 GB | |
+| **合計** | **~10 GB** | |
 
-**結論**: 両 Stage とも RTX 4090 で余裕あり。Stage 1 は特に軽量。
+**結論**: 両 Stage とも RTX 4090 (24 GB) で余裕あり。Stage 1 は特に軽量。
 
 ---
 
@@ -401,7 +402,7 @@ Qwen2.5-VL Mini（本設計書）     Cosmos Reason Mini         MiniPamayo
 ```
 
 - Qwen2.5-VL Mini で「画像→テキスト」の基礎 VLM 能力を獲得
-- その重み（DINOv2 + Adapter + SmolLM2）を Cosmos Reason Mini に引き継ぎ
+- その重み（DINOv2 + Adapter + Qwen2.5-0.5B）を Cosmos Reason Mini に引き継ぎ
 - Cosmos Reason Mini で運転ドメインに特化した Physical AI SFT + RL を実施
 - その重みを MiniPamayo Stage 0 に引き継ぎ
 
