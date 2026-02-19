@@ -35,35 +35,35 @@ design.md / plan.md には論文サーベイに基づく多数の「検討」事
 
 ### 1.1 モジュール実装
 
-- [ ] **Vision Encoder**: DINOv2 ViT-B/14 ロード + forward
+- [x] **Vision Encoder**: DINOv2 ViT-B/14 ロード + forward
   - `facebook/dinov2-base`（register token なし版を使用。`dinov2-base-reg` を使う場合は register token 4 個を出力から除外する処理が必須）
   - **入力前処理**: ImageNet 正規化（mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]）を適用。公式リポジトリの transform 設定と一致させること（§10.15 参照）
   - 入力: (B, 3, 224, 224) → 出力: (B, 256, 768)。**336x336 への解像度アップを検討**（576 トークン、COMM §5 で採用。position embedding を双線形補間で拡大）
   - **深層レイヤーのみ使用を検討**: COMM Table 4 より DINOv2 は深層に有用情報が集中。ViT-B/14（12 層）なら後半 6 層（7-12 層）の Layerscale 統合を使用（§10.12, §10.21 COMM MFM 参照）
   - **CLS トークンではなくパッチトークン全体を出力**: LLaVA §4.1 に準拠。ただし **[CLS] トークンを global context として prepend する設計も検討**（dino-meets-text Table 2: [CLS]+avg-pooled が全タスク最適）
   - **bf16 必須**: fp16 では小規模モデルで loss NaN が発生する（MoE-LLaVA Appendix A.2）。TF32 も明示的に有効化（§10.15 参照）
-- [ ] **Adapter**: 2層 MLP（初期実装）
+- [x] **Adapter**: 2層 MLP（初期実装）
   - Linear(768, 3072) → GELU → Linear(3072, 896)（COMM [arXiv:2310.08825] Table 6: Ratio 4 が最適）
   - 入力: (B, 256, 768) → 出力: (B, 256, 896)
   - ※ Pixel Shuffle 導入時は `nn.Linear(768 * r^2, 896, bias=False)` の 1 層 Linear に置換（SmolVLM 実装）
-- [ ] **LLM**: Qwen2.5-0.5B ロード
+- [x] **LLM**: Qwen2.5-0.5B ロード
   - visual tokens を embedding シーケンスの先頭に注入
   - テキスト入力（指示 + 質問）と結合
-- [ ] 統合モデル `QwenVLMini` クラス
+- [x] 統合モデル `QwenVLMini` クラス
   - forward: 画像 + テキスト指示 → テキスト出力
   - generate: 自己回帰テキスト生成
   - Loss 計算: 回答部分のみに cross-entropy を適用
 
 ### 1.2 動作確認
 
-- [ ] ランダム重みで forward pass が通ることを確認
-- [ ] generate（自己回帰生成）が動作することを確認
-- [ ] VRAM 使用量の実測
+- [x] ランダム重みで forward pass が通ることを確認
+- [x] generate（自己回帰生成）が動作することを確認
+- [x] VRAM 使用量の実測
 
 ### 1.3 Exit 条件
 
-- [ ] forward + generate が動作する
-- [ ] OOM しない
+- [x] forward + generate が動作する
+- [x] OOM しない
 
 ---
 
@@ -77,46 +77,46 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
 
 ### 2.1 データ準備
 
-- [ ] LLaVA-CC3M-Pretrain-595K のダウンロード
+- [x] LLaVA-CC3M-Pretrain-595K のダウンロード
   - HuggingFace: `liuhaotian/LLaVA-CC3M-Pretrain-595K`
   - 画像 + キャプションのペア、約 595K サンプル
   - **DINOv2 は text-alignment がないため、558K で Alignment が不十分な場合は ShareGPT4V-PT 1,246K に増量を検討**（TinyLLaVA Figure 7, Cambrian-1 Figure 7）
   - ただし Qwen2.5-0.5B は 494M と小型のため、データ過多によるハルシネーション増加にも注意（TinyLLaVA §4.2.2: TinyLlama 1.1B で POPE 劣化の事例）
-- [ ] DataLoader 実装
+- [x] DataLoader 実装
   - 画像: リサイズ (224×224 or 336×336) + ImageNet 正規化（mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]）
   - テキスト: **11 種類の質問プロンプトからランダム選択**（LLaVA Table 11）。"Describe the image concisely." / "Provide a brief description of the given image." / "Summarize the visual content of the image." 等
   - Loss マスク: キャプション部分のみ（指示テキスト部分は `ignore_index=-100` でマスク）
   - **合成キャプション（synthetic captions）は alt-text より品質が高い**: Idefics2 Table 6 で +3.1pt
   - **Pre-training データの飽和点は ~1000K**（ShareGPT4V Figure 6）。558K→1246K の増量は妥当だが、それ以上はコスト対効果低い
-- [ ] 単体テスト: バッチが正しく取り出せることを確認
+- [x] 単体テスト: バッチが正しく取り出せることを確認
 
 ### 2.2 学習
 
-- [ ] **Adapter のみ trainable**、DINOv2 + Qwen2.5-0.5B は frozen
-- [ ] ハイパーパラメータ:
+- [x] **Adapter のみ trainable**、DINOv2 + Qwen2.5-0.5B は frozen
+- [x] ハイパーパラメータ:
   - 学習率: 1e-3（Adapter のみなので大きめ。MLP 使用時は Linear の 2e-3 から半減。LLaVA-1.5 Table 9）
   - スケジューラ: cosine with warmup（warmup ratio 0.03）。**warmup なしも試す価値あり**（OpenVLA §3.4: warmup の効果が見られなかったケース）
-  - micro-batch=4, grad_accum=4（≈ global batch 16。**目標 batch size=256** に近づけるよう grad_accum を調整）
+  - micro-batch=4, grad_accum=64, **global batch=256**
   - エポック: 1
   - **bf16 mixed precision**（fp16 禁止: loss NaN リスク。MoE-LLaVA App.A.2）
   - **TF32 有効化**: `torch.backends.cuda.matmul.allow_tf32 = True`
   - AdamW (β1=0.9, β2=0.95)
   - **gradient clipping: max_grad_norm=1.0**
-- [ ] wandb ロギング（**データソースごとの loss を個別トラッキング**: OpenVLA §3.3）
-- [ ] 学習時間の見積もり: Adapter のみなので高速（数時間〜半日。LLaVA-Phi: 8xA100 で 1.5 時間）
+- [x] wandb ロギング（**データソースごとの loss を個別トラッキング**: OpenVLA §3.3）
+- [x] 学習時間の見積もり: Adapter のみなので高速（数時間〜半日。LLaVA-Phi: 8xA100 で 1.5 時間）
 
 ### 2.3 評価
 
-- [ ] テスト画像を入力してキャプションを生成
-- [ ] 生成テキストの定性的評価（画像に関連した内容が出るか）
-- [ ] Stage 1 の前後で生成テキストを比較
-- [ ] POPE で定量評価（ランダム回答 50% を上回るか）
+- [x] テスト画像を入力してキャプションを生成
+- [x] 生成テキストの定性的評価（画像に関連した内容が出るか）
+- [x] Stage 1 の前後で生成テキストを比較
+- [x] ~~POPE で定量評価~~ → Stage 1 では instruction following 不能のためスキップ（理由は stage1-report.md 参照）。Stage 2 で実施
 
 ### 2.4 Exit 条件
 
-- [ ] Loss が安定して下がる
-- [ ] 画像を入力すると（不完全でも）画像に関連したテキストが生成される
-- [ ] ランダムなテキストではなく、画像の内容に応じた出力が変化する
+- [x] Loss が安定して下がる
+- [x] 画像を入力すると（不完全でも）画像に関連したテキストが生成される
+- [x] ランダムなテキストではなく、画像の内容に応じた出力が変化する
 
 ---
 
@@ -130,10 +130,10 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
 
 ### 3.1 データ準備
 
-- [ ] LLaVA-Instruct-150K のダウンロード
+- [x] LLaVA-Instruct-150K のダウンロード
   - HuggingFace: `liuhaotian/LLaVA-Instruct-150K`
   - 画像 + 会話（質問-回答）のペア、約 150K サンプル
-- [ ] DataLoader 実装
+- [x] DataLoader 実装
   - **システムプロンプト + メディアマーカーを含む入力テンプレート**: SmolVLM Finding 6 で小規模 VLM の性能大幅向上を確認
     ```
     System: You are a visual agent and should provide concise answers.
@@ -160,13 +160,13 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
 
 ### 3.2 学習
 
-- [ ] **DINOv2 + Adapter + LLM を全解凍**（Qwen2.5-VL Phase 2 と同方式）
-- [ ] Stage 1 の学習済み Adapter 重みを初期値として使用
-- [ ] ハイパーパラメータ:
+- [x] **DINOv2 + Adapter + LLM を全解凍**（Qwen2.5-VL Phase 2 と同方式）
+- [x] Stage 1 の学習済み Adapter 重みを初期値として使用
+- [x] ハイパーパラメータ:
   - LLM + Adapter 学習率: **2e-5**（全論文で一致）
   - **DINOv2 学習率: 1e-5**（メイン LR の半分。Cambrian-1 Table 23 準拠。Eagle では SFT と同じ 2e-5 も使用）
   - スケジューラ: cosine with warmup（warmup ratio 0.03）。**warmup なしも試す価値あり**（OpenVLA §3.4）
-  - micro-batch=1, grad_accum=16（**目標 batch size=128-256**）
+  - micro-batch=1, grad_accum=128, **global batch=128**
   - エポック: **2**（Imp [arXiv:2405.12107] Table 1 §2.2: 1ep は学習不足 (71.6)、2ep が最適 (72.1)。**3 エポック以上は過学習リスク** -0.4pt）
   - **bf16 mixed precision**（fp16 禁止。TF32 有効化）
   - gradient checkpointing ON（DINOv2 + LLM）
@@ -177,7 +177,7 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
   - **NEFTune（Noisy Embedding Fine-Tuning）**: 入力埋め込みにノイズ注入で汎化向上（Idefics2 §4.2）。過学習の兆候が見られたら導入
   - 画像解像度のランダムスケールアップ（Idefics2 §4.2）
   - multi-turn 会話のシャッフル（Idefics2 §4.2）
-- [ ] **チェックポイントを 25 ステップごとに保存**（SmolVLM 知見: 最適点は訓練終了時とは限らない）
+- [x] **チェックポイントを 100 ステップごとに保存**（SmolVLM 知見では 25 ステップを推奨だが、ディスク容量の都合で 100 ステップに変更）
 - [ ] **訓練不安定時の段階的対策**（設計書 §10.4, §10.15, §10.18 参照）:
   1. まず全解凍で試行（DINOv2 lr=**1e-5**、LLM lr=**2e-5**）
   2. 発散したら DINOv2 の後半 6 層のみ解凍（TinyLLaVA [arXiv:2402.14289] Table A1: Share recipe。**コネクタは Stage 1 の学習済み重みで初期化**）
@@ -188,7 +188,7 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
   - **推奨手順**: まず frozen で設計を固め（データ、Adapter、ハイパーパラメータの検証）→ 設計が固まったら unfreeze で最終訓練（Cambrian-1 方式: +4.88pt avg, Vision-Centric +11.47pt）
   - **注意**: DINOv2 解凍で訓練速度 50-55% 低下（Cambrian-1 Appendix F）
   - **0.5B LLM の特性**: 小型 LLM では ViT unfreeze が POPE 改善する可能性あり（大型 LLM とは逆。TinyLLaVA §4.2.2）
-- [ ] wandb ロギング（**データソースごとの loss/accuracy を個別モニタリング**。学習が進まないデータソースは途中除外。OpenVLA §3.3）
+- [x] wandb ロギング（**データソースごとの loss/accuracy を個別モニタリング**。学習が進まないデータソースは途中除外。OpenVLA §3.3）
 
 ### 3.3 Adapter トークン圧縮（推奨）
 
@@ -229,7 +229,7 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
 
 ### 3.5 Exit 条件
 
-- [ ] Loss が安定して下がる
+- [x] Loss が安定して下がる
 - [ ] 画像に対する質問に（大雑把にでも）妥当な回答が生成される
 - [ ] Stage 1 より明確に改善している
 
@@ -267,7 +267,7 @@ Stage 2 (Visual Instruction Tuning — DINOv2 + Adapter + LLM)
 | DINOv2 特徴と Qwen2.5-0.5B の空間が遠すぎる | Alignment が進まない | MLP ratio 4 を使用（Linear は -10.8pt）。データを 558K → 1,246K に増量 | COMM Table 6, TinyLLaVA Fig 7 |
 | Stage 2 で全解凍すると発散 | 訓練が進まない | DINOv2 lr=1e-5 で開始 → 後半 6 層のみ解凍 → LoRA rank=256 → frozen | §10.4 段階的対策 |
 | Stage 2 で LLM のテキスト能力が劣化 | 一般的な言語能力の喪失 | LoRA rank=256 で LLM を保護、weight decay=0.1 | Imp Table 1, LLaVA-Phi §3.1 |
-| Stage 2 で過学習 | 汎化性能の低下 | 2 エポック以内、NEFTune、25 ステップごとの checkpoint | Imp Table 1 §2.2, Idefics2 §4.2 |
+| Stage 2 で過学習 | 汎化性能の低下 | 2 エポック以内、NEFTune、100 ステップごとの checkpoint | Imp Table 1 §2.2, Idefics2 §4.2 |
 | 256 ビジョントークンが LLM に多すぎる | 計算コスト増、8k 上限超のリスク | Pixel Shuffle r=2 で 64 トークンに圧縮 | SmolVLM Finding 2-3, Idefics2 Table 4 |
 | DINOv2 にテキスト対応がない（CLIP と異なる） | OCR/テキスト系タスクが弱い | OCR/Chart データ 32K を追加。Pre-alignment を十分に行う | Cambrian-1 Table 12, Eagle Table 5 |
 | DINOv2 解凍でハルシネーション増加 | POPE スコア低下 | POPE を常時監視、Share recipe（後半のみ解凍）で緩和 | TinyLLaVA Table A1 |
