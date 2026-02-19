@@ -184,10 +184,10 @@ def main():
         "warmup_ratio": 0.03,
         "weight_decay": 0.1,          # LLaVA-Phi: 小型モデルでは正則化重要
         "max_grad_norm": 1.0,
-        "save_steps": 25,             # SmolVLM: 最適点は訓練終了時とは限らない
+        "save_steps": 100,            # SmolVLM は 25 推奨だがディスク容量の都合で 100 に変更
         "logging_steps": 5,
         "output_dir": "checkpoints/stage2",
-        "stage1_checkpoint": "checkpoints/stage1/best.pt",
+        "stage1_checkpoint": "checkpoints/stage1/checkpoint-2325.pt",
     }
 
     # --- Model ---
@@ -283,12 +283,14 @@ def save_full_checkpoint(model, optimizer, step, output_dir):
 
 RTX 4090 (24 GB) で余裕あり。micro-batch=2 も試せる可能性あり。
 
+**実測値**: Peak VRAM 8,009 MB
+
 ### 学習時間の見積もり
 
 - データ: 150K サンプル × 2 エポック = 300K steps
 - Global batch: 128 → ~2,344 optimizer steps
 - 全パラメータ解凍 + gradient checkpointing
-- **見積もり: 12〜24 時間**
+- **見積もり: 12〜24 時間**（実測: 約 5.5 時間）
 
 ---
 
@@ -664,3 +666,15 @@ Stage 2 (Visual Instruction Tuning)
   ↓ 全重みを export
 Cosmos Reason Mini に引き継ぎ
 ```
+
+### 完了状況
+
+| Step | 状態 | 備考 |
+|------|------|------|
+| Step 1: データダウンロード | **完了** | COCO 2014 train + LLaVA-Instruct-150K |
+| Step 2: InstructDataset + Collator | **完了** | instruct_dataset.py |
+| Step 3: train_stage2.py | **完了** | 結果は [stage2-report.md](stage2-report.md) 参照 |
+| Step 4: 訓練不安定対策 | **不要** | 全解凍で安定して学習完了 |
+| Step 5: 評価 (eval_qualitative + eval_benchmark) | **未着手** | COCO val2014 のDLが必要 |
+| Step 6: Cosmos 引き継ぎ | **未着手** | 別プロジェクトで実施 |
+| 学習実行 | **完了** | 約 5.5 時間、Loss 1.77→平均1.50 |

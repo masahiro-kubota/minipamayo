@@ -232,11 +232,11 @@ Mini との違い: Qwen2.5-VL は独自 ViT を CLIP 初期化から fine-tune �
 | frozen | ViT + LLM | DINOv2 + Qwen2.5-0.5B |
 | データ | CC3M-595K | CC3M-595K（同じ） |
 | 学習率 | 1e-3 | 1e-3 |
-| バッチサイズ | 256 | micro-batch=4, grad_accum=4（≈16） |
+| バッチサイズ | 256 | micro-batch=4, grad_accum=64, global=256 |
 | エポック | 1 | 1 |
 | 精度 | bf16 | bf16 |
 
-Adapter のみの学習なのでパラメータが少なく（~1M）、VRAM 消費は最小。micro-batch を大きめにできる。
+Adapter のみの学習なのでパラメータが少なく（~5M）、VRAM 消費は最小。micro-batch を大きめにできる。
 
 #### 入出力
 
@@ -284,8 +284,8 @@ Qwen2.5-VL の Phase 2（Multimodal Pre-Training）:
 | frozen | ViT | — |
 | データ | LLaVA-mix665k | LLaVA-Instruct-150K |
 | 学習率 | 2e-5 | 2e-5 |
-| バッチサイズ | 128 | micro-batch=1, grad_accum=16 |
-| エポック | 1 | 1 |
+| バッチサイズ | 128 | micro-batch=1, grad_accum=128, global=128 |
+| エポック | 1 | **2**（Imp Table 1: 2ep が最適） |
 | 精度 | bf16 | bf16 |
 | gradient checkpointing | — | ON（LLM） |
 
@@ -379,7 +379,7 @@ bf16 学習時の固定コスト: **N × 12 bytes**（パラメータ 2B + AdamW
 
 | コンポーネント | サイズ | 備考 |
 |---|---|---|
-| 全パラメータ (582M × 12 bytes) | ~6.98 GB | DINOv2 86M + Adapter ~2M + Qwen2.5-0.5B 494M |
+| 全パラメータ (~585M × 12 bytes) | ~7.0 GB | DINOv2 86M + Adapter ~5M + Qwen2.5-0.5B 494M |
 | Activation（checkpointing ON） | ~2-3 GB | |
 | **合計** | **~10 GB** | |
 
