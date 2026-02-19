@@ -24,11 +24,11 @@
 
 **状況**: Stage 1 学習が完了（2,325 ステップ、loss 7.74→3.29）。
 
-**判断**: Phase 3（Stage 2: Visual Instruction Tuning）の実装に進む
+**判断**: Stage 2（Visual Instruction Tuning）の実装に進む
 
 **理由**:
-1. Phase 2 の Exit 条件（loss が安定して下がる）をクリア
-2. 設計書 (phase3-implementation.md) に詳細な実装プランが既にある
+1. Stage 1 の Exit 条件（loss が安定して下がる）をクリア
+2. 設計書 (stage2-implementation.md) に詳細な実装プランが既にある
 3. Stage 2 のデータ（COCO 2014 ~13GB）のダウンロードに時間がかかるため、先に開始すべき
 4. ユーザーから「引き続き進めてください。自分で判断していい」との指示
 

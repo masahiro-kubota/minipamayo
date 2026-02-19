@@ -1,4 +1,4 @@
-# Phase 3: Stage 2 Visual Instruction Tuning — 具体的実装プラン
+# Stage 2: Visual Instruction Tuning — 具体的実装プラン
 
 ## 目的
 
@@ -7,18 +7,18 @@
 
 ---
 
-## プロジェクト構成（Phase 3 で追加するファイル）
+## プロジェクト構成（Stage 2 で追加するファイル）
 
 ```
 qwen-vl-mini/src/qwen_vl_mini/
-├── model.py                 # Phase 1 で作成済み
+├── model.py                 # Stage 0 で作成済み
 ├── data/
 │   ├── __init__.py
-│   ├── pretrain_dataset.py  # Phase 2 で作成済み
+│   ├── pretrain_dataset.py  # Stage 1 で作成済み
 │   └── instruct_dataset.py  # Step 2: Stage 2 用 Dataset
-├── train_stage1.py          # Phase 2 で作成済み
+├── train_stage1.py          # Stage 1 で作成済み
 ├── train_stage2.py          # Step 3: Stage 2 学習スクリプト
-├── eval_qualitative.py      # Phase 2 で作成済み（拡張）
+├── eval_qualitative.py      # Stage 1 で作成済み（拡張）
 └── eval_benchmark.py        # Step 5: 定量的評価
 ```
 
@@ -649,15 +649,15 @@ Step 6: Cosmos Reason Mini 引き継ぎ用 export                (30 min)
 ## 全体フロー図
 
 ```
-Phase 1 (完了)
+Stage 0 (完了)
   model.py: VisionEncoder + Adapter + QwenVLMini
   ↓
-Phase 2 (Stage 1: Feature Alignment)
+Stage 1 (Feature Alignment)
   data: LLaVA-CC3M-Pretrain-595K
   学習: Adapter のみ (lr=1e-3, 1 epoch, ~3-6h)
   評価: 画像→キャプション生成の定性確認
   ↓ Adapter 重みを引き継ぎ
-Phase 3 (Stage 2: Visual Instruction Tuning)
+Stage 2 (Visual Instruction Tuning)
   data: LLaVA-Instruct-150K (+ COCO images)
   学習: 全パラメータ (lr=2e-5/1e-5, 2 epochs, ~12-24h)
   評価: POPE >60%, 定性的に VQA が動く

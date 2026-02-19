@@ -79,7 +79,7 @@ Loss が Step 300 あたりから ~4.0 前後でプラトーに見えたが、�
 
 ## 次のステップ
 
-Phase 3: Stage 2 Visual Instruction Tuning に進む。
+Stage 2: Visual Instruction Tuning に進む。
 - Stage 1 の最終チェックポイント (`checkpoint-2325.pt`) の Adapter 重みを引き継ぎ
 - LLaVA-Instruct-150K + COCO 2014 画像で学習
 - DINOv2 + Adapter + LLM を全解凍して end-to-end 学習

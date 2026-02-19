@@ -1,4 +1,4 @@
-# Phase 2: Stage 1 Feature Alignment — 具体的実装プラン
+# Stage 1: Feature Alignment — 具体的実装プラン
 
 ## 目的
 
@@ -7,11 +7,11 @@ VE + LLM は frozen、**Adapter のみ学習**。
 
 ---
 
-## プロジェクト構成（Phase 2 で追加するファイル）
+## プロジェクト構成（Stage 1 で追加するファイル）
 
 ```
 qwen-vl-mini/src/qwen_vl_mini/
-├── model.py               # Phase 1 で作成済み
+├── model.py               # Stage 0 で作成済み
 ├── data/
 │   ├── __init__.py
 │   └── pretrain_dataset.py # Step 2: Stage 1 用 Dataset
@@ -487,7 +487,7 @@ Step 4: eval_qualitative.py (定性的評価)              (30 min)
 
 ---
 
-## 次のステップ（Phase 2 完了後）
+## 次のステップ（Stage 1 完了後）
 
-Phase 2 の Exit 条件をクリアしたら Phase 3（Stage 2: Visual Instruction Tuning）に進む。
-Adapter の学習済み重みを Phase 3 の初期値として引き継ぐ。
+Stage 1 の Exit 条件をクリアしたら Stage 2（Visual Instruction Tuning）に進む。
+Adapter の学習済み重みを Stage 2 の初期値として引き継ぐ。

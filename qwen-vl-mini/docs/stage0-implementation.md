@@ -1,8 +1,8 @@
-# Phase 1: 基盤構築 — 具体的実装プラン
+# Stage 0: 基盤構築 — 具体的実装プラン
 
 ## 方針
 
-**最もシンプルな構成で forward + generate が動くことを確認する**。性能最適化は Phase 2 以降で行う。
+**最もシンプルな構成で forward + generate が動くことを確認する**。性能最適化は Stage 1 以降で行う。
 
 ### 初期構成（最小構成）
 
@@ -240,9 +240,9 @@ Step 5: テスト          — forward + generate + VRAM          (30 min)
 
 ---
 
-## 次のステップ（Phase 1 完了後）
+## 次のステップ（Stage 0 完了後）
 
-Phase 1 が通ったら Phase 2（Stage 1: Feature Alignment）に進む:
+Stage 0 が通ったら Stage 1（Feature Alignment）に進む:
 - LLaVA-CC3M-Pretrain-595K のダウンロード
 - DataLoader 実装
 - Adapter のみ学習（VE + LLM frozen）

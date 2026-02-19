@@ -1,4 +1,4 @@
-"""Phase 1 動作確認: forward + generate + VRAM."""
+"""Stage 0 動作確認: forward + generate + VRAM."""
 
 import torch
 
@@ -82,7 +82,7 @@ def main():
     assert peak_mb < 24_000, "Should fit in RTX 4090 (24 GB)"
     print("VRAM OK")
 
-    print("\n=== All Phase 1 tests passed ===")
+    print("\n=== All Stage 0 tests passed ===")
 
 
 if __name__ == "__main__":

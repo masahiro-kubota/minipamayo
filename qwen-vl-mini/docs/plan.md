@@ -5,16 +5,16 @@
 DINOv2 ViT-B/14 + Qwen2.5-0.5B から汎用 VLM を構築する。Qwen2.5-VL の学習パイプライン（5 段階）を簡略化し、LLaVA-1.5 方式の **2 段階**で進める。詳細は [設計書](design.md) を参照。
 
 ```
-Phase 1 (基盤) → Phase 2 (Stage 1: Feature Alignment) → Phase 3 (Stage 2: Visual Instruction Tuning)
+Stage 0 (基盤) → Stage 1 (Feature Alignment) → Stage 2 (Visual Instruction Tuning)
 ```
 
 完了後、学習済み重みを Cosmos Reason Mini に引き継ぐ。
 
 ### 実装アプローチ: Simplest-First Fail-Fast
 
-design.md / plan.md には論文サーベイに基づく多数の「検討」事項（336x336 解像度、[CLS] トークン連結、トークン圧縮、GLU 活性化、深層レイヤー選択、vision block 追加 等）が記載されているが、**Phase 1 ではすべて最もシンプルな選択で実装し、まず動くものを作る**。改善は実測に基づいて段階的に行う。
+design.md / plan.md には論文サーベイに基づく多数の「検討」事項（336x336 解像度、[CLS] トークン連結、トークン圧縮、GLU 活性化、深層レイヤー選択、vision block 追加 等）が記載されているが、**Stage 0 ではすべて最もシンプルな選択で実装し、まず動くものを作る**。改善は実測に基づいて段階的に行う。
 
-**Phase 1 の初期構成（最小構成）**:
+**Stage 0 の初期構成（最小構成）**:
 
 | 項目 | 選択 | 理由 |
 |---|---|---|
@@ -25,13 +25,13 @@ design.md / plan.md には論文サーベイに基づく多数の「検討」事
 | トークン圧縮 | **なし**（256 トークンそのまま） | まず動作確認。Pixel Shuffle は後で導入 |
 | Vision block 追加 | **なし** | dino-meets-text の知見だが初期は不要 |
 
-**改善サイクル**: Phase 1 完了後、Phase 2/3 の学習結果を見ながら一つずつ変更を試し、効果を実測で確認する。**同時に複数変更しない**（どの変更が効いたか分からなくなる）。
+**改善サイクル**: Stage 0 完了後、Stage 1/2 の学習結果を見ながら一つずつ変更を試し、効果を実測で確認する。**同時に複数変更しない**（どの変更が効いたか分からなくなる）。
 
-具体的な Phase 1 の実装手順は [phase1-implementation.md](phase1-implementation.md) を参照。
+具体的な Stage 0 の実装手順は [stage0-implementation.md](stage0-implementation.md) を参照。
 
 ---
 
-## Phase 1: 基盤構築
+## Stage 0: 基盤構築
 
 ### 1.1 モジュール実装
 
@@ -67,9 +67,9 @@ design.md / plan.md には論文サーベイに基づく多数の「検討」事
 
 ---
 
-## Phase 2: Stage 1 — Feature Alignment
+## Stage 1: Feature Alignment
 
-具体的な実装手順は [phase2-implementation.md](phase2-implementation.md) を参照。
+具体的な実装手順は [stage1-implementation.md](stage1-implementation.md) を参照。
 
 ### 目的
 
@@ -120,9 +120,9 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
 
 ---
 
-## Phase 3: Stage 2 — Visual Instruction Tuning
+## Stage 2: Visual Instruction Tuning
 
-具体的な実装手順は [phase3-implementation.md](phase3-implementation.md) を参照。
+具体的な実装手順は [stage2-implementation.md](stage2-implementation.md) を参照。
 
 ### 目的
 
@@ -246,17 +246,17 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
 ## 実装優先順位まとめ
 
 ```
-Phase 1 (基盤: モジュール実装)
+Stage 0 (基盤: モジュール実装)
     ↓
-Phase 2 (Stage 1: Feature Alignment — Adapter のみ)
+Stage 1 (Feature Alignment — Adapter のみ)
     ↓
-Phase 3 (Stage 2: Visual Instruction Tuning — DINOv2 + Adapter + LLM)
+Stage 2 (Visual Instruction Tuning — DINOv2 + Adapter + LLM)
     ↓
 → Cosmos Reason Mini に引き継ぎ
 ```
 
-**最短経路**: Phase 1 → 2 → Cosmos Reason Mini（Stage 2 スキップ、Alignment だけで先に進む）
-**推奨経路**: Phase 1 → 2 → 3 → Cosmos Reason Mini
+**最短経路**: Stage 0 → 1 → Cosmos Reason Mini（Stage 2 スキップ、Alignment だけで先に進む）
+**推奨経路**: Stage 0 → 1 → 2 → Cosmos Reason Mini
 
 ---
 
@@ -283,7 +283,7 @@ Phase 3 (Stage 2: Visual Instruction Tuning — DINOv2 + Adapter + LLM)
 
 実装時に特に注意すべき点。詳細な数値とテーブルは設計書 §10 を参照。
 
-### アーキテクチャ（Phase 1）
+### アーキテクチャ（Stage 0）
 
 1. **Adapter は 2 層 MLP を維持**: TinyLLaVA [arXiv:2402.14289] Figure 6 で MLP > Resampler を確認。COMM [arXiv:2310.08825] Table 6 で DINOv2 には 2 層 MLP が必須（Linear 比 +15.7pt）。4 層以上は逆効果
 2. **Adapter の隠れ層は Ratio 4（入力の 4 倍）が最適**: COMM [arXiv:2310.08825] Table 6 で確認。`Linear(768, 3072) → GELU → Linear(3072, 896)` を推奨。Pixel Shuffle 導入時は 1 層 Linear で十分（SmolVLM 実装）
@@ -295,7 +295,7 @@ Phase 3 (Stage 2: Visual Instruction Tuning — DINOv2 + Adapter + LLM)
 8. **ViT-LLM サイズバランスは適切**: SmolVLM [arXiv:2504.05299] Figure 3 左で 428M ViT + 135M LM は性能低下。DINOv2 86M + Qwen2.5-0.5B 494M（~15%）は SmolVLM-500M（~21%）と同等で妥当
 9. **DINOv2 の特徴特性を理解**: COMM [arXiv:2310.08825] Table 1 で DINOv2 はグラウンディングに強い（CLIP 比 +7.5pt）が VQA では劣る（-5.7pt）。OCR/テキスト認識は根本的弱点（Cambrian-1 Table 12: OCRBench=3.10, ChartQA=16.48）。ただし自己教師あり学習モデル中で全カテゴリ 1 位（Cambrian-1 Table 2）
 
-### Stage 1: Feature Alignment（Phase 2）
+### Stage 1: Feature Alignment
 
 10. **DINOv2 はフローズンで正しい**: LLaVA-1.5 [arXiv:2310.03744] と TinyLLaVA [arXiv:2402.14289] の Stage 1 と同方式。DINOv2 の汎用特徴は高品質なので Adapter のみで十分
 11. **DINOv2 は text-alignment がないため Pre-training がさらに重要**: LLaVA Table 8 で Pre-training スキップは -5.11%。DINOv2 ではさらに深刻。Eagle Table 5 でも Pre-alignment 必須と確認
@@ -303,7 +303,7 @@ Phase 3 (Stage 2: Visual Instruction Tuning — DINOv2 + Adapter + LLM)
 13. **合成キャプションは alt-text より高品質**: Idefics2 Table 6 で +3.1pt
 14. **LLM-SFT データの再利用は避ける**: SmolVLM [arXiv:2504.05299] Figure 7 左で画像タスク -6.5%、動画タスク -3.7% の劣化を確認
 
-### Stage 2: Visual Instruction Tuning（Phase 3）
+### Stage 2: Visual Instruction Tuning
 
 15. **全解凍で発散したら段階的に対処**: TinyLLaVA [arXiv:2402.14289] Table A1 の Share recipe（前半層凍結）→ Imp [arXiv:2405.12107] Table 1 §2.1 の LoRA rank=256（平均 71.6、Full FT 71.2 を上回る）→ Idefics2 [arXiv:2405.02246] Table 3 でも LoRA が +9.2pt で安定化を確認 → DINOv2 frozen のまま adapter + LLM のみ（COMM の知見）
 16. **DINOv2 解凍時の lr は 1e-5（メイン LR の半分）**: Cambrian-1 Table 23 準拠。解凍で Vision-Centric +11.47pt だが訓練速度 50-55% 低下
@@ -322,12 +322,12 @@ Phase 3 (Stage 2: Visual Instruction Tuning — DINOv2 + Adapter + LLM)
 29. **DINOv2 は ViT-g/14 からの蒸留モデル**: DINOv2 Table 4, 17。教師モデルの知識を効率的に保持（ImageNet 82.1 vs 86.5）
 30. **小型 LLM では ViT fine-tuning が有効（大型 LLM とは逆）**: TinyLLaVA §4.2.2。ただし訓練パラメータ増加でハルシネーション増加リスクあり
 
-### 実装・学習の落とし穴（全 Phase 共通）
+### 実装・学習の落とし穴（全 Stage 共通）
 
-31. **bf16 必須、fp16 禁止**: MoE-LLaVA Appendix A.2 で Qwen-1.8B クラスの小型モデルが fp16 で loss NaN を報告。全 Phase で bf16 mixed precision を使用。TF32 も明示的に有効化（`torch.backends.cuda.matmul.allow_tf32 = True`）
+31. **bf16 必須、fp16 禁止**: MoE-LLaVA Appendix A.2 で Qwen-1.8B クラスの小型モデルが fp16 で loss NaN を報告。全 Stage で bf16 mixed precision を使用。TF32 も明示的に有効化（`torch.backends.cuda.matmul.allow_tf32 = True`）
 32. **DINOv2 register token に注意**: `dinov2-base-reg` を使う場合、4 個の register token を出力から除外必須。推奨は `dinov2-base`（register token なし）を使用（§10.15）
 33. **ImageNet 正規化を忘れずに適用**: DINOv2 は mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]。公式リポジトリの transform 設定と一致させること（§10.15）
-34. **gradient clipping = 1.0**: DINOv2 unfreeze 時の安定化に寄与。全 Phase で適用（§10.15）
+34. **gradient clipping = 1.0**: DINOv2 unfreeze 時の安定化に寄与。全 Stage で適用（§10.15）
 
 ### DINOv2 活用の追加テクニック
 
