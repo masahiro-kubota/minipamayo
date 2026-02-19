@@ -485,6 +485,17 @@ Step 4: eval_qualitative.py (定性的評価)              (30 min)
 学習実行                                              (3-6 hours)
 ```
 
+### 完了状況
+
+| Step | 状態 | 備考 |
+|------|------|------|
+| Step 1: データダウンロード | **完了** | LLaVA-CC3M-Pretrain-595K |
+| Step 2: PretrainDataset + Collator | **完了** | pretrain_dataset.py |
+| Step 3: train_stage1.py | **完了** | 結果は [stage1-report.md](stage1-report.md) 参照 |
+| Step 4: eval_qualitative.py | **完了** | 5/5 枚で画像認識成功、繰り返し・ゴミトークンあり（想定内） |
+| Step 5: 壊れた画像の対処 | **完了** | Dataset 内で対処済み |
+| 学習実行 | **完了** | 約 2.5 時間、Loss 7.74→3.29 |
+
 ---
 
 ## 次のステップ（Stage 1 完了後）

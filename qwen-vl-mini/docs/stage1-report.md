@@ -77,6 +77,69 @@ Loss が Step 300 あたりから ~4.0 前後でプラトーに見えたが、�
 - Loss ~3.3 は次トークン予測の cross-entropy として妥当（vocab=151,936 のランダム予測は ~11.9）
 - 完璧なキャプション生成は期待していない（それは Stage 2 の仕事）
 
+## Stage 1 前後比較
+
+同じ 5 枚の COCO val2014 画像（seed=42）に対して、学習前（ランダム初期化 Adapter）と学習後（checkpoint-2325.pt）の生成テキストを比較した。
+
+```bash
+# 前（ランダム Adapter）
+uv run python -m qwen_vl_mini.eval_qualitative --image-dir data/coco/val2014 --seed 42
+# 後（学習済み Adapter）
+uv run python -m qwen_vl_mini.eval_qualitative --checkpoint checkpoints/stage1/checkpoint-2325.pt --stage 1 --image-dir data/coco/val2014 --seed 42
+```
+
+| 画像 | 内容 | 前（ランダム Adapter） | 後（checkpoint-2325.pt） |
+|------|------|------------------------|--------------------------|
+| 105156 | 馬車 | "Describe this image in detail.InSection InSection..." | "horse drawn cart on the street" |
+| 022861 | ピザ | "Describe this image in detail.InSection InSection..." | "the best way to eat pizza is to have it with a side of pasta" |
+| 258529 | 石造りの家 | "Describe this image in detail.InSection InSection..." | "the house is a small stone hut with a small garden" |
+| 229840 | 犬 | "Describe this image in detail.InSection InSection..." | "a dog with a black and white dog on a fence" |
+| 209747 | 猫 | "Describe this image in detail.InSection InSection..." | "a kitten in a bathroom with a sink and a toothbrush" |
+
+**前（ランダム Adapter）**: 全画像で同一パターン — プロンプトのオウム返し + "InSection" トークンの無限繰り返し。画像の内容を一切反映していない。
+
+**後（学習済み Adapter）**: 5/5 枚で画像の主要物体を正しく認識。画像ごとに異なるキャプションを生成。Adapter の学習が視覚-言語アライメントに成功したことを示す。
+
+## 定性的評価（eval_qualitative.py）
+
+COCO val2014 からランダム 5 枚を選択し、5 種類の質問で生成テスト（greedy decoding, max_new_tokens=200）。
+
+### 結果サマリ
+
+| 画像 | 内容 | 生成テキスト（冒頭） | 画像認識 |
+|------|------|----------------------|----------|
+| 105156 | 馬車 | "horse drawn cart on the street" | ✓ |
+| 022861 | ピザ | "the best way to eat pizza is to have it with a side of pasta" | ✓ |
+| 258529 | 石造りの家 | "the house is a small stone hut with a small garden" | ✓ |
+| 229840 | 犬 | "a dog with a black and white dog on a fence" | ✓ |
+| 209747 | 猫 | "a kitten in a bathroom with a sink and a toothbrush" | ✓ |
+
+### 観察
+
+**ポジティブ**:
+- 5/5 枚で画像の主要な物体を正しく認識（馬車、ピザ、家、犬、猫）
+- 画像ごとに異なる出力 — 縮退（全画像同じ出力）は発生していない
+- Adapter による視覚-言語アライメントが機能している
+
+**ネガティブ**:
+- 全サンプルで繰り返しループに入る（EOS を生成できない）
+- 質問の違いに対する応答の分化が弱い（ほぼ同じキャプションを返す）
+- 多言語ゴミトークン混入（アラビア語、中国語、ロシア語等 — Qwen2.5 の多言語 vocab の影響）
+
+### Exit 条件の判定
+
+| 条件 | 結果 |
+|------|------|
+| Loss が安定して下がる | **✓** 7.74 → 3.29 |
+| 画像に関連したテキストが生成される | **✓** 5/5 枚で関連キーワードを含む |
+| 画像の内容に応じて出力が変化する | **✓** 画像ごとに異なる出力 |
+
+繰り返しと多言語ゴミは Stage 1（Adapter のみ学習）の制約として想定内。Stage 2 での改善を期待。
+
+### 定量ベンチマーク（POPE 等）を実施しない理由
+
+Stage 1 は Adapter のみの学習で、質問応答能力を獲得していない。POPE（Yes/No 判定）等のベンチマークを測定しても、instruction following ができないため ~50%（ランダム相当）になることが予測される。SmolVLM-256M 等の instruction tuning 済みモデルとの比較も不公平。定量ベンチマークは Stage 2（全パラメータ解凍 + instruction tuning）完了後に実施する。
+
 ## 次のステップ
 
 Stage 2: Visual Instruction Tuning に進む。
