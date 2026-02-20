@@ -16,55 +16,118 @@ Cosmos-Reason の 2 段階学習パイプライン（Physical AI SFT → Physica
 
 ## Phase 1: SFT データ作成
 
-### 1.1 画像選定
+**Mini 検証: ✅ 完了** — 50 フレーム → 201 QA → LLaVA 形式
 
-- [ ] 運転データセット（nuScenes / comma2k19）からフレームを選定
-  - 多様なシーンをカバー: 直線、交差点、車線変更、停車、歩行者あり等
-  - 目標: ~2,000〜5,000 枚
-- [ ] 各画像に対して egomotion 情報（速度、方向等）を抽出
+**目標**: ~2.3M QA ペア（Cosmos-Reason1 の ~3.85M に対して ~1.7 倍差）。必要ディスク: ~250 GB。
 
-### 1.2 理解 QA 生成
+### 1.1 Tier 1: 画像ベースの既存 QA（API コスト 0）
 
-教師 VLM を使い、画像から「理解」タイプの QA を生成:
+LLaVA 形式への変換のみで即利用可能。最優先で取得する。
 
-- [ ] **シーン記述プロンプト**の設計
-  - 道路タイプ、天候、時刻、交通状況の記述を要求
-- [ ] **空間関係プロンプト**の設計
-  - 先行車・歩行者・信号の位置関係を問う QA
-- [ ] **物体属性プロンプト**の設計
-  - 車両種類、信号状態、標識の意味を問う QA
-- [ ] バッチ処理で QA 生成（GPT-4o API）
-- [ ] 生成結果の品質チェック（~100 サンプルを目視）
+- [ ] **NuScenes-QA** (~460K QA, ~100 MB annotation)
+  - nuScenes keyframes 画像が必要（§1.1a で共通 DL）
+  - テンプレートベースの空間推論 QA（DINOv2 の強みと合致）
+  - LLaVA 形式に変換
+- [ ] **DriveLM-nuScenes** (~300K QA, ~200 MB annotation)
+  - nuScenes keyframes 画像を共有
+  - フロントカメラ画像のみフィルタ（6カメラ → 1カメラ）
+  - Graph VQA を LLaVA 形式に変換
+- [ ] **Robo2VLM-1** (~684K QA → 200K 使用, ~30 GB)
+  - 画像同梱の MCQ VQA。CC-BY-4.0
+  - ロボット操作の空間推論・操作理解
+  - 200K をランダムサンプリング → LLaVA 形式に変換
+- [ ] **CLEVR** (~865K QA → 200K 使用, ~5 GB)
+  - 合成画像の空間推論。CC-BY-4.0
+  - 属性識別、カウント、比較、空間関係、論理操作
+  - 200K をランダムサンプリング
+- [ ] **PhysBench** (~10K QA, ~3.5 GB images)
+  - 物理推論ベンチマーク（力学、流体、安定性等）
+  - 画像エントリのみ抽出（動画エントリは除外）
+- [ ] **CODA-LM** (~42K QA, ~99 MB annotation)
+  - コーナーケース特化。CODA 画像は別途 DL
+- [ ] **nuScenes keyframes** (~35 GB, 共通画像ベース)
+  - NuScenes-QA, DriveLM, Cosmos-Reason1 AV で共有
 
-### 1.3 推論 QA 生成
+**Tier 1 小計: ~1.2M QA, ~75 GB**
 
-- [ ] **因果推論プロンプト**の設計
-  - 「なぜ先行車は減速しているか」「この信号で停車すべき理由は」
-- [ ] **行動推論プロンプト**の設計
-  - 「ego vehicle は次にどう行動すべきか」
-- [ ] **時間推論プロンプト**の設計
-  - 「次に何が起こりそうか」
-- [ ] 推論 QA に対して **CoT 推論トレース**を生成（任意）
-  - 教師 LLM にキャプション + 質問を与え、段階的推論を生成
-  - **注意: CoT は短く簡潔に**（SmolVLM 知見: 小型モデルでは過剰な CoT が有害。全体の 0.02〜0.05%）
-- [ ] 生成結果の品質チェック
+### 1.2 Tier 2: 動画→フレーム抽出 + 既存アノテーション
 
-### 1.4 データクリーニング
+Cosmos-Reason1 SFT Dataset の公開アノテーション + フレーム抽出。
 
+- [ ] **Cosmos-Reason1 SFT Dataset** (~84 GB) を HuggingFace から DL
+  - `nvidia/Cosmos-Reason1-SFT-Dataset` (CC-BY-4.0)
+  - 以下のサブセットを抽出:
+    - [ ] BridgeData V2 分 (~258K → 200K 使用): フレーム抽出
+    - [ ] RoboVQA 分 (~1.14M → 300K 使用): フレーム抽出（動画同梱）
+    - [ ] HoloAssist 分 (~273K → 200K 使用): フレーム抽出（動画別途 DL）
+    - [ ] AgiBot 分 (~38.9K → 全量使用): フレーム抽出
+    - [ ] AV 分 (~12.4K → 全量使用): フレーム抽出
+  - **動画→画像変換**: 各アノテーションの timestamp からキーフレームを抽出
+  - **時間依存 QA のフィルタ**: 「次に何が起こるか」等の temporal QA は除外
+- [ ] **SUTD-TrafficQA** (~62.5K MCQ, ~20.5 GB)
+  - 交通シーン MCQ。SFT 用 MCQ+CoT + RL 用 MCQ
+  - 動画からキーフレーム抽出
+- [ ] **Reason2Drive** (~633K → 300K 使用, ~50 GB 推定)
+  - nuScenes + Waymo + ONCE 横断
+  - チェーン推論 QA（Perception / Prediction / Reasoning）
+  - nuScenes 部分は画像共有、他は動画からフレーム抽出
+
+**Tier 2 小計: ~1.1M QA, ~155 GB**
+
+### 1.3 Tier 3: GPT-4o による追加 QA 生成（補完）
+
+Tier 1+2 でカバーできない部分を API で補完:
+
+- [x] nuScenes フレーム選定 + キャプション + QA 生成（Mini 検証済み）
+- [ ] **Something-Something V2** (~220K clips, ~19.4 GB) からフレーム抽出 + QA 生成
+  - 物体操作の因果関係に特化（~50K QA 目標）
+- [ ] **BDD-X** (~7K 動画, annotation ~717 KB) から行動 + 理由説明 QA（~26K）
+- [ ] nuScenes 画像から追加空間推論 QA（~50K QA 目標）
+- [ ] **CoT は短く簡潔に**（SmolVLM 知見: 小型モデルでは過剰な CoT が有害）
+
+**Tier 3 小計: ~126K QA, ~20 GB + API コスト**
+
+### 1.4 データクリーニングと統合
+
+- [ ] 各データセットを LLaVA 形式に統一変換
 - [ ] 「画像の説明によると」「キャプションから」等の不要な参照を除去
-- [ ] 回答の形式を統一（短い回答 vs 詳細な記述）
 - [ ] 品質の低い QA をフィルタリング
+- [ ] 動画 QA → 画像 QA 変換時の temporal QA 除外
+- [ ] **DINOv2 の強みを活かす QA 比率の確認**: 空間関係 QA を重視
+- [ ] **ドメイン比率の確認**: 運転 ~48% / ロボット ~32% / 人間 ~11% / 物理 ~9%
 
-### 1.5 データセット統計の確認
+### 1.5 データセット統計の目標
 
-- [ ] 理解 QA: ~3,000〜5,000 サンプル
-- [ ] 推論 QA: ~2,000〜5,000 サンプル
-- [ ] カテゴリ分布の確認（空間 / 時間 / 行動のバランス）
-- [ ] **DINOv2 の強みを活かす QA 比率の確認**: 空間関係 QA（先行車との距離、歩行者の位置等）を重視（COMM 論文: DINOv2 は細粒度の空間情報に優れる）
+| ドメイン | QA 数 | 比率 | 主要データソース |
+|---|---|---|---|
+| 自動運転 | ~1.1M | ~48% | NuScenes-QA + DriveLM + Reason2Drive + CODA-LM + SUTD-TrafficQA |
+| ロボット操作 | ~738K | ~32% | Robo2VLM-1 + Cosmos-Reason1 (BridgeData + RoboVQA + AgiBot) |
+| 人間活動 | ~250K | ~11% | Cosmos-Reason1 (HoloAssist) + SSv2 |
+| 一般物理推論 | ~210K | ~9% | CLEVR + PhysBench |
+| **合計** | **~2.3M** | **100%** | **Cosmos-Reason1 の ~3.85M に対して ~1.7 倍差** |
 
-### 1.6 Exit 条件
+### 1.6 ディスク容量見積もり
 
-- [ ] QA データが目標数に達している
+| データ | 容量 | 取得元 |
+|---|---|---|
+| nuScenes keyframes (共通) | ~35 GB | nuscenes.org |
+| NuScenes-QA + DriveLM annotations | ~300 MB | GitHub / HuggingFace |
+| Robo2VLM-1 (200K subset) | ~30 GB | HuggingFace |
+| CLEVR (200K subset) | ~5 GB | Stanford |
+| PhysBench (images) | ~3.5 GB | HuggingFace |
+| CODA-LM | ~99 MB | HuggingFace |
+| Cosmos-Reason1 SFT Dataset | ~84 GB | HuggingFace |
+| SUTD-TrafficQA | ~20.5 GB | Zenodo |
+| Reason2Drive (300K subset) | ~50 GB | GitHub |
+| Something-Something V2 | ~19.4 GB | 公式サイト |
+| BDD-X | ~717 KB | GitHub |
+| **合計** | **~250 GB** | |
+
+### 1.7 Exit 条件
+
+- [ ] QA データが合計 ~2M 以上に達している
+- [ ] 全 4 ドメインのデータが含まれている
+- [ ] Cosmos-Reason1 との差が 2 倍以内
 - [ ] サンプリングした QA の品質が妥当
 - [ ] DataLoader でバッチが正しく取り出せる
 
@@ -72,12 +135,17 @@ Cosmos-Reason の 2 段階学習パイプライン（Physical AI SFT → Physica
 
 ## Phase 2: Physical AI SFT
 
+**Mini 検証: ✅ 完了** — 201 QA で SFT、loss 1.32 → 0.76、MCQ ベースライン 64.4%
+
 ### 2.1 学習設定
 
-- [ ] **Qwen2.5-VL Mini の学習済み重みをロード**
+- [x] **Qwen2.5-VL Mini の学習済み重みをロード**
 - [ ] Vision Encoder + Adapter + LLM すべて trainable
 - [ ] 入力: [visual_tokens] + [質問テキスト]
 - [ ] 出力: [回答テキスト]（理解 QA）or [CoT 推論トレース + 回答]（推論 QA）
+- [ ] **SFT データに MCQ + CoT を含める** (`convert_mcq_to_sft.py` で変換・統合)
+  - Cosmos-Reason1 では SFT 段階で MCQ フォーマット (`<think>...<answer>`) を学習
+  - MCQ + CoT を自由形式 QA と混合して SFT → RL でのフォーマット学習負荷を軽減
 - [ ] Loss: cross-entropy（next-token prediction）
 - [ ] ハイパーパラメータ:
   - 学習率: 2e-5 → 2e-6（cosine annealing）— VLM 構築済みなので小さめ
@@ -112,18 +180,19 @@ Cosmos-Reason の 2 段階学習パイプライン（Physical AI SFT → Physica
 
 ## Phase 3: RL データ作成
 
+**Mini 検証: ✅ 完了 (v2)** — 101 推論 QA → 101 MCQ (正解シャッフル済み)
+
 ### 3.1 MCQ 変換
 
 SFT データの QA を MCQ（多肢選択問題）形式に変換:
 
-- [ ] **MCQ 生成プロンプト**の設計
+- [x] **MCQ 生成プロンプト**の設計
   - 正解選択肢 + 3 つの妥当だが不正解な選択肢
   - 選択肢は具体的で、ビジュアル推論なしでは回答できないようにする
-- [ ] SFT の推論 QA サブセットを MCQ に変換
-  - 行動予測: 「次にとるべき行動は？ A) 加速 B) 減速 C) 車線変更 D) 停車」
-  - 因果推論: 「先行車が減速した理由は？ A) 信号 B) 歩行者 C) 渋滞 D) 右折」
-- [ ] バッチ処理で MCQ 生成（GPT-4o API）
-- [ ] 目標: ~1,000〜2,000 MCQ
+- [x] **コード側で正解位置シャッフル** (GPT の JSON 例バイアス回避)
+- [ ] **SUTD-TrafficQA** (~62.5K MCQ) を RL 用に変換
+- [ ] SFT の推論 QA サブセットを MCQ に変換（GPT-4o API）
+- [ ] 目標: ~5,000〜10,000 MCQ
 
 ### 3.2 回答形式の統一
 
@@ -141,12 +210,16 @@ SFT データの QA を MCQ（多肢選択問題）形式に変換:
 
 ## Phase 4: Physical AI RL
 
+**Mini 検証: ✅ 完了 (v3: リーク修正)** — GRPO 20 iter、MCQ 正解率 38.3% → 86.7% (+48.4%)、MCQ+CoT SFT 併用時: 92.5% → 93.3% ※eval split (40 MCQ, 20 images) でリークなし評価、GRPO も train MCQ のみで学習
+
 ### 4.1 GRPO 実装
 
-- [ ] GRPO の基本実装
+- [x] GRPO の基本実装
   - 各質問に対して K=4〜8 の応答をサンプリング
   - グループ内で報酬を正規化: `A_i = (R(o_i) - mean(G)) / std(G)`
   - KL 正則化（SFT モデルを reference policy として frozen で保持）
+  - **Multi-step 更新 (μ=4)**: 同じロールアウトデータに μ 回の最適化ステップ
+  - ratio は old policy（ロールアウト時）に対して計算 → μ > 1 で clipping が有効
 - [ ] 報酬関数: MCQ 正解 → 1、不正解 → 0
 - [ ] 回答抽出: `<answer>...</answer>` タグから正規表現で抽出
 

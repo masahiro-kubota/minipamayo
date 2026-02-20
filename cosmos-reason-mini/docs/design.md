@@ -15,9 +15,9 @@ Qwen2.5-VL Mini（汎用 VLM）→ Cosmos Reason Mini（本設計書）→ MiniP
 | 観点 | Cosmos-Reason-7B | Cosmos Reason Mini | 備考 |
 |---|---|---|---|
 | 前段の VLM | Qwen2.5-VL（既製品） | Qwen2.5-VL Mini（自前構築） | 同じ役割 |
-| 学習: SFT | Physical AI SFT（~4M サンプル） | 同思想（小規模、数千〜1万） | 同じ 2 段階学習の第 1 段階 |
+| 学習: SFT | Physical AI SFT（~3.85M サンプル） | 同思想（~2.3M、**~1.7 倍差**） | 同じ 2 段階学習の第 1 段階 |
 | 学習: RL | Physical AI RL（GRPO + MCQ 報酬） | 同思想（小規模） | 同じ 2 段階学習の第 2 段階 |
-| 対象ドメイン | 汎用 Physical AI（ロボット、AV、人間） | **自動運転に特化** | MiniPamayo の目的に合わせて絞る |
+| 対象ドメイン | 汎用 Physical AI（ロボット、AV、人間） | **マルチドメイン（運転メイン + ロボット・人間活動・一般物理）** | 物理的常識の転移を活用 |
 
 ---
 
@@ -56,21 +56,9 @@ Cosmos-Reason の SFT は 3 カテゴリのデータで構成されている:
 2. **具現化推論 SFT**（Embodied Reasoning）— 行動予測・タスク完了確認・アフォーダンス
 3. **直観的物理学 SFT**（Intuitive Physics）— 空間連続性・時間の矢・物体の永続性
 
-Cosmos Reason Mini では**自動運転に特化**し、以下のサブセットを実施:
+Cosmos-Reason1 と同様に**マルチドメインの Physical AI データ**で学習する。物理的常識（重力・慣性・物体の永続性等）はドメイン横断で転移するため、運転データだけに限定せず、ロボット操作・人間活動・一般的な物理推論のデータを含める。
 
-#### 4.1.1 運転シーン理解 SFT（物理的常識に対応）
-
-教師 VLM（GPT-4o 等）を使い、運転データセットの画像から QA ペアを生成:
-
-**理解タスク（Understanding）**:
-- シーン記述: 道路状況、天候、時刻、道路タイプ
-- 空間関係: 先行車・歩行者・信号・標識の位置関係
-- 物体属性: 車両の色・種類・大きさ、信号の状態
-
-**推論タスク（Reasoning）**:
-- 因果推論: 「なぜ先行車は減速しているのか？」
-- 時間推論: 「次に何が起こりそうか？」
-- 空間推論: 「この車線変更は安全か？」
+> **重要**: Cosmos-Reason1 の SFT データには MCQ（多肢選択問題）も含まれている（~1.2M 理解 MCQ + ~605K 推論 MCQ）。これにより、モデルは SFT の段階で `<think>...</think><answer>X</answer>` 形式を学習する。Cosmos Reason Mini でも SFT データに MCQ + CoT を混合する（`convert_mcq_to_sft.py` で変換）。
 
 ```
 入力:  [visual_tokens] + [質問テキスト]
@@ -78,56 +66,126 @@ Cosmos Reason Mini では**自動運転に特化**し、以下のサブセット
 Loss:  cross-entropy（標準 SFT）
 ```
 
-#### 4.1.2 運転行動推論 SFT（具現化推論に対応）
+#### 4.1.1 物理的常識 SFT（Physical Common Sense）
 
-Cosmos-Reason の Embodied Reasoning SFT を自動運転に特化:
+空間・時間・基本物理学の理解。Cosmos-Reason1 の 5 つのエンボディメントドメインに対応:
 
-- **次の行動予測**: 「ego vehicle は次にどう行動すべきか？」
-- **タスク完了確認**: 「車線変更は完了したか？」
-- **アフォーダンス**: 「この状況で右折は可能か？」
+| ドメイン | Cosmos-Reason1 のソース | Cosmos Reason Mini のソース | タスク例 |
+|---|---|---|---|
+| 自動運転 | nuScenes 等 | DriveLM, NuScenes-QA, Reason2Drive | 空間関係、物体認識、シーン記述 |
+| ロボット操作 | BridgeData V2, RoboVQA | BridgeData V2（フレーム抽出 + QA 生成） | 把持、配置、物体の支持関係 |
+| 人間活動 | Ego4D, HoloAssist | Ego4D（フレーム抽出 + QA 生成） | 日常動作、物体操作、因果関係 |
+| 動物 | キュレーション動画 | 0（スキップ） | — |
+| 一般物理 | 自己教師あり | PhysBench, CLEVR（既存 QA 活用） | 重力、衝突、安定性 |
 
-Cosmos-Reason では BridgeData V2、RoboVQA 等のロボット操作データを使用しているが、Cosmos Reason Mini では**運転データセット（nuScenes, comma2k19）のみ**を使用する。
+**理解タスク（Understanding）**:
+- 空間関係: 物体間の位置関係、距離、大きさ
+- 物体属性: 形状、素材、状態（開/閉、満/空）
+- シーン記述: 環境の状況、物体の配置
 
-#### 4.1.3 直観的物理学 SFT（任意・発展）
+**推論タスク（Reasoning）**:
+- 因果推論: 「なぜこの物体は倒れたのか？」
+- 時間推論: 「次に何が起こりそうか？」
+- 空間推論: 「この配置は安定しているか？」
+
+#### 4.1.2 具現化推論 SFT（Embodied Reasoning）
+
+行動予測・タスク完了確認・アフォーダンスの理解:
+
+- **次の行動予測**: 「ego vehicle / ロボットは次にどう行動すべきか？」
+- **タスク完了確認**: 「車線変更 / 物体の把持は完了したか？」
+- **アフォーダンス**: 「この状況で右折 / この物体を掴むことは可能か？」
+
+運転ドメインが最大比率だが、ロボット操作や人間活動のデータも含めることで、行動推論の汎化性を高める。
+
+#### 4.1.3 直観的物理学 SFT（Intuitive Physics）
 
 Cosmos-Reason の自己教師あり学習タスクの簡易版:
 
-- **時間の矢（Arrow of Time）**: 動画の順再生 / 逆再生を判定
-- **空間パズル（Spatial Puzzles）**: シャッフルされた画像パッチの元位置を推定
+- **物体の永続性**: 遮蔽された物体の存在を推定
+- **支持関係**: 物体が安定しているか（重力・摩擦の理解）
+- **衝突予測**: 物体の軌道と衝突の可能性
 
-これらは追加的な物理理解の強化に有用だが、MiniPamayo の目的（技術理解）に対しては優先度が低い。
+PhysBench 等の既存ベンチマークデータを活用。Cosmos-Reason1 では ~63K だが、Mini では小規模で実施。
 
-#### 4.1.4 データ作成パイプライン
+#### 4.1.4 データ取得戦略
 
-Cosmos-Reason の 5 段階キュレーションパイプラインを簡略化:
+Cosmos-Reason1 の SFT データ合計 ~3.85M に対し、**桁違いの差を解消**するため、以下の 3 段階で既存公開データを最大限活用する。GPT-4o による QA 生成は最小限に留める。
 
-```
-Step 1: 画像選定
-    運転データセットから代表的なフレームを選定
-    ↓
-Step 2: 教師 VLM によるキャプション生成
-    GPT-4o 等でシーンの詳細記述を生成
-    ↓
-Step 3: QA ペア生成
-    LLM を使い、キャプションに基づいて「理解」と「推論」の QA を生成
-    ↓
-Step 4: 推論トレース抽出（任意）
-    推論 QA に対して教師 LLM で CoT 推論トレースを生成
-    ↓
-Step 5: クリーニング
-    ビジュアルコンテキストへの不要な参照を除去
-```
+**核心戦略**: Cosmos-Reason1 の SFT データセットが HuggingFace で公開されている（`nvidia/Cosmos-Reason1-SFT-Dataset`、CC-BY-4.0）。このアノテーション（1.7M+ QA ペア）を直接活用し、動画→画像フレーム抽出で対応する。
 
-Cosmos-Reason では Step 4 に DeepSeek-R1 を使用。Cosmos Reason Mini では Claude API / GPT-4o 等で代替可。
+**Tier 1: 画像ベースの既存 QA（変換のみ、API コスト 0）**
 
-#### 4.1.5 SFT データ規模の目安
+| データセット | QA 数 | 使用数 | ディスク容量 | ライセンス | 備考 |
+|---|---|---|---|---|---|
+| NuScenes-QA | ~460K | ~460K | ~100 MB (annotation) + nuScenes 画像 | CC BY-NC-SA 4.0 | テンプレートベース空間推論 |
+| DriveLM-nuScenes | ~300K | ~300K | ~200 MB (annotation) + nuScenes 画像 | CC BY-NC-SA 4.0 | Graph VQA (Perception/Prediction/Planning) |
+| Robo2VLM-1 | ~684K | ~200K | ~107 GB (画像+QA) | CC-BY-4.0 | ロボット操作 MCQ。画像同梱 |
+| CLEVR | ~865K | ~200K | ~18 GB (画像+QA) | CC-BY-4.0 | 合成画像の空間推論 |
+| PhysBench | ~10K | ~10K | ~3.5 GB (画像) | 公開 | 物理推論ベンチマーク |
+| CODA-LM | ~42K | ~42K | ~99 MB (annotation) + CODA 画像 | Apache 2.0 | コーナーケース特化 |
+| **Tier 1 小計** | | **~1.2M** | | | |
 
-| カテゴリ | Cosmos-Reason-7B | Cosmos Reason Mini | 備考 |
+**Tier 2: 動画→フレーム抽出 + 既存アノテーション活用**
+
+| データセット | QA 数 | 使用数 | ディスク容量 | ライセンス | 備考 |
+|---|---|---|---|---|---|
+| Cosmos-Reason1 SFT (BridgeData V2 分) | ~258K | ~200K | ~84 GB (全体) | CC-BY-4.0 | フレーム抽出必要 |
+| Cosmos-Reason1 SFT (RoboVQA 分) | ~1.14M | ~300K | (動画同梱) | CC-BY-4.0 | フレーム抽出必要 |
+| Cosmos-Reason1 SFT (HoloAssist 分) | ~273K | ~200K | (動画別途 DL) | CDLAv2 | フレーム抽出必要 |
+| Cosmos-Reason1 SFT (AgiBot 分) | ~38.9K | ~38K | (動画同梱) | CC-BY-4.0 | ヒューマノイド操作 |
+| Cosmos-Reason1 SFT (AV 分) | ~12.4K | ~12K | (動画同梱) | CC-BY-4.0 | 自動運転 |
+| SUTD-TrafficQA | ~62.5K | ~62K | ~20.5 GB (動画+QA) | GitHub 公開 | 交通シーン MCQ |
+| Reason2Drive | ~633K | ~300K | 大 (動画) | GitHub 公開 | チェーン推論 QA |
+| **Tier 2 小計** | | **~1.1M** | | | |
+
+**Tier 3: GPT-4o による QA 生成（補完）**
+
+| データセット | ソース画像/動画 | 生成目標 | ディスク容量 | 備考 |
+|---|---|---|---|---|
+| BDD-X | ~7K 動画 (BDD100K) | ~26K QA | ~717 KB (annotation) | 行動+理由説明 |
+| Something-Something V2 | ~220K clips | ~50K QA | ~19.4 GB (動画) | 物体操作の因果関係 |
+| nuScenes 追加 QA | 既存画像 | ~50K QA | 0 (画像は既存) | 空間推論 QA |
+| **Tier 3 小計** | | **~126K** | | API コスト要 |
+
+#### 4.1.5 ディスク容量見積もり
+
+| データ | 容量 | 備考 |
+|---|---|---|
+| **共通画像: nuScenes** (keyframes) | **~35 GB** | NuScenes-QA, DriveLM, Cosmos-Reason1 AV で共有 |
+| Cosmos-Reason1 SFT Dataset | ~84 GB | HuggingFace からDL。動画+アノテーション |
+| Robo2VLM-1 (サブセット) | ~30 GB | 200K/684K ≈ 30% |
+| CLEVR (サブセット) | ~5 GB | 200K/865K のサブセット |
+| PhysBench (画像) | ~3.5 GB | 画像のみ。動画は不要 |
+| SUTD-TrafficQA | ~20.5 GB | 動画+アノテーション |
+| Something-Something V2 | ~19.4 GB | 全動画 |
+| CODA-LM (annotations) | ~99 MB | CODA 画像は別途 |
+| DriveLM / NuScenes-QA annotations | ~300 MB | nuScenes 画像は上記で共有 |
+| Reason2Drive (サブセット) | ~50 GB (推定) | 動画からフレーム抽出 |
+| **合計見積もり** | **~250 GB** | |
+
+#### 4.1.6 SFT データ規模の目標
+
+| カテゴリ | Cosmos-Reason-7B | Cosmos Reason Mini | 差 |
 |---|---|---|---|
-| 理解 QA | ~2.0M | ~3,000〜5,000 | 運転シーンに特化 |
-| 推論 QA | ~1.85M | ~2,000〜5,000 | CoT トレース付き |
-| 直観的物理学 | ~63K | 0（任意） | 優先度低 |
-| **合計** | **~3.85M** | **~5,000〜10,000** | 桁違いの差だが目的は技術理解 |
+| 自動運転 QA | ~12K + 内部データ | ~1.1M (NuScenes-QA + DriveLM + Reason2Drive + CODA-LM + SUTD-TrafficQA) | — |
+| ロボット操作 QA | ~1.40M | ~738K (Robo2VLM-1 200K + Cosmos-Reason1 BridgeData 200K + RoboVQA 300K + AgiBot 38K) | **~1.9 倍差** |
+| 人間活動 QA | ~273K | ~250K (Cosmos-Reason1 HoloAssist 200K + SSv2 50K) | **ほぼ同等** |
+| 一般物理推論 QA | ~63K | ~210K (CLEVR 200K + PhysBench 10K) | **超過** |
+| **合計** | **~3.85M** | **~2.3M** | **~1.7 倍差** |
+
+> **従来の ~13-26 倍差から ~1.7 倍差に縮小**。Cosmos-Reason1 SFT Dataset の公開データ活用と、既存 QA データセットの積極的な採用により、桁違いの差を解消。
+
+**ドメイン比率**:
+
+| ドメイン | QA 数 | 比率 | 根拠 |
+|---|---|---|---|
+| 自動運転 | ~1.1M | ~48% | MiniPamayo の最終目標、NuScenes-QA+DriveLM+Reason2Drive が豊富 |
+| ロボット操作 | ~738K | ~32% | Cosmos-Reason1 SFT アノテーション + Robo2VLM-1 |
+| 人間活動 | ~250K | ~11% | Cosmos-Reason1 HoloAssist + SSv2 |
+| 一般物理推論 | ~210K | ~9% | CLEVR サブセット + PhysBench |
+
+> **注意**: 0.5B モデルでは過大なデータが有害になる可能性がある（TinyLLaVA 知見）。Tier 1 (~1.2M) から始めて過学習を監視し、Tier 2 を段階的に追加する。全量 (~2.3M) で過学習する場合はサブサンプリングで調整。
 
 #### 4.1.6 SFT 学習設定
 
@@ -152,12 +210,13 @@ Cosmos-Reason の RL ポストトレーニングを小規模に再現する。
 
 Cosmos-Reason と同じ GRPO を採用:
 
-- 各質問に対して K 個の応答をサンプリング
+- 各質問に対して K 個の応答をサンプリング（ロールアウト）
 - グループ内で報酬を正規化し advantage を計算:
   ```
   A_i = (R(o_i) - mean(G)) / std(G)
   ```
-- KL 正則化で SFT モデルからの逸脱を防止
+- **Multi-step 更新 (μ > 1)**: 同じロールアウトデータに対して μ 回の最適化ステップを実行。PPO clipping の ratio は old policy（ロールアウト時）に対して計算するため、2 ステップ目以降で ratio ≠ 1.0 となり clipping が有効に機能する
+- KL 正則化で SFT モデル（reference policy）からの逸脱を防止
 
 #### 4.2.2 報酬設計: MCQ ベース
 
@@ -179,12 +238,12 @@ D) 停車する
 
 #### 4.2.3 RL データ
 
-| カテゴリ | Cosmos-Reason-7B | Cosmos Reason Mini | 備考 |
+| カテゴリ | Cosmos-Reason-7B | Cosmos Reason Mini | データソース |
 |---|---|---|---|
-| 物理的常識 MCQ | ~5,100 | ~500〜1,000 | 運転シーンに特化 |
-| 具現化推論 MCQ | ~1,200 | ~500〜1,000 | 行動予測・判断 |
-| 直観的物理学 MCQ | ~24,000 | 0（任意） | 優先度低 |
-| **合計** | **~30,300** | **~1,000〜2,000** | |
+| 物理的常識 MCQ | ~5,100 | ~3,000〜5,000 | SUTD-TrafficQA + 自前 MCQ 変換 |
+| 具現化推論 MCQ | ~1,200 | ~2,000〜5,000 | SFT 推論 QA → MCQ 変換 |
+| 直観的物理学 MCQ | ~24,000 | 0（任意） | — |
+| **合計** | **~30,300** | **~5,000〜10,000** | |
 
 #### 4.2.4 RL 学習設定
 
@@ -196,6 +255,7 @@ D) 停車する
 | 学習率 | 4e-6 | 4e-6 |
 | KL 係数 | 0.005 | 0.005 |
 | バッチサイズ | 128 質問 | 4〜8 質問 |
+| μ（最適化ステップ数） | 記載なし（multi-step） | 4 |
 
 ---
 
