@@ -74,8 +74,10 @@ class QwenVLMini(nn.Module):
         self,
         vision_model_name: str = "facebook/dinov2-base",
         llm_model_name: str = "Qwen/Qwen2.5-0.5B",
+        neftune_alpha: float = 0.0,
     ):
         super().__init__()
+        self.neftune_alpha = neftune_alpha
         self.vision_encoder = VisionEncoder(vision_model_name)
         self.adapter = Adapter(
             vision_dim=self.vision_encoder.hidden_size,
@@ -113,6 +115,16 @@ class QwenVLMini(nn.Module):
 
         # Concat: (B, 256+T, 896)
         inputs_embeds = torch.cat([visual_embeds, text_embeds], dim=1)
+
+        # NEFTune: add uniform noise during training
+        if self.training and self.neftune_alpha > 0:
+            dims = torch.tensor(
+                inputs_embeds.shape[1] * inputs_embeds.shape[2],
+                dtype=inputs_embeds.dtype,
+                device=inputs_embeds.device,
+            )
+            mag = self.neftune_alpha / torch.sqrt(dims)
+            inputs_embeds = inputs_embeds + torch.zeros_like(inputs_embeds).uniform_(-mag, mag)
 
         # Attention mask: [1...1(256), attention_mask(T)]
         visual_mask = torch.ones(B, num_visual, dtype=attention_mask.dtype, device=device)
