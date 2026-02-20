@@ -10,6 +10,63 @@ Stage 0 (基盤) → Stage 1 (Feature Alignment) → Stage 2 (Visual Instruction
 
 完了後、学習済み重みを Cosmos Reason Mini に引き継ぐ。
 
+### なぜ Vision Encoder に DINOv2 を選んだのか
+
+VLM の Vision Encoder には大きく 2 つの流派がある:
+
+1. **CLIP / SigLIP 系**（テキスト対応あり）: 「画像とテキストのペア」で学習したモデル。画像を見て「これは猫の画像」とテキスト的に理解するのが得意。多くの VLM（LLaVA, TinyLLaVA 等）はこちらを採用。
+2. **DINOv2**（自己教師あり学習）: テキストを一切使わず、**画像だけ**を大量に見て学習したモデル。画像内の「物体がどこにあるか」「物体同士の空間的な位置関係」の把握が得意（CLIP 比 +7.5pt、COMM Table 1）。一方、画像からテキストを読む OCR 系のタスクは苦手。
+
+MiniPamayo では DINOv2 を選択した。理由は **Cosmos Reason Mini（次段階のモデル）が空間推論を行うため**。Cosmos Reason Mini はロボティクスや自動運転のように「物体がどこにあるか」「物体同士がどういう位置関係にあるか」を推論する。この用途では、テキスト対応よりも空間的な特徴の質が重要であり、DINOv2 のグラウンディング性能の高さが活きる。
+
+**トレードオフ**: POPE のような「画像に〇〇はありますか？」という質問応答タスクでは、テキスト対応がある CLIP/SigLIP 系の方が有利な場合がある。DINOv2 の OCR 弱点は追加データ（OCR-VQA 等）で補う方針（設計判断 §9, §10.21 参照）。
+
+### DINOv2 を Vision Encoder に使っている VLM の調査
+
+DINOv2 を Vision Encoder として使っている VLM を調査した結果、**DINOv2 を唯一のエンコーダとして使うリリース済みモデルは存在しない**。ほぼ全てが CLIP/SigLIP との「デュアルエンコーダ」構成で、DINOv2 の空間特徴と CLIP/SigLIP のテキスト対応特徴を組み合わせている。
+
+#### DINOv2 + CLIP/SigLIP デュアルエンコーダ
+
+| モデル | 構成 | LLM | DINOv2 の役割 | 備考 |
+|--------|------|-----|--------------|------|
+| **Prismatic VLMs** | DINOv2 ViT-L + SigLIP SO400M | Llama 2 7B | 空間・低レベル特徴を担当、SigLIP と concat | ICML 2024。デュアル構成が全構成中最高性能 |
+| **OpenVLA** | DINOv2 ViT-L + SigLIP SO400M | Llama 2 7B | ロボティクス向け。Prismatic ベース | **MiniPamayo と同じ動機**（空間推論） |
+| **COMM** | DINOv2 + CLIP | Vicuna 7B/13B | MFM で深層特徴を統合 | DINOv2 単体で POPE 83.3%（plan.md の設計判断の出典） |
+| **I-MoF** | DINOv2 + CLIP を交互配置 | Vicuna 13B | CLIP の blind spots を補完 | CVPR 2024 |
+
+#### DINOv2 + 3 つ以上のエンコーダ
+
+| モデル | エンコーダ数 | DINOv2 の役割 | 備考 |
+|--------|------------|--------------|------|
+| **Cambrian-1** | 4 つ（CLIP + SigLIP + ConvNeXt + DINOv2） | SVA で統合 | NeurIPS 2024 |
+| **BRAVE** | 5 つ（EVA-CLIP + CLIP + SILC + ViT-e + DINOv2） | MEQ-Former で統合 | ECCV 2024 Oral。POPE 87.6% |
+| **MouSi** | 最大 6 つ（CLIP, DINOv2, LayoutLMv3 等） | 貢献度 2 位（CLIP に次ぐ） | ICLR 2025 |
+
+#### DINOv2 単体の実験（アブレーション）
+
+| モデル | LLM | DINOv2 単体の結果 | 備考 |
+|--------|-----|------------------|------|
+| **LLaVA-Gemma** | Gemma 2B/7B | 2B では CLIP より優位（POPE-F1, MMVP 以外）。7B では結果が分かれる | CLIP との比較のみ（**SigLIP は未テスト**） |
+| **LLaVA-MORE** | 3.8B/9B | CLIP, SigLIP, SigLIP2, DINOv2 を全比較。全体では SigLIP 系が優位 | ICCVW 2025 |
+| **Molmo** | Qwen2 7B | デフォルト版にわずかに劣るが競争力あり | Allen AI |
+
+#### なぜ小型 VLM で DINOv2 が使われていないのか
+
+[small-vlm-comparison.md](small-vlm-comparison.md) に掲載した小型 VLM（TinyLLaVA, Imp, SmolVLM, MobileVLM, Bunny 等）は**全て SigLIP か CLIP を使用しており、DINOv2 を採用しているモデルはゼロ**。これには 2 つの理由がある:
+
+1. **目的の違い**: これらの小型 VLM は「汎用アシスタント」を目指しており、主要ベンチマーク（VQA, TextVQA, OCR-VQA, POPE, ScienceQA 等）はいずれも「画像の意味を言語的に理解する」タスク。SigLIP/CLIP はテキストとペアで学習済みのため、こうしたタスクで有利。一方、空間認識（物体の位置関係、グラウンディング等）はこれらのベンチマークにほとんど含まれておらず、DINOv2 の強みが活きない
+2. **パラメータ予算の制約**: 小型モデル（~500M）ではエンコーダを 1 つしか載せられない。デュアルエンコーダ（DINOv2 + SigLIP）は 7B 以上のモデルでのみ使われている。1 つしか選べないなら、汎用ベンチマークで強い SigLIP が選ばれる
+
+空間認識が重要な用途（ロボティクス、自動運転等）では DINOv2 が活きるが、そうした用途の小型モデルはまだ少ない。OpenVLA は空間推論のために DINOv2 を採用しているが、7B モデルなので SigLIP との併用が可能。
+
+#### MiniPamayo への示唆
+
+1. **DINOv2 単体の小型 VLM は前例がない挑戦的な選択**。成功しているモデルは全て CLIP/SigLIP と組み合わせている
+2. LLaVA-Gemma では小型 LLM（2B）で DINOv2 が CLIP より優位だが、**SigLIP との比較は行われていない**ため、SigLIP に対する優位性は不明
+3. LLaVA-MORE（CLIP, SigLIP, DINOv2 を全比較）では全体的に SigLIP 系が優位という結果
+4. **OpenVLA が MiniPamayo と同じ動機**（ロボティクス・空間推論）で DINOv2 + SigLIP を採用しており、将来的にデュアルエンコーダ化する選択肢も残る
+5. まずは DINOv2 単体で進め、性能が不十分なら SigLIP との組み合わせを検討する（Simplest-First 方針に合致）
+
 ### 実装アプローチ: Simplest-First Fail-Fast
 
 design.md / plan.md には論文サーベイに基づく多数の「検討」事項（336x336 解像度、[CLS] トークン連結、トークン圧縮、GLU 活性化、深層レイヤー選択、vision block 追加 等）が記載されているが、**Stage 0 ではすべて最もシンプルな選択で実装し、まず動くものを作る**。改善は実測に基づいて段階的に行う。
@@ -155,7 +212,7 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
 - [ ] （任意）SFT データの **3-5% を ShareGPT4V キャプションに置換**するだけで全体性能向上（ShareGPT4V Figure 2）
 - [ ] （任意）GPT4V-annotated データ追加: ShareGPT-4V 20K + LAION-GPT-V 10K + ALLaVA 300K で +1.4pt（Imp Table 1 §3.2）
 - [ ] （任意）OCR/Chart データ追加: DVQA 10K + ChartQA 4K + DocVQA 10K + AI2D 4K + InfographicVQA 4K = 32K（Imp §3.1, Table 2）。DINOv2 の OCR 弱点を補うために特に重要
-- [ ] （任意）**text-only instruction data を 10-15% 混合**: OpenHermes-2.5, MetaMathQA 等で LLM の catastrophic forgetting を緩和（Idefics2 Appendix A.2.1）
+- [x] （任意）**text-only instruction data を 10-15% 混合**: ~~OpenHermes-2.5, MetaMathQA 等~~ → Stage 2.1 で WizardLM-evol-instruct 70K (~10%) を混合（Bunny-695K に含まれる）
 - [ ] （任意）**TextCaps (22K) は TextVQA と同じ画像セット**。zero-shot 評価したい場合は除去（Imp §4.3）
 
 ### 3.2 学習
@@ -173,10 +230,10 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
   - AdamW (β1=0.9, β2=0.95)
   - **weight decay: 0.1**（LLaVA-Phi §3.1: 小型モデルでは weight decay による正則化が重要。LLaVA/LLaVA-1.5 の 0 とは異なる）
   - **gradient clipping: max_grad_norm=1.0**（全論文で明示記載なし → Qwen2.5 デフォルト値を採用。DINOv2 unfreeze 安定化に寄与）
-- [ ] **過学習対策**:
-  - **NEFTune（Noisy Embedding Fine-Tuning）**: 入力埋め込みにノイズ注入で汎化向上（Idefics2 §4.2）。過学習の兆候が見られたら導入
-  - 画像解像度のランダムスケールアップ（Idefics2 §4.2）
-  - multi-turn 会話のシャッフル（Idefics2 §4.2）
+- [x] **過学習対策**:
+  - **NEFTune（Noisy Embedding Fine-Tuning）**: Stage 2.1 で alpha=5 で適用。POPE +26.1pt 改善に寄与
+  - 画像解像度のランダムスケールアップ（Idefics2 §4.2）— 未実施
+  - multi-turn 会話のシャッフル（Idefics2 §4.2）— 未実施
 - [x] **チェックポイントを 100 ステップごとに保存**（SmolVLM 知見では 25 ステップを推奨だが、ディスク容量の都合で 100 ステップに変更）
 - [ ] **訓練不安定時の段階的対策**（設計書 §10.4, §10.15, §10.18 参照）:
   1. まず全解凍で試行（DINOv2 lr=**1e-5**、LLM lr=**2e-5**）
@@ -210,15 +267,15 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
 
 ### 3.4 評価
 
-- [ ] 定性的評価:
+- [x] 定性的評価:
   - 「この画像を説明してください」→ 詳細な記述が生成されるか
   - 「画像に何が写っていますか」→ 物体を列挙できるか
   - 「この画像の天気は？」→ 適切に回答できるか
-- [ ] 定量的評価（lmms-eval 使用）:
-  - **Tier 1（必須）**: POPE（物体存在判定）、ScienceQA-IMG（多肢選択）
-  - **Tier 2（推奨）**: VQAv2（一般 QA）、GQA（シーン理解）
-  - 参考目標: SmolVLM-256M（ScienceQA 73.8%, POPE ~75%）に近づくか
-- [ ] **評価プロトコル**（§10.19 参照）:
+- [x] 定量的評価:
+  - **POPE（物体存在判定）**: Random 59.8%, Popular 58.2%, Adversarial 56.2%。**目標 >60% に全バリアント未達**。Yes Ratio 86-90% でハルシネーション傾向が強い
+  - **ScienceQA-IMG（多肢選択）**: **56.6%** (1,141/2,017)。目標 >55% 達成
+  - 参考目標: SmolVLM-256M（POPE ~75%）には約 15pt 差
+- [x] **評価プロトコル**（§10.19 参照）:
   - **greedy decoding（temperature=0, do_sample=False）**: LLaVA-1.5 Appendix A.3。全ベンチマークで統一し再現性を確保
   - **データセット別評価プロンプト**:
     - VQAv2, GQA, TextVQA, POPE → "Answer the question using a single word or phrase."
@@ -230,8 +287,88 @@ Adapter が DINOv2 の視覚特徴を Qwen2.5-0.5B の入力空間にマッピ�
 ### 3.5 Exit 条件
 
 - [x] Loss が安定して下がる
-- [ ] 画像に対する質問に（大雑把にでも）妥当な回答が生成される
-- [ ] Stage 1 より明確に改善している
+- [x] 画像に対する質問に（大雑把にでも）妥当な回答が生成される
+- [x] Stage 1 より明確に改善している（繰り返し解消、質問分化、詳細記述）
+- **注意**: Stage 2 の定量目標（POPE >60%）は未達だったが、**Stage 2.1 で 85.9% を達成**。ScienceQA-IMG は **56.6%**（目標 >55% 達成）。詳細は [stage2-report.md](stage2-report.md) 参照
+
+---
+
+## Stage 2.1: データ・学習改善
+
+具体的な実装手順は [stage2.1-implementation.md](stage2.1-implementation.md) を参照。
+
+### 背景
+
+Stage 2 の POPE 評価で以下の問題が判明した:
+
+| Variant | Accuracy | Recall | Specificity | Yes Ratio |
+|---------|----------|--------|-------------|-----------|
+| Random | 59.8% | 95.9% | 23.7% | 86.1% |
+| Popular | 58.2% | 95.9% | 20.5% | 87.7% |
+| Adversarial | 56.2% | 95.9% | 16.5% | 89.7% |
+
+- **目標 >60% に全バリアント未達**
+- Specificity がランダム (50%) 以下。物体の非存在を判定する能力はランダム以下
+- Accuracy は Recall 95.9% で稼いでいるだけで、実用的な判別能力とは言えない
+
+#### 原因分析
+
+1. **訓練データに Yes/No 短答 QA が不足**: LLaVA-Instruct-150K は会話データ中心で、Yes/No の判別を学習していない
+2. **instruction following の弱さ**: 0.5B LLM が "Answer the question using a single word or phrase." 指示に正確に従えていない
+3. **ハルシネーション抑制手法の未適用**: NEFTune 等の plan.md「任意」項目を未実施
+
+#### plan.md「任意」項目との対応
+
+| 任意項目 | 問題との関連性 |
+|----------|---------------|
+| text-only instruction data 混合 (10-15%) | **高**: instruction following 能力向上 |
+| NEFTune | **高**: ハルシネーション（Yes 偏り）抑制 |
+| GPT4V-annotated データ追加 | 中: データ多様性向上 |
+
+これらを適用せずに「0.5B LLM の限界」と結論づけるのは早計であるため、改善策を実施する。
+
+### 4.1 方針
+
+- Stage 1 チェックポイントからの clean start（Stage 2 の Yes bias を引き継がない）
+- **Bunny-695K (SVIT-mix)** を使用（val2014 除外後 ~672K サンプル）
+  - LLaVA-mix 665K をベースに 2 点改良されたデータセット:
+    1. LLaVA-Instruct 158K → SVIT データに置換（GPT-4 生成、より高品質な会話・推論データ）
+    2. ShareGPT text-only 41K → WizardLM-evol-instruct 70K に置換（より多様な指示データ）
+  - VQAv2, GQA, TextVQA, OCR-VQA, VG は LLaVA-mix 665K と同一（追加画像不要）
+  - val2014 由来エントリは除外（POPE 評価との data leak 防止）
+  - 出典: [BoyaWu10/Bunny-v1_0-data](https://huggingface.co/datasets/BoyaWu10/Bunny-v1_0-data)（Apache 2.0）
+- **NEFTune (alpha=5)** でハルシネーション抑制
+- 1 epoch（データ量 ~4.3 倍のため。総サンプル数は Stage 2 の 315K と同程度の ~672K）
+
+### 4.2 データ準備
+
+- [x] 非 COCO 画像のダウンロード（GQA, TextVQA, OCR-VQA, VG）
+- [x] Bunny-695K JSON をダウンロードし、val2014 エントリを除外・パス正規化（`prepare_bunny695k.py`）
+- [x] InstructDataset で text-only サンプル（画像なし）に対応
+- [x] InstructDataset に `image_root` パラメータ追加（multi-source 画像パス解決）
+
+### 4.3 学習
+
+- [x] NEFTune を model.py に実装（`_build_inputs` で uniform noise 注入）
+- [x] train_stage2.py に `--neftune_alpha`, `--image_root` 引数追加
+- [x] Stage 1 チェックポイントから全解凍で再学習（5,247 steps, ~13h, Peak VRAM 10,066 MB）
+- [x] ハイパーパラメータ: Stage 2 と同一（VE lr=1e-5, LLM+Adapter lr=2e-5, weight_decay=0.1）
+
+### 4.4 評価
+
+- [x] POPE プロンプト感度テスト（既存 Stage 2 チェックポイント + "Answer with Yes or No." プロンプト）
+- [x] POPE 再評価（3 バリアント）: Random 85.9%, Popular 84.6%, Adversarial 80.2%
+- [x] 定性的評価（eval_qualitative.py）
+- [x] Stage 2 baseline との比較: +26.1pt (Random)
+- [x] ScienceQA-IMG 評価: **56.6%** (1,141/2,017)、目標 >55% 達成
+- [x] 評価スクリプト検証（SmolVLM-500M-Instruct）: 78.7% vs 公称 80.0%、パイプライン正確性確認
+
+### 4.5 Exit 条件
+
+- [x] POPE Random Accuracy >60% → **85.9%** 達成
+- [x] Specificity >40% → **93.6%** 達成
+- [x] 定性的評価で会話能力の劣化がないこと（instruction following 向上）
+- [x] ScienceQA-IMG >55% → **56.6%** 達成
 
 ---
 

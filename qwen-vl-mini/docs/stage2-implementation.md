@@ -675,6 +675,6 @@ Cosmos Reason Mini に引き継ぎ
 | Step 2: InstructDataset + Collator | **完了** | instruct_dataset.py |
 | Step 3: train_stage2.py | **完了** | 結果は [stage2-report.md](stage2-report.md) 参照 |
 | Step 4: 訓練不安定対策 | **不要** | 全解凍で安定して学習完了 |
-| Step 5: 評価 (eval_qualitative + eval_benchmark) | **未着手** | COCO val2014 のDLが必要 |
+| Step 5: 評価 (eval_qualitative + eval_benchmark) | **完了** | 結果は [stage2-report.md](stage2-report.md) 参照 |
 | Step 6: Cosmos 引き継ぎ | **未着手** | 別プロジェクトで実施 |
 | 学習実行 | **完了** | 約 5.5 時間、Loss 1.77→平均1.50 |

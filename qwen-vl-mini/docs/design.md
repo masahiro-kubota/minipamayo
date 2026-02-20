@@ -274,7 +274,7 @@ Qwen2.5-VL の Phase 2（Multimodal Pre-Training）:
 | LLaVA-Instruct-150K | 150K | GPT-4 生成の視覚会話 | よりコンパクト |
 | ShareGPT4V | 100K | 高品質な詳細記述 | 品質重視 |
 
-**推奨**: LLaVA-Instruct-150K から開始。小規模で品質が高い。
+**推奨**: LLaVA-Instruct-150K から開始し、評価結果に基づき拡大する。Stage 2 で 150K を使用した結果、データ量不足が判明したため Stage 2.1 で Bunny-695K (SVIT-mix) に移行（詳細は [stage2.1-implementation.md](stage2.1-implementation.md) 参照）。
 
 #### 学習設定
 
@@ -287,7 +287,7 @@ Qwen2.5-VL の Phase 2（Multimodal Pre-Training）:
 | バッチサイズ | 128 | micro-batch=1, grad_accum=128, global=128 |
 | エポック | 1 | **2**（Imp Table 1: 2ep が最適） |
 | 精度 | bf16 | bf16 |
-| gradient checkpointing | — | ON（LLM） |
+| gradient checkpointing | — | ON（DINOv2 + LLM） |
 
 #### 入出力
 
@@ -552,7 +552,7 @@ Qwen3-VL が既製の SigLIP-2 を fine-tune する方式に移行したこと�
 
 **SmolVLM [arXiv:2504.05299]**: チェックポイントを **25 最適化ステップごとに保存**し、最適点は訓練終了時とは限らないことを前提に設計。
 
-**設計への反映**: §4.1, §4.2 のエポック数は 1 で設計済みだが、2 エポック目を追加する余地がある。ただし 3 エポック以上は避ける。チェックポイントは 25 ステップごとに保存し、POPE + ScienceQA の重み付き平均で最適を選択。
+**設計への反映**: §4.1 のエポック数は 1、§4.2 は 2 で設計済みだが、データ量に応じて調整する余地がある。ただし 3 エポック以上は避ける。チェックポイントは 25 ステップごとに保存し、POPE + ScienceQA の重み付き平均で最適を選択。
 
 ### 10.6 位置トークンの設計
 
