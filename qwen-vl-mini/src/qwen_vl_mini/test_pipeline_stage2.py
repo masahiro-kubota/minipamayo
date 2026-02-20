@@ -1,14 +1,13 @@
-"""Fail-fast pipeline validation for Stage 2 training.
+"""Fail-fast pipeline validation for Stage 2.1 training.
 
 Tests the full pipeline (InstructDataset → DataLoader → forward → backward → optimizer step)
 with a tiny subset of data before committing to full training.
 
-Stage 2 differences from Stage 1:
-- InstructDataset (multi-turn QA) instead of PretrainDataset (captioning)
-- Stage 1 adapter checkpoint loaded
-- Full fine-tune: VE + Adapter + LLM all trainable
-- Gradient checkpointing for VRAM savings
-- Separate parameter groups (VE lr vs LLM+Adapter lr)
+Stage 2.1 additions over Stage 2:
+- 665K multi-source dataset (COCO + GQA + TextVQA + OCR-VQA + VG + text-only)
+- text-only samples (dummy zero image)
+- NEFTune noise injection
+- image_root for multi-source path resolution
 """
 
 import json
@@ -21,24 +20,53 @@ from torch.utils.data import DataLoader
 from qwen_vl_mini.data.instruct_dataset import InstructCollator, InstructDataset
 from qwen_vl_mini.model import IMAGE_TRANSFORM, QwenVLMini
 
-JSON_PATH = Path("data/llava-instruct/llava_instruct_150k.json")
+JSON_PATH = Path("data/llava-instruct/mix665k_full.json")
+JSON_PATH_150K = Path("data/llava-instruct/llava_instruct_150k.json")
 IMAGE_DIR = Path("data/coco/train2014")
+IMAGE_ROOT = Path("data")
 STAGE1_CKPT = Path("checkpoints/stage1/checkpoint-2325.pt")
 
 
 def create_mini_json(n_samples: int = 8) -> Path:
-    """Create a tiny JSON with only n_samples entries (using real images)."""
-    with open(JSON_PATH) as f:
+    """Create a tiny JSON with only n_samples entries (using real images).
+
+    Includes COCO samples + text-only samples if available in 665K data.
+    Falls back to 150K if 665K not yet prepared.
+    """
+    json_path = JSON_PATH if JSON_PATH.exists() else JSON_PATH_150K
+    print(f"Using dataset: {json_path}")
+
+    with open(json_path) as f:
         full_data = json.load(f)
 
     mini_data = []
+    has_text_only = False
+
     for sample in full_data:
-        # Resolve COCO filename
-        image_name = sample["image"]
-        path = IMAGE_DIR / image_name
-        if not path.exists():
-            coco_name = f"COCO_train2014_{image_name}"
-            path = IMAGE_DIR / coco_name
+        image_name = sample.get("image", "")
+
+        if not image_name:
+            # Text-only sample
+            if not has_text_only:
+                mini_data.append(sample)
+                has_text_only = True
+                if len(mini_data) >= n_samples:
+                    break
+            continue
+
+        # Try to resolve image path
+        if IMAGE_ROOT.exists() and "/" in image_name:
+            if image_name.startswith("coco/"):
+                bare_id = image_name.split("/")[-1]
+                path = IMAGE_ROOT / "coco" / "train2014" / f"COCO_train2014_{bare_id}"
+            else:
+                path = IMAGE_ROOT / image_name
+        else:
+            bare = image_name.split("/")[-1] if "/" in image_name else image_name
+            path = IMAGE_DIR / bare
+            if not path.exists():
+                path = IMAGE_DIR / f"COCO_train2014_{bare}"
+
         if path.exists():
             mini_data.append(sample)
             if len(mini_data) >= n_samples:
@@ -47,7 +75,10 @@ def create_mini_json(n_samples: int = 8) -> Path:
     mini_path = Path("data/llava-instruct/_mini_test.json")
     with open(mini_path, "w") as f:
         json.dump(mini_data, f)
-    print(f"Created mini dataset: {len(mini_data)} samples → {mini_path}")
+    text_only_count = sum(1 for s in mini_data if not s.get("image", ""))
+    print(
+        f"Created mini dataset: {len(mini_data)} samples ({text_only_count} text-only) → {mini_path}"
+    )
     return mini_path
 
 
@@ -60,6 +91,7 @@ def test_dataset_loading(model, mini_json: Path):
         tokenizer=model.tokenizer,
         transform=IMAGE_TRANSFORM,
         max_length=512,
+        image_root=str(IMAGE_ROOT) if IMAGE_ROOT.exists() else "",
     )
     print(f"  Dataset size: {len(dataset)}")
 
@@ -86,6 +118,19 @@ def test_dataset_loading(model, mini_json: Path):
     valid_ids = sample["input_ids"][valid_mask][:20]
     decoded = model.tokenizer.decode(valid_ids)
     print(f"  Sample valid tokens (first 20): {decoded[:80]}...")
+
+    # Test text-only sample if present
+    for i in range(len(dataset)):
+        s = dataset.data[i]
+        if not s.get("image", ""):
+            print(f"\n  Testing text-only sample (idx={i})...")
+            text_only = dataset[i]
+            assert text_only["pixel_values"].shape == (3, 224, 224), "text-only pixel_values shape"
+            assert text_only["pixel_values"].abs().sum() == 0, "text-only should be zero tensor"
+            n_valid_to = (text_only["labels"] != -100).sum().item()
+            assert n_valid_to > 0, "text-only should have valid labels"
+            print(f"  ✓ Text-only sample OK (zero image, {n_valid_to} valid labels)")
+            break
 
     print("  ✓ InstructDataset loading passed")
     return dataset
@@ -262,6 +307,41 @@ def test_param_groups_optimizer(model, dataloader, device):
     return output.loss.item()
 
 
+def test_neftune(model, dataloader, device):
+    """T2-N: NEFTune noise injection works correctly."""
+    print("\n=== T2-N: NEFTune Noise Injection ===")
+    model.set_stage2()
+    model = model.to(device)
+    model.train()
+
+    batch = next(iter(dataloader))
+    pv = batch["pixel_values"].to(device)
+    ids = batch["input_ids"].to(device)
+    mask = batch["attention_mask"].to(device)
+
+    # Run twice — with noise the embeddings should differ
+    with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+        out1 = model._build_inputs(pv, ids, mask)
+        out2 = model._build_inputs(pv, ids, mask)
+
+    diff = (out1["inputs_embeds"] - out2["inputs_embeds"]).abs().sum().item()
+    print(f"  Embedding diff between two forward passes: {diff:.4f}")
+    assert diff > 0, "NEFTune noise should produce different embeddings each call!"
+
+    # Verify noise is disabled in eval mode
+    model.eval()
+    with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+        out3 = model._build_inputs(pv, ids, mask)
+        out4 = model._build_inputs(pv, ids, mask)
+
+    diff_eval = (out3["inputs_embeds"] - out4["inputs_embeds"]).abs().sum().item()
+    print(f"  Embedding diff in eval mode: {diff_eval:.4f}")
+    assert diff_eval == 0, "NEFTune should NOT add noise in eval mode!"
+
+    model.train()
+    print("  ✓ NEFTune test passed")
+
+
 def test_overfit_mini(model, dataloader, device, n_steps: int = 10):
     """T2-6: Can overfit on tiny data (loss should decrease)."""
     print(f"\n=== T2-6: Overfit Test ({n_steps} steps) ===")
@@ -327,21 +407,23 @@ def main():
     print(f"Device: {device}")
 
     # Pre-checks
-    assert JSON_PATH.exists(), f"LLaVA-Instruct JSON not found: {JSON_PATH}"
+    json_path = JSON_PATH if JSON_PATH.exists() else JSON_PATH_150K
+    assert json_path.exists(), f"Dataset JSON not found: {JSON_PATH} or {JSON_PATH_150K}"
     assert IMAGE_DIR.exists(), f"COCO train2014 dir not found: {IMAGE_DIR}"
     assert STAGE1_CKPT.exists(), f"Stage 1 checkpoint not found: {STAGE1_CKPT}"
 
     # Create mini dataset
     mini_json = create_mini_json(n_samples=8)
 
-    # Load model
-    print("\nLoading model...")
-    model = QwenVLMini()
+    # Load model with NEFTune
+    print("\nLoading model (NEFTune alpha=5.0)...")
+    model = QwenVLMini(neftune_alpha=5.0)
 
     # Run tests sequentially
     test_stage1_checkpoint_loading(model)
     dataset = test_dataset_loading(model, mini_json)
     dataloader = test_collator(model, dataset)
+    test_neftune(model, dataloader, device)
     test_forward_backward_stage2(model, dataloader, device)
     test_param_groups_optimizer(model, dataloader, device)
     test_overfit_mini(model, dataloader, device, n_steps=10)
@@ -350,7 +432,7 @@ def main():
     mini_json.unlink(missing_ok=True)
 
     print("\n" + "=" * 60)
-    print("  ALL STAGE 2 PIPELINE TESTS PASSED")
+    print("  ALL STAGE 2.1 PIPELINE TESTS PASSED")
     print("=" * 60)
 
     if torch.cuda.is_available():
