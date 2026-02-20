@@ -39,6 +39,9 @@ wandb/
 runs/
 *.log
 
+# Secrets
+.env
+
 # OS
 .DS_Store
 Thumbs.db
