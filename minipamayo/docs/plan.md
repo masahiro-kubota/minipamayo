@@ -115,31 +115,41 @@ DINOv2 ViT-B/14 + Qwen2.5-0.5B から汎用 VLM を構築し、運転ドメイ�
 
 ### 3.1 各モジュール実装
 
-- [ ] **Vision Encoder**: DINOv2 ViT-B/14 ロード + forward
-- [ ] **Adapter**: 平均 Pool + Linear（最小実装）
-  - DINOv2 出力 (256×768) → (16×896)
-- [ ] **LLM**: Qwen2.5-0.5B ロード + visual tokens 入力の forward
-  - 視覚トークンを embedding 空間に注入する方法を確定
-- [ ] **Action Head**: MLP（LLM hidden → [steer, throttle]）— fail-fast 用の最小出力
+- [x] **Vision Encoder**: DINOv2 ViT-B/14 ロード + forward
+- [x] **Adapter**: 平均 Pool + Linear（最小実装）
+  - DINOv2 出力 (256×768) → 平均Pool → (1×896)
+  - Phase 4 で Cross-Attention Pooling (16×896) に置き換え
+- [x] **LLM**: Qwen2.5-0.5B ロード + visual tokens 入力の forward（minipamayo.py に統合）
+  - 視覚トークンを inputs_embeds 経由で注入
+- [x] **Action Head**: MLP（LLM hidden → [steer, throttle]）— fail-fast 用の最小出力
 
 ### 3.2 統合・学習ループ
 
-- [ ] 統合モデル `MiniPamayo` クラス
-- [ ] ドメイン SFT の学習済み重みを初期値として使用（§3.7）
-- [ ] 学習ループ実装:
+- [x] 統合モデル `MiniPamayo` クラス
+- [x] ドメイン SFT の学習済み重みを初期値として使用（§3.7）
+- [x] 学習ループ実装（train_stage0.py に統合）:
   - micro-batch=1, grad accumulation=16
   - bf16 mixed precision
   - gradient checkpointing（DINO + LLM）
   - AdamW optimizer
   - Huber loss
-- [ ] wandb / tensorboard ロギング
-- [ ] VRAM 使用量の実測・記録
+- [x] wandb ロギング（オプション、--use_wandb フラグ）
+- [x] VRAM 使用量の実測・記録（5.69 GB）
 
-### 3.3 Exit 条件
+### 3.3 評価スクリプト (`eval_stage0.py`)
 
-- [ ] 学習 loss が安定して下がる
-- [ ] OOM しない（24 GB 以内）
-- [ ] 推論で入力画像に応じて出力が変化する（overfitting でも可）
+- [x] チェックポイントロード → 全データで推論
+- [x] Loss / Steer MAE / Throttle MAE の計算
+- [x] サンプルごとの予測 vs GT 表示
+- [x] 予測分布の統計（GT の分散をカバーしているか）
+- [x] Worst 5 の特定（画像ファイル名付き）
+- [x] Input dependency チェック
+
+### 3.4 Exit 条件
+
+- [x] 学習 loss が安定して下がる（0.991 → 0.018）
+- [x] OOM しない（5.69 GB / 24 GB）
+- [x] 推論で入力画像に応じて出力が変化する（input-dependent: YES）
 
 ### 想定所要時間
 
@@ -171,7 +181,15 @@ DINOv2 ViT-B/14 + Qwen2.5-0.5B から汎用 VLM を構築し、運転ドメイ�
 - [ ] 制御入力 → waypoint 変換を経由して ADE / FDE を計算
 - [ ] 可視化: 予測軌道 vs GT をカメラ画像上にプロット
 
-### 4.4 Exit 条件
+### 4.4 評価スクリプト
+
+- [ ] `eval_stage0.py` を制御ベース表現に対応させる
+  - (a, κ) × 64 の予測 vs GT（サンプルごと）
+  - ADE / FDE の計算
+  - 予測分布の統計（GT の分散をどれだけカバーしているか）
+  - forward_dynamics で軌道に変換して可視化
+
+### 4.5 Exit 条件
 
 - [ ] 制御ベース表現で loss が安定して下がる
 - [ ] ADE / FDE が意味のある値を示す
@@ -201,10 +219,13 @@ Alpamayo の Dual Representation 戦略の前半（§3.6 Stage B）。制御入�
 - [ ] Loss: cross-entropy（next-token prediction）
 - [ ] Teacher forcing で学習
 
-### 5.3 評価
+### 5.3 評価スクリプト (`eval_stage1.py`)
 
-- [ ] 離散トークン → 連続制御入力 → 軌道への decode
+- [ ] チェックポイントロード → 全データで推論
+- [ ] トークン精度: 離散トークンの top-1 accuracy
+- [ ] 離散トークン → dequantize → 連続制御入力 → 軌道への decode
 - [ ] ADE / FDE を回帰版（Stage 0）と比較
+- [ ] 予測トークン分布の分析（特定ビンに偏っていないか）
 - [ ] 量子化ビン数の影響調査
 
 ### 5.4 Exit 条件
@@ -240,11 +261,14 @@ LLM 内部表現を条件として、Flow Matching で連続的かつ多様な�
 - [ ] CFM loss の実装
 - [ ] gradient checkpointing を Trajectory Decoder にも適用
 
-### 6.3 評価
+### 6.3 評価スクリプト (`eval_stage2.py`)
 
-- [ ] 同一入力から複数の軌道をサンプリング → 多様性の確認
+- [ ] チェックポイントロード → 全データで推論
+- [ ] CFM loss の計算
+- [ ] 同一入力から複数の軌道をサンプリング → 多様性の確認（軌道間分散）
 - [ ] ADE / FDE を回帰版・離散版と比較
 - [ ] Flow steps 数の影響を調査（10, 20, 50）
+- [ ] 生成軌道の可視化（BEV プロット）
 
 ### 6.4 Exit 条件
 
@@ -263,8 +287,9 @@ LLM 内部表現を条件として、Flow Matching で連続的かつ多様な�
 ### 7.1 CoC auto-labeling パイプライン
 
 - [ ] 教師 VLM（GPT-4o 等）を使った CoC アノテーション生成
-  - 閉じた意思決定集合の定義（データセットに応じたサブセット）
-    - 例: `{go_straight, turn_left, turn_right, stop, follow_lead, lane_change_left, lane_change_right, yield}`
+  - 閉じた意思決定集合の定義（データセットに応じたサブセット、2軸分類）
+    - 縦方向: `{go_straight, follow_lead, stop, yield}`
+    - 横方向: `{lane_keeping, turn_left, turn_right, lane_change_left, lane_change_right}`
   - Critical Components の特定
   - CoC Trace（因果推論テキスト）の生成
 - [ ] 因果混乱の防止: 過去の観測のみから因果要因を特定するプロンプト設計
@@ -279,12 +304,15 @@ LLM 内部表現を条件として、Flow Matching で連続的かつ多様な�
 - [ ] Loss: cross-entropy（推論 + 離散アクションの joint next-token prediction）
 - [ ] 推論トレースと離散軌道トークンを連結したシーケンスで学習
 
-### 7.3 評価
+### 7.3 評価スクリプト (`eval_stage3.py`)
 
-- [ ] 生成された推論の品質（外部 LLM による自動評価）
-- [ ] 推論の Driving Decision が正しいかの一致率
-- [ ] 推論付き / なしでの軌道品質比較
+- [ ] チェックポイントロード → 全データで推論
+- [ ] SFT loss の計算
+- [ ] 生成された CoC 推論テキストのサンプル表示（N 件）
+- [ ] Driving Decision の一致率（GT meta-action vs 予測 meta-action）
+- [ ] 離散トークン精度（推論付き vs なし の比較）
 - [ ] 推論テキストの定性的評価（サンプルを目視確認）
+- [ ] 生成された推論の品質（外部 LLM による自動評価 — オプション）
 
 ### 7.4 Exit 条件
 
@@ -327,14 +355,16 @@ SFT だけでは残る推論品質の問題（データバイアス、推論-行
 - [ ] 軌道品質報酬はオンライン計算
 - [ ] ロールアウト → 報酬計算 → ポリシー更新のループ実装
 
-### 8.4 評価
+### 8.4 評価スクリプト (`eval_stage4.py`)
 
+- [ ] チェックポイントロード → 全データで推論
 - [ ] SFT モデル（Stage 3）との比較:
   - 推論品質スコアの改善
   - CoC-Action 一貫性の改善
   - 軌道品質（ADE / FDE）の改善
 - [ ] 推論と行動の一貫性チェック（「止まる」と言って止まるか等）
-- [ ] KL 正則化の強度による影響調査
+- [ ] KL ダイバージェンスの計測（reference policy との距離）
+- [ ] Stage 0〜4 の全 Stage 横断比較テーブルの出力
 
 ### 8.5 Exit 条件
 

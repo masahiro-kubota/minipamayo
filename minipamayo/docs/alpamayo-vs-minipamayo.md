@@ -146,15 +146,18 @@ MiniPamayo は 1 カメラのため、マルチカメラ効率化は不要。た
 
 ## 10. データセット
 
-| 観点 | Alpamayo 0.5B | MiniPamayo | 備考 |
-|---|---|---|---|
-| データソース | NVIDIA 内部データ（非公開） | 公開データセット | |
-| データ規模 | 80,000 時間 | 数千〜数十万フレーム | 桁違いの差 |
-| カメラ | 7 台サラウンドビュー | 1 台フロント | |
-| CoC アノテーション | 人間 + VLM auto-labeling | VLM auto-labeling のみ | |
-| 地理的多様性 | 25 か国 2,500 都市以上 | データセットに依存 | |
+| 観点 | Alpamayo 0.5B | MiniPamayo（Phase A） | MiniPamayo（Phase B） | MiniPamayo（Phase C） |
+|---|---|---|---|---|
+| データソース | NVIDIA 内部データ | nuScenes + comma2k19 | + commaCarSegments | + nuPlan + CARLA |
+| **データ規模** | **80,000 時間** | **~40 時間** | **~500-2,500 時間** | **~3,000+ 時間** |
+| **Alpamayo 比** | **1×** | **1/2,000** | **1/30-160** | **1/20** |
+| カメラ | 7 台サラウンド | 1 台フロント | 同左 | 同左 |
+| CoC アノテーション | 人間 + VLM auto-labeling | VLM auto-labeling のみ | 同左 | 同左 |
+| 地理的多様性 | 25 か国 2,500 都市 | 限定的 | 多様（223 車種） | さらに多様 |
 
-これは MiniPamayo の制約上避けられない差分。公開データセット（nuScenes, comma2k19）で学習が回ることを確認するのが目的。
+**データ量のギャップが最大の課題**。Phase A（~40 時間）ではパイプライン検証のみ。汎化性能を得るには Phase B 以降が必要。commaCarSegments（~2,500 時間、HuggingFace で公開）が最も入手容易なスケールアップ手段。
+
+詳細は [datasets.md](datasets.md) を参照。
 
 ---
 
@@ -191,7 +194,7 @@ MiniPamayo は 1 カメラのため、マルチカメラ効率化は不要。た
 ### 残るスケールの差
 | 差分 | 影響 | 対応方針 |
 |---|---|---|
-| **データ規模・品質** | 汎化性能の限界 | 技術理解が目的なので許容 |
+| **行動予測データ規模** | 汎化性能の限界（80,000h vs ~40h） | commaCarSegments（~2,500h）+ nuPlan（~1,300h）で ~3,000h+ に拡大 → [datasets.md](datasets.md) |
 | **ドメイン SFT のスケール差** | 大規模 Physical AI データ vs 小規模公開データ | auto-labeling + RL で補完 |
 | **CoC ラベリング** | 人間ラベリングなし | VLM auto-labeling のみ。論文で「十分有効」と報告 |
 

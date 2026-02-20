@@ -23,9 +23,10 @@ bf16 学習時の固定コストは **N × 12 bytes**（パラメータ 2B + Ada
 | **Cosmos RL (全解凍 + ref policy)** | 582M + ref 582M×2 | 6.98 + 1.16 GB | ~3 GB | **~11 GB** |
 | MiniPamayo Stage 0-1 (全解凍) | 582M + head <1M | 6.98 GB | ~3 GB | **~10 GB** |
 | MiniPamayo Stage 2 (Flow 学習) | Traj. Decoder ~150M | 1.80 GB + VLM推論 1.16 GB | ~3 GB | **~6 GB** |
+| MiniPamayo Stage 3 (CoC SFT, 全解凍) | 582M | 6.98 GB | ~4 GB | **~11 GB** |
 | **MiniPamayo Stage 4 RL (LLM + ref)** | LLM 494M + ref 582M×2 | 5.93 + 1.16 GB | ~3 GB | **~10 GB** |
 
-**最大 VRAM: ~11 GB（Cosmos RL 時）。RTX 4090 (24 GB) に対して ~13 GB の余裕。**
+**最大 VRAM: ~11 GB（Cosmos RL / MiniPamayo Stage 3 時）。RTX 4090 (24 GB) に対して ~13 GB の余裕。**
 
 #### SmolLM2-360M からの変更理由
 
@@ -237,8 +238,9 @@ Alpamayo では、自由形式の CoT（Chain of Thought）ではなく、以下
 
 #### MiniPamayo での簡略化
 
-- **閉じた意思決定集合**: Alpamayo の完全なリストから、使用するデータセットに関連するサブセットのみ定義
-  - 例（nuScenes 向け）: `{go_straight, turn_left, turn_right, stop, follow_lead, lane_change_left, lane_change_right, yield}`
+- **閉じた意思決定集合**: Alpamayo の完全なリストから、使用するデータセットに関連するサブセットのみ定義（2軸で分類）
+  - 縦方向: `{go_straight, follow_lead, stop, yield}`
+  - 横方向: `{lane_keeping, turn_left, turn_right, lane_change_left, lane_change_right}`
 - **推論トレースの生成**: LLM が `[visual_tokens] → [CoC reasoning tokens] → [action tokens]` のシーケンスを自己回帰的に生成
 - **推論データの作成**: 教師 VLM（例: GPT-4o）を使って、学習データに CoC アノテーションを付与する auto-labeling パイプライン
 - **因果混乱の防止**: Alpamayo に倣い、過去の観測（history window）のみから因果要因を特定する
@@ -361,9 +363,10 @@ bf16 学習時の固定コスト: **N × 12 bytes**（パラメータ 2B + AdamW
 | **Cosmos RL (全解凍 + ref policy)** | 582M + ref 582M×2 | 6.98 + 1.16 GB | ~3 GB | **~11 GB** |
 | MiniPamayo Stage 0-1 (全解凍) | 582M + head <1M | 6.98 GB | ~3 GB | **~10 GB** |
 | MiniPamayo Stage 2 (Flow 学習) | Traj. Decoder ~150M | 1.80 GB + VLM推論 1.16 GB | ~3 GB | **~6 GB** |
+| MiniPamayo Stage 3 (CoC SFT, 全解凍) | 582M | 6.98 GB | ~4 GB | **~11 GB** |
 | **MiniPamayo Stage 4 RL (LLM + ref)** | LLM 494M + ref 582M×2 | 5.93 + 1.16 GB | ~3 GB | **~10 GB** |
 
-**最大 VRAM: ~11 GB（Cosmos RL 時）。RTX 4090 (24 GB) に対して ~13 GB の余裕。**
+**最大 VRAM: ~11 GB（Cosmos RL / MiniPamayo Stage 3 時）。RTX 4090 (24 GB) に対して ~13 GB の余裕。**
 
 ### 5.4 Trajectory Decoder の VRAM 余裕
 
@@ -377,7 +380,43 @@ Stage 2 では VLM は frozen（推論のみ）のため、Trajectory Decoder �
 
 ---
 
-## 6. Alpamayo 0.5B との対応表
+## 6. データセット
+
+Alpamayo 0.5B は **80,000 時間**の内部データで学習している。MiniPamayo は公開データセットのみを使用するため、データ量に大きな差がある。この差を可能な限り縮小するため、複数の公開データセットを組み合わせて段階的にスケールアップする。
+
+詳細な調査結果は [datasets.md](datasets.md) を参照。
+
+### 6.1 段階的データ戦略
+
+| Phase | データ | 合計時間 | Alpamayo 比 | 目的 |
+|---|---|---|---|---|
+| **A（検証）** | nuScenes Full + comma2k19 | ~40h | 1/2,000 | パイプライン検証 |
+| **B（推奨）** | + commaCarSegments | ~500-2,500h | 1/30-160 | 汎化性能改善 |
+| **C（理想）** | + nuPlan + Waymo E2E + CARLA | ~3,000+h | 1/20 | 実用的な性能 |
+
+### 6.2 主要データソース
+
+| データセット | データ量 | 映像 | 制御信号 | ライセンス |
+|---|---|---|---|---|
+| nuScenes Full | 5.5h (1,000 シーン) | 6 カメラ | ego pose + CAN bus | CC BY-NC-SA 4.0 |
+| comma2k19 | 33h | フロント 1 台 | steering_angle, wheel_speeds | MIT |
+| commaCarSegments | ~2,500h (145K セグメント) | フロント 1 台 | CAN bus | 公開 (HuggingFace) |
+| nuPlan (navtrain) | ~1,300h | カメラ | ego 軌道 | 学術無料 |
+| Waymo E2E | ~12h (5K セグメント) | 8 カメラ | ego 状態 + waypoint | 非商用研究 |
+| CARLA シミュレータ | 無制限 | 全センサー | 完全な制御信号 | MIT |
+
+### 6.3 スケールギャップ対策
+
+データ量の差を埋めるため、データ以外のアプローチも活用する:
+
+- **事前学習の活用**: DINOv2（ImageNet）+ Cosmos Reason Mini（運転ドメイン VLM）の重みが初期値。ゼロからの学習ではない
+- **データ拡張**: 左右反転（実質 2 倍）、時間オフセット、カラーjitter
+- **知識蒸留**: Cosmos Reason Mini の VLM 出力をシーン記述として追加入力に活用
+- **シミュレータ生成**: CARLA でロングテール・コーナーケースを無制限に生成
+
+---
+
+## 7. Alpamayo 0.5B との対応表
 
 比較対象はアーキテクチャ構成が最も近い **Alpamayo 0.5B（DINOv2 + Qwen2.5-0.5B）**。詳細は [差分分析](alpamayo-vs-minipamayo.md) 参照。
 
@@ -402,7 +441,7 @@ Stage 2 では VLM は frozen（推論のみ）のため、Trajectory Decoder �
 
 ---
 
-## 7. 実装上の推奨初期設定
+## 8. 実装上の推奨初期設定
 
 ```yaml
 # 4090 で通すためのデフォルト
