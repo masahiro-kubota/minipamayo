@@ -15,6 +15,7 @@ dependencies = [
     "pillow>=10.0.0",
     "huggingface-hub[cli]>=1.4.1",
     "wandb>=0.25.0",
+    "datasets>=4.5.0",
 ]
 
 [build-system]
