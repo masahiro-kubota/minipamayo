@@ -1,4 +1,4 @@
-"""Stage 2 Visual Instruction Tuning Dataset: LLaVA-Instruct-150K."""
+"""Stage 2 Visual Instruction Tuning Dataset: LLaVA-Instruct."""
 
 import json
 import random
@@ -12,10 +12,10 @@ IGNORE_INDEX = -100
 
 
 class InstructDataset(Dataset):
-    """LLaVA-Instruct-150K for Stage 2 Visual Instruction Tuning.
+    """LLaVA-Instruct dataset for Stage 2 Visual Instruction Tuning.
 
-    Each sample: image + multi-turn QA → train full model (VE + Adapter + LLM)
-    for visual question answering and description.
+    Supports 150K (COCO-only) and 665K (multi-source) formats.
+    Text-only samples use a zero tensor as dummy image.
     """
 
     def __init__(
@@ -25,8 +25,10 @@ class InstructDataset(Dataset):
         tokenizer,
         transform,
         max_length: int = 2048,
+        image_root: str = "",
     ):
         self.image_dir = Path(image_dir)
+        self.image_root = Path(image_root) if image_root else None
         self.tokenizer = tokenizer
         self.transform = transform
         self.max_length = max_length
@@ -98,30 +100,52 @@ class InstructDataset(Dataset):
     def _resolve_image_path(self, image_name: str) -> Path:
         """Resolve image filename to full path.
 
-        LLaVA-Instruct uses bare IDs like '000000033471.jpg' but
-        COCO train2014 files have prefix 'COCO_train2014_000000033471.jpg'.
-        Try the bare name first, then try with COCO prefix.
+        Supports two modes:
+        1. image_root set (665K): resolve multi-source paths relative to image_root
+           - COCO: coco/train2014/XXXX.jpg → image_root/coco/train2014/COCO_train2014_XXXX.jpg
+           - Others: gqa/images/XXX.jpg → image_root/gqa/images/XXX.jpg
+        2. image_dir only (150K): resolve bare filenames against image_dir
         """
+        if self.image_root:
+            if image_name.startswith("coco/"):
+                # coco/train2014/000000033471.jpg → COCO_train2014_000000033471.jpg
+                bare_id = image_name.split("/")[-1]
+                coco_path = self.image_root / "coco" / "train2014" / f"COCO_train2014_{bare_id}"
+                if coco_path.exists():
+                    return coco_path
+            # Non-COCO or COCO fallback: use path as-is
+            path = self.image_root / image_name
+            if path.exists():
+                return path
+
+        # Fallback: image_dir (150K compat)
+        if "/" in image_name:
+            image_name = image_name.split("/")[-1]
+
         path = self.image_dir / image_name
         if path.exists():
             return path
-        # Try with COCO prefix
         coco_name = f"COCO_train2014_{image_name}"
         coco_path = self.image_dir / coco_name
         if coco_path.exists():
             return coco_path
-        return path  # Return original (will fail in Image.open and trigger fallback)
+        return path
 
     def __getitem__(self, idx: int) -> dict:
         sample = self.data[idx]
 
         # --- Image ---
-        image_path = self._resolve_image_path(sample["image"])
-        try:
-            image = Image.open(image_path).convert("RGB")
-        except (OSError, Exception):
-            return self[random.randint(0, len(self) - 1)]
-        pixel_values = self.transform(image)
+        image_name = sample.get("image", "")
+        if image_name:
+            image_path = self._resolve_image_path(image_name)
+            try:
+                image = Image.open(image_path).convert("RGB")
+            except (OSError, Exception):
+                return self[random.randint(0, len(self) - 1)]
+            pixel_values = self.transform(image)
+        else:
+            # Text-only: dummy zero tensor
+            pixel_values = torch.zeros(3, 224, 224)
 
         # --- Text ---
         messages = self._build_messages(sample["conversations"])
