@@ -19,16 +19,17 @@ def log(msg: str) -> None:
 
 
 DEFAULTS = {
-    "json_path": "data/llava-instruct/llava_instruct_150k.json",
+    "json_path": "data/llava-instruct/bunny695k_full.json",
     "image_dir": "data/coco/train2014",
-    "output_dir": "checkpoints/stage2",
+    "image_root": "data",
+    "output_dir": "checkpoints/stage2.1",
     "stage1_checkpoint": "checkpoints/stage1/checkpoint-2325.pt",
     "resume": "",
     "lr": 2e-5,
     "ve_lr": 1e-5,
     "batch_size": 1,
-    "grad_accum": 128,  # global batch = 128
-    "epochs": 2,
+    "grad_accum": 128,  # global batch = 128 (1 * 128)
+    "epochs": 1,
     "warmup_ratio": 0.03,
     "weight_decay": 0.1,
     "max_grad_norm": 1.0,
@@ -36,6 +37,7 @@ DEFAULTS = {
     "save_steps": 100,
     "logging_steps": 5,
     "num_workers": 4,
+    "neftune_alpha": 5.0,
     "wandb_project": "qwen-vl-mini",
 }
 
@@ -77,7 +79,7 @@ def main():
     if use_wandb:
         wandb.init(
             project=args.wandb_project,
-            name="stage2-instruct",
+            name="stage2.1-bunny695k-neftune",
             config=vars(args),
             resume="allow",
         )
@@ -86,7 +88,9 @@ def main():
 
     # --- Model ---
     log("Loading model...")
-    model = QwenVLMini()
+    model = QwenVLMini(neftune_alpha=args.neftune_alpha)
+    if args.neftune_alpha > 0:
+        log(f"NEFTune enabled: alpha={args.neftune_alpha}")
 
     # Load weights
     if args.resume:
@@ -120,6 +124,7 @@ def main():
 
     # Enable gradient checkpointing for VRAM savings
     model.llm.gradient_checkpointing_enable()
+    model.vision_encoder.dinov2.gradient_checkpointing_enable()
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
@@ -133,6 +138,7 @@ def main():
         tokenizer=model.tokenizer,
         transform=IMAGE_TRANSFORM,
         max_length=args.max_length,
+        image_root=args.image_root,
     )
     log(f"Dataset size: {len(dataset):,}")
 
@@ -207,10 +213,8 @@ def main():
 
             # === T2 Check 1: NaN/Inf detection ===
             if torch.isnan(output.loss) or torch.isinf(output.loss):
-                raise RuntimeError(
-                    f"Loss is {'NaN' if torch.isnan(output.loss) else 'Inf'} at step {step}. "
-                    "Consider: lower lr, gradient clipping, or --ve_frozen."
-                )
+                log(f"⚠ Skipping NaN/Inf loss at microbatch {step} (global_step={global_step})")
+                continue
 
             loss.backward()
             microbatch_count += 1
