@@ -1,0 +1,2150 @@
+{
+  "avg_accuracy": 0.8250825082508251,
+  "per_seed": [
+    {
+      "seed": 0,
+      "accuracy": 0.8217821782178217,
+      "correct": 83,
+      "total": 101,
+      "details": [
+        {
+          "id": "mcq_reasoning_000002",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed or prepare to slow down. The green traffic light is currently red, indicating that the vehicle must stop. This action ensures safety and compliance wit"
+        },
+        {
+          "id": "mcq_reasoning_000003",
+          "correct_answer": "D",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The driver is likely slowing down to navigate around a parked truck on the left, which is a common maneuver when approaching a stop sign or a lane divider. This action helps maintain control ov"
+        },
+        {
+          "id": "mcq_reasoning_000006",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should prepare to either continue straight or make a right turn at the intersection. This is because the green traffic light is currently red, indicating that vehicles should st"
+        },
+        {
+          "id": "mcq_reasoning_000007",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead may be slowing down in preparation to stop at the intersection due to pedestrians or yielding to turning vehicles. This action is necessary to ensure safety and compliance wit"
+        },
+        {
+          "id": "mcq_reasoning_000010",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and be prepared to stop if the minivan ahead slows down further. This is necessary to ensure safety and prevent any potential collisions.</think><answe"
+        },
+        {
+          "id": "mcq_reasoning_000011",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the road construction, which could create obstacles or necessitate cautious driving. This is a common reason for vehicles to reduce speed in urba"
+        },
+        {
+          "id": "mcq_reasoning_000014",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should prepare to slow down or change lanes if safe. Given the presence of the red traffic cones indicating a construction zone, it is crucial to maintain a safe distance and av"
+        },
+        {
+          "id": "mcq_reasoning_000015",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the presence of orange traffic cones indicating roadwork or a lane closure. This is a common behavior in urban driving, especially when there are"
+        },
+        {
+          "id": "mcq_reasoning_000016",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The current road conditions suggest that the truck is likely to continue moving forward, which could pose a risk to traffic safety if it changes lanes. Additionally, the presence of traffic con"
+        },
+        {
+          "id": "mcq_reasoning_000019",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should maintain its speed and continue following the minivan closely, as the roadwork cones ahead indicate potential hazards and the minivan may be preparing to change lanes or "
+        },
+        {
+          "id": "mcq_reasoning_000020",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead, the white minivan, is slowing down due to traffic cones indicating roadwork. This is necessary to ensure safety and compliance with traffic signals, which are typically red f"
+        },
+        {
+          "id": "mcq_reasoning_000023",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary until the traffic light turns green.</think><answer>D</answer>\nThe ego vehicle should remain stationary until the traffic light turns green. This is bec"
+        },
+        {
+          "id": "mcq_reasoning_000024",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is approaching a red traffic light at the intersection. This indicates that the driver may need to reduce speed to comply with traffic signal"
+        },
+        {
+          "id": "mcq_reasoning_000027",
+          "correct_answer": "A",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should maintain its speed and continue straight, as traffic is steady. Given the presence of a gray sedan ahead, it is important to ensure that the vehicle is not obstructing th"
+        },
+        {
+          "id": "mcq_reasoning_000028",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to a potential hazard that is not visible, such as merging vehicles or an intersection. This could lead to a reduction in speed and the need to slow do"
+        },
+        {
+          "id": "mcq_reasoning_000031",
+          "correct_answer": "B",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should maintain its speed and continue straight. The black SUV is likely preparing to make a left turn, which could pose a risk to the ego vehicle if it does not stop immediatel"
+        },
+        {
+          "id": "mcq_reasoning_000032",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down to yield to the black SUV making a left turn. This action is necessary to ensure the safety of the vehicles ahead and pedestrians crossing the road.</th"
+        },
+        {
+          "id": "mcq_reasoning_000035",
+          "correct_answer": "A",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should maintain its speed or prepare to slow down. The black SUV ahead is likely to change speed, which could pose a risk to the safety of the vehicle.减速或停车可以减少事故发生的可能性。</think>"
+        },
+        {
+          "id": "mcq_reasoning_000036",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the presence of parked vehicles on both sides of the street, anticipating obstacles or pedestrians. This behavior is common in urban driving, esp"
+        },
+        {
+          "id": "mcq_reasoning_000039",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and stay alert for the cyclist. Cyclists are typically unpredictable and can change direction quickly, so it's important to be prepared to stop or chan"
+        },
+        {
+          "id": "mcq_reasoning_000040",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to parked cars on the side of the road, creating space for pedestrians or cyclists. This could be a precautionary measure to ensure safety and prevent "
+        },
+        {
+          "id": "mcq_reasoning_000043",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary at the red traffic light until it turns green. This is necessary because the light is currently red, indicating that the vehicle must stop. Turning woul"
+        },
+        {
+          "id": "mcq_reasoning_000044",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely decelerating because it is approaching a red traffic light at an intersection. This is necessary to comply with traffic signals and ensure safety, as the light is cu"
+        },
+        {
+          "id": "mcq_reasoning_000047",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stopped at the intersection. This is the most appropriate action given the red light and the 'No Turn on Red' sign. The vehicle should not attempt to navigate thro"
+        },
+        {
+          "id": "mcq_reasoning_000048",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the red traffic light ahead, indicating it needs to stop. This is necessary to comply with traffic signals and ensure safety.</think><answer>A</answ"
+        },
+        {
+          "id": "mcq_reasoning_000051",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stopped at the intersection.</think><answer>A</answer>\n<think>The ego vehicle should remain stopped at the intersection.</think><answer>B</answer>\n<think>The ego v"
+        },
+        {
+          "id": "mcq_reasoning_000052",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The vehicle is likely slowing down due to the presence of the red traffic light at the intersection. This indicates that the driver may need to reduce speed to comply with traffic signals and e"
+        },
+        {
+          "id": "mcq_reasoning_000055",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary until the traffic light turns green. This is necessary because the red light indicates that the vehicle must stop, and it is safe to do so without causi"
+        },
+        {
+          "id": "mcq_reasoning_000056",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is approaching a red traffic light, which requires it to stop. Additionally, there are pedestrians crossing the street, and the driver must y"
+        },
+        {
+          "id": "mcq_reasoning_000059",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stopped until the traffic light turns green.</think><answer>B</answer>\nThe ego vehicle should remain stopped until the traffic light turns green. This is because t"
+        },
+        {
+          "id": "mcq_reasoning_000060",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is approaching a red traffic light at the intersection. This indicates that the driver is preparing to stop, which is necessary to comply wit"
+        },
+        {
+          "id": "mcq_reasoning_000063",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should continue traveling straight at a low speed.</think><answer>A</answer>\n<think>The ego vehicle should continue traveling straight at a low speed.</think><answer>B</answer>\n"
+        },
+        {
+          "id": "mcq_reasoning_000064",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may slow down due to the presence of pedestrians in the immediate vicinity, which could indicate that the vehicle is likely to yield at an upcoming stop sign, especially if it"
+        },
+        {
+          "id": "mcq_reasoning_000067",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and stay in the right lane. This is necessary because the traffic signal ahead is red, indicating that the vehicle must stop. This action ensures safet"
+        },
+        {
+          "id": "mcq_reasoning_000068",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to a bus further down the road, indicating a potential stop for passengers. This could be necessary to ensure safety and compliance with traffic laws.<"
+        },
+        {
+          "id": "mcq_reasoning_000071",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should prepare to slow down or stop. This is necessary because the pedestrian is crossing the street, which could pose a risk to the vehicle's safety.减速或停车是必要的行动，以确保行车安全。</think"
+        },
+        {
+          "id": "mcq_reasoning_000072",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the presence of the pedestrian crossing the street. This is necessary to ensure safety and compliance with traffic laws.</think><answer>B</answer"
+        },
+        {
+          "id": "mcq_reasoning_000075",
+          "correct_answer": "C",
+          "extracted": "D",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should maintain its current speed and stay in the same lane.</think><answer>D</answer>\nThe ego vehicle should maintain its current speed and stay in the same lane because the bu"
+        },
+        {
+          "id": "mcq_reasoning_000076",
+          "correct_answer": "D",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the presence of the parked utility truck with cones. The truck is likely obstructing the driver's view, and the presence of the cones suggests th"
+        },
+        {
+          "id": "mcq_reasoning_000079",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and be prepared to slow down or change lanes if necessary. This is necessary to ensure safety and compliance with traffic laws.</think><answer>B</answe"
+        },
+        {
+          "id": "mcq_reasoning_000080",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the presence of the work truck and the surrounding cones, indicating a potential hazard and the need to navigate through a work zone safely.</thi"
+        },
+        {
+          "id": "mcq_reasoning_000083",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary until the traffic light turns green.</think><answer>A</answer>\nThe ego vehicle should remain stationary until the traffic light turns green. This is bec"
+        },
+        {
+          "id": "mcq_reasoning_000084",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is approaching a red traffic light. This is necessary to comply with traffic laws and ensure safety.</think><answer>B</answer>\n<think>The veh"
+        },
+        {
+          "id": "mcq_reasoning_000087",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary at the red traffic light. This is because the traffic light is currently red, indicating that vehicles must stop. Since the vehicle is currently in the "
+        },
+        {
+          "id": "mcq_reasoning_000088",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is approaching a red traffic light, which requires it to stop. This action is necessary to comply with traffic signals and ensure safety.</th"
+        },
+        {
+          "id": "mcq_reasoning_000091",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stopped at the intersection until the traffic light changes to green. This is necessary because the red traffic light indicates that the vehicle must stop, and it "
+        },
+        {
+          "id": "mcq_reasoning_000092",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The driver is likely slowing down due to the presence of the black sedan in the right lane, which may indicate that the vehicle ahead is preparing to stop or may be approaching a red traffic li"
+        },
+        {
+          "id": "mcq_reasoning_000095",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stopped at the red light until it turns green.</think><answer>D</answer>\n\n<think>The ego vehicle should remain stopped at the red light until it turns green.</thin"
+        },
+        {
+          "id": "mcq_reasoning_000096",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The black truck at the intersection is likely reducing speed because it is likely to be following the red light at the intersection. Red lights indicate that vehicles must stop, and reducing sp"
+        },
+        {
+          "id": "mcq_reasoning_000099",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stopped at the intersection until the traffic light turns green. This is necessary because the red traffic light indicates that the vehicle must stop, and it is sa"
+        },
+        {
+          "id": "mcq_reasoning_000100",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely reducing its speed due to the presence of the red traffic light at the intersection. The light is currently red, indicating that vehicles should stop and prepare to "
+        },
+        {
+          "id": "mcq_reasoning_000103",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its current speed and position, as there is a black car ahead that is approximately 30 meters away. This allows for a safe distance to maintain and reduces the r"
+        },
+        {
+          "id": "mcq_reasoning_000104",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be preparing to yield to traffic due to give-way signs on the right side of the road. These signs typically indicate that vehicles should stop and yield to any vehicles th"
+        },
+        {
+          "id": "mcq_reasoning_000107",
+          "correct_answer": "A",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should maintain its speed and stay in the left lane to avoid blocking the intersection. This is necessary because the yellow box markings indicate that the intersection is curre"
+        },
+        {
+          "id": "mcq_reasoning_000108",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead may be slowing down due to the proximity of the intersection indicated by the yellow box markings. This indicates that the vehicle is likely approaching a stop or a lane chang"
+        },
+        {
+          "id": "mcq_reasoning_000111",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and continue straight through the intersection. This is because the red traffic light is currently red, indicating that vehicles must stop. Given that "
+        },
+        {
+          "id": "mcq_reasoning_000112",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is approaching a red traffic light. This is a common behavior when driving in a city where traffic signals are red, as it signals to drivers "
+        },
+        {
+          "id": "mcq_reasoning_000115",
+          "correct_answer": "A",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should continue moving forward since the light is green and there are no obstacles. This is a safe and legal action given the current traffic conditions.</think><answer>B</answe"
+        },
+        {
+          "id": "mcq_reasoning_000116",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead might be preparing to stop for an upcoming intersection or yield to merging traffic. This could be due to the presence of a red traffic light, which typically requires vehicle"
+        },
+        {
+          "id": "mcq_reasoning_000119",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should prepare to slow down or maintain a safe distance. Given that the white vehicle ahead may be approaching a school zone, it is important to maintain a safe distance to ensu"
+        },
+        {
+          "id": "mcq_reasoning_000120",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the presence of the school zone sign, which typically indicates a need to reduce speed for the safety of children in the area. This sign is likel"
+        },
+        {
+          "id": "mcq_reasoning_000123",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary or proceed slowly to ensure the safety of the pedestrians crossing the road. Given the presence of pedestrians crossing the road, it is important to mai"
+        },
+        {
+          "id": "mcq_reasoning_000124",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down to yield to pedestrians crossing the street. This is necessary because pedestrians are often crossing the road at the same time as vehicles, and slowing"
+        },
+        {
+          "id": "mcq_reasoning_000127",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary or move slowly until the pedestrian has crossed. This is necessary to ensure safety and prevent any potential collisions with the pedestrians.</think><a"
+        },
+        {
+          "id": "mcq_reasoning_000128",
+          "correct_answer": "A",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead is likely slowing down to yield to a pedestrian crossing the road. Pedestrians are typically required to stop and yield to oncoming traffic, especially when they are crossing "
+        },
+        {
+          "id": "mcq_reasoning_000131",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should continue driving straight and maintain its speed. This is because the parking lot is empty, there are no obstacles in the immediate vicinity, and the vehicle is currently"
+        },
+        {
+          "id": "mcq_reasoning_000132",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should prioritize being cautious of parked cars that may block visibility and pedestrians entering the street. This is crucial because the presence of parked cars can lead to tr"
+        },
+        {
+          "id": "mcq_reasoning_000135",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should continue moving straight ahead at a cautious speed. Given that the road ahead is clear and there are no immediate obstacles, it is safe to proceed without changing lanes "
+        },
+        {
+          "id": "mcq_reasoning_000136",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead may be slowing down due to the presence of parked cars on the right, which could indicate that the driver is preparing to make a right turn at the upcoming intersection. This "
+        },
+        {
+          "id": "mcq_reasoning_000139",
+          "correct_answer": "A",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should continue to slow down as it approaches the left curve. This is necessary because the curve is likely to be steep and the vehicle must maintain its speed to navigate safel"
+        },
+        {
+          "id": "mcq_reasoning_000140",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down to prepare for the curve in the road. This is common when driving on a winding road, as it helps maintain control and reduces the risk of accidents.</think"
+        },
+        {
+          "id": "mcq_reasoning_000143",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and stay in the right lane. This is necessary because the traffic light is green, indicating that vehicles are allowed to proceed. Additionally, the pr"
+        },
+        {
+          "id": "mcq_reasoning_000144",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the presence of oncoming traffic, which suggests that it could be preparing to yield or change lanes. This is a common behavior in traffic, especial"
+        },
+        {
+          "id": "mcq_reasoning_000147",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and distance from the black vehicle ahead. This is necessary to ensure that the black vehicle does not come within the ego vehicle's lane, which could "
+        },
+        {
+          "id": "mcq_reasoning_000148",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the presence of pedestrians crossing the road, which could indicate that the vehicle is preparing to yield or stop. Additionally, the vehicle ahead "
+        },
+        {
+          "id": "mcq_reasoning_000151",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and stay in the right lane, as the vehicle ahead is relatively close but not yet causing an immediate need to slow down or change lanes. This allows th"
+        },
+        {
+          "id": "mcq_reasoning_000152",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the presence of traffic in the opposite lanes, indicating an upcoming intersection or a yield situation. This could be due to the driver's awareness"
+        },
+        {
+          "id": "mcq_reasoning_000155",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and stay in its lane, as the vehicle ahead is approximately 20 meters away. This allows the ego vehicle to navigate around the oncoming traffic and avo"
+        },
+        {
+          "id": "mcq_reasoning_000156",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead may be slowing down due to the presence of oncoming traffic or to prepare for a potential turn, as there are no visible traffic signals indicating otherwise.</think><answer>C<"
+        },
+        {
+          "id": "mcq_reasoning_000159",
+          "correct_answer": "A",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should maintain its speed and be prepared to brake, as the vehicle ahead is only 20 meters away. This is necessary to ensure safety and prevent any potential collisions.</think>"
+        },
+        {
+          "id": "mcq_reasoning_000160",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the slippery conditions caused by the wet road surface, which requires drivers to reduce speed for increased safety.</think><answer>C</answer>\n<thin"
+        },
+        {
+          "id": "mcq_reasoning_000163",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should proceed through the intersection since the light is green. This is a common practice in urban traffic, as vehicles should always yield to pedestrians crossing the street."
+        },
+        {
+          "id": "mcq_reasoning_000164",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down to yield to a pedestrian crossing the street. This is a common behavior in urban environments, especially during the evening when traffic signals are often"
+        },
+        {
+          "id": "mcq_reasoning_000167",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should wait until the white SUV completes its left turn and ensure that pedestrians have crossed before proceeding.</think><answer>B</answer>\nThe ego vehicle should wait until t"
+        },
+        {
+          "id": "mcq_reasoning_000168",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is preparing to make a left turn at the intersection. This action requires the vehicle to reduce speed to maintain its position and ensure sa"
+        },
+        {
+          "id": "mcq_reasoning_000171",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and continue driving straight because the road is clear and there are no immediate obstacles or traffic signals requiring a stop. This is a common prac"
+        },
+        {
+          "id": "mcq_reasoning_000172",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to approaching a potential hazard or traffic conditions that are not immediately visible, such as a car merging from the right or a change in road cond"
+        },
+        {
+          "id": "mcq_reasoning_000175",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and distance from the silver sedan ahead. This is necessary to ensure that the sedan does not exceed the speed limit and that the ego vehicle does not "
+        },
+        {
+          "id": "mcq_reasoning_000176",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be decelerating due to the presence of traffic signals or road markings indicating that it is safe to proceed. This could be a sign of caution or a change in traffic condi"
+        },
+        {
+          "id": "mcq_reasoning_000179",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should prepare to slow down or maintain speed to ensure a safe following distance. This is necessary because the 'SLOW' warning sign indicates that the vehicle ahead may be slow"
+        },
+        {
+          "id": "mcq_reasoning_000180",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the 'SLOW' warning sign, indicating a need for reduced speed. This is a common behavior in urban driving to maintain safety and compliance with t"
+        },
+        {
+          "id": "mcq_reasoning_000183",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should wait until the traffic light turns green or until it's safe to proceed. This is because the red light indicates that the vehicle must stop, and waiting could lead to a co"
+        },
+        {
+          "id": "mcq_reasoning_000184",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead may be slowing down due to the wet road conditions, which can reduce traction and increase stopping distance. This is a common phenomenon in urban driving, especially in areas"
+        },
+        {
+          "id": "mcq_reasoning_000187",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should continue to approach the intersection cautiously while preparing to stop if necessary.</think><answer>A</answer>\n<think>The ego vehicle should continue to approach the in"
+        },
+        {
+          "id": "mcq_reasoning_000188",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead, possibly the black sedan, is likely slowing down due to the proximity to the intersection where other vehicles are approaching. Drivers often reduce speed when navigating int"
+        },
+        {
+          "id": "mcq_reasoning_000191",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should proceed straight or make a right turn as indicated by the lane markings and the green light. This is because the traffic light is currently green, which means that vehicl"
+        },
+        {
+          "id": "mcq_reasoning_000192",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the intersection, as it might be preparing to yield to the car approaching from the right or to assess traffic conditions before proceeding.</think>"
+        },
+        {
+          "id": "mcq_reasoning_000195",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should proceed straight or make a left turn since the traffic light is green. This is the safest course of action as the light is currently green, indicating that vehicles are a"
+        },
+        {
+          "id": "mcq_reasoning_000196",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead may be slowing down due to the motorcycle approaching from the left, which could pose a potential hazard if it attempts to pass or change lanes unexpectedly.</think><answer>C<"
+        },
+        {
+          "id": "mcq_reasoning_000199",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should wait for the dark-colored car to clear the intersection before proceeding. This is necessary because the car ahead is likely to be stopped or moving slowly, which could p"
+        },
+        {
+          "id": "mcq_reasoning_000200",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be preparing to stop at a traffic light or yield to oncoming traffic. This is a common behavior in urban driving, especially when there is a need to slow down or stop due "
+        }
+      ]
+    },
+    {
+      "seed": 1,
+      "accuracy": 0.7623762376237624,
+      "correct": 77,
+      "total": 101,
+      "details": [
+        {
+          "id": "mcq_reasoning_000002",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed or prepare to slow down. The green traffic light indicates that the intersection is clear, and the truck is parked, which suggests that the vehicle sho"
+        },
+        {
+          "id": "mcq_reasoning_000003",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The van is likely slowing down to navigate around a parked truck on the left, which is a common maneuver when approaching a stop sign or a lane divider. This action helps to maintain control ov"
+        },
+        {
+          "id": "mcq_reasoning_000006",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should prepare to either continue straight or make a right turn at the intersection. This is because the green traffic light is currently red, indicating that vehicles must stop"
+        },
+        {
+          "id": "mcq_reasoning_000007",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down in preparation to stop at the intersection due to pedestrians or yielding to turning vehicles. This action is necessary to ensure safety and compliance wit"
+        },
+        {
+          "id": "mcq_reasoning_000010",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and be prepared to stop if the minivan ahead slows down further. This is necessary to ensure safety and prevent any potential collisions with the miniv"
+        },
+        {
+          "id": "mcq_reasoning_000011",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the road construction, which could create obstacles or necessitate cautious driving. This is a common reason for vehicles to reduce speed when ap"
+        },
+        {
+          "id": "mcq_reasoning_000014",
+          "correct_answer": "D",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should maintain current speed and continue straight. Given the presence of the minivan ahead, which is likely to be moving slower than the vehicle ahead, it is safe to continue "
+        },
+        {
+          "id": "mcq_reasoning_000015",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the presence of orange traffic cones indicating roadwork or a lane closure. This is a common behavior in urban driving when vehicles are stopped "
+        },
+        {
+          "id": "mcq_reasoning_000016",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The current road conditions suggest that the truck is likely to continue moving forward, as there are no immediate obstacles or traffic signals indicating a need to change lanes. However, the p"
+        },
+        {
+          "id": "mcq_reasoning_000019",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and continue following the minivan closely, as the roadwork cones ahead indicate potential hazards and the minivan is likely to be following closely be"
+        },
+        {
+          "id": "mcq_reasoning_000020",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead, the white minivan, is slowing down due to traffic cones indicating roadwork.</think><answer>D</answer>\n<think>The vehicle ahead, the white minivan, is slowing down due to tra"
+        },
+        {
+          "id": "mcq_reasoning_000023",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary until the traffic light turns green. This is necessary because the red traffic light indicates that the vehicle must stop, and it is safe to do so while"
+        },
+        {
+          "id": "mcq_reasoning_000024",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely reducing its speed because it is approaching a red traffic light at the intersection. This indicates that the vehicle ahead may need to stop and prepare to yield to "
+        },
+        {
+          "id": "mcq_reasoning_000027",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and continue straight, as traffic is steady. Given the presence of the gray sedan ahead, it is likely that the vehicle will need to maintain its speed "
+        },
+        {
+          "id": "mcq_reasoning_000028",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to a potential hazard that is not visible, such as merging vehicles or an intersection. This could lead to a loss of control and the need to slow down,"
+        },
+        {
+          "id": "mcq_reasoning_000031",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should maintain its speed and continue straight. This is because the black SUV is likely making a left turn, which could pose a risk to the vehicle if it does not stop. Addition"
+        },
+        {
+          "id": "mcq_reasoning_000032",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down to yield to the black SUV making a left turn. This action is necessary to ensure the safety of the vehicles ahead and pedestrians crossing the road.</th"
+        },
+        {
+          "id": "mcq_reasoning_000035",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed or prepare to slow down. Given that the black SUV is likely to change speed, the ego vehicle should remain vigilant and prepare to stop if necessary.</"
+        },
+        {
+          "id": "mcq_reasoning_000036",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the presence of parked vehicles on both sides of the street, anticipating obstacles or pedestrians. This behavior is common in urban driving, esp"
+        },
+        {
+          "id": "mcq_reasoning_000039",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and stay alert for the cyclist. Cyclists are typically more maneuverable and can often be seen in the distance, making it safer to maintain a safe dist"
+        },
+        {
+          "id": "mcq_reasoning_000040",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to parked cars on the side of the road, creating space for pedestrians or cyclists. This could be a precautionary measure to ensure safety and prevent "
+        },
+        {
+          "id": "mcq_reasoning_000043",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary at the red traffic light until it turns green. This is necessary because the traffic signal is currently red, indicating that the vehicle must stop. Tur"
+        },
+        {
+          "id": "mcq_reasoning_000044",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely decelerating because it is approaching a red traffic light at an intersection. This indicates that the vehicle is preparing to stop, which is necessary to comply wit"
+        },
+        {
+          "id": "mcq_reasoning_000047",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stopped at the intersection. The red light indicates that vehicles must stop, and it is safe to do so as there is no other vehicle or pedestrian approaching the in"
+        },
+        {
+          "id": "mcq_reasoning_000048",
+          "correct_answer": "D",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead may be slowing down due to the red traffic light ahead, indicating it needs to stop.</think><answer>B</answer>\n<think>The vehicle ahead may be slowing down due to the red traf"
+        },
+        {
+          "id": "mcq_reasoning_000051",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should remain stopped at the intersection. The red traffic light indicates that vehicles must stop, and it is safe to do so.</think><answer>C</answer>\n<think>The ego vehicle sho"
+        },
+        {
+          "id": "mcq_reasoning_000052",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The driver is likely slowing down due to the presence of the red traffic light at the intersection. The light is currently red, which indicates that vehicles are not allowed to proceed until it"
+        },
+        {
+          "id": "mcq_reasoning_000055",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary until the traffic light turns green. This is because the light is currently red, and it is necessary to maintain a safe distance from any vehicles that "
+        },
+        {
+          "id": "mcq_reasoning_000056",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is approaching a red traffic light, which requires it to stop. Additionally, there are pedestrians crossing the street, and the driver must y"
+        },
+        {
+          "id": "mcq_reasoning_000059",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stopped until the traffic light turns green.</think><answer>D</answer>\n<think>The ego vehicle should remain stopped until the traffic light turns green.</think><an"
+        },
+        {
+          "id": "mcq_reasoning_000060",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is approaching a red traffic light at the intersection. This indicates that the driver is preparing to stop, which is necessary to comply wit"
+        },
+        {
+          "id": "mcq_reasoning_000063",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should continue traveling straight at a low speed.</think><answer>A</answer>\n<think>The ego vehicle should continue traveling straight at a low speed.</think><answer>B</answer>\n"
+        },
+        {
+          "id": "mcq_reasoning_000064",
+          "correct_answer": "D",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead may be slowing down due to the presence of pedestrians. Since the vehicle is currently in the right lane, it is likely that pedestrians are likely to be crossing the road, whi"
+        },
+        {
+          "id": "mcq_reasoning_000067",
+          "correct_answer": "A",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should maintain its speed and stay in the right lane. This is necessary because the traffic light is red, indicating that vehicles should stop at the intersection. Additionally,"
+        },
+        {
+          "id": "mcq_reasoning_000068",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to a bus further down the road, indicating a potential stop for passengers. This action could be necessary to ensure safety and compliance with traffic"
+        },
+        {
+          "id": "mcq_reasoning_000071",
+          "correct_answer": "D",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should maintain speed and continue driving straight. This is necessary because the pedestrian is crossing the street, which is a potential hazard. The vehicle should not acceler"
+        },
+        {
+          "id": "mcq_reasoning_000072",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the presence of the pedestrian crossing the street. This is a common behavior in urban environments where vehicles must yield to pedestrians cros"
+        },
+        {
+          "id": "mcq_reasoning_000075",
+          "correct_answer": "B",
+          "extracted": "A",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should maintain its current speed and stay in the same lane.</think><answer>A</answer>\n<think>The ego vehicle should prepare to change lanes to the right.</think><answer>B</answ"
+        },
+        {
+          "id": "mcq_reasoning_000076",
+          "correct_answer": "D",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the presence of the parked utility truck with cones. The truck is likely obstructing the driver's view, and the presence of the cones suggests th"
+        },
+        {
+          "id": "mcq_reasoning_000079",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and be prepared to slow down or change lanes if necessary. This is necessary to ensure safety and compliance with traffic laws.</think><answer>B</answe"
+        },
+        {
+          "id": "mcq_reasoning_000080",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the presence of the work truck and the surrounding cones, indicating a potential hazard and the need to navigate through a work zone safely.</thi"
+        },
+        {
+          "id": "mcq_reasoning_000083",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary until the traffic light turns green.</think><answer>A</answer>\nThe ego vehicle should remain stationary until the traffic light turns green. This is bec"
+        },
+        {
+          "id": "mcq_reasoning_000084",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is approaching a red traffic light. This is necessary to comply with traffic laws and ensure safety.</think><answer>B</answer>\n<think>The veh"
+        },
+        {
+          "id": "mcq_reasoning_000087",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary at the red traffic light. This is because the traffic light is currently red, indicating that vehicles must stop. Since the vehicle is currently in the "
+        },
+        {
+          "id": "mcq_reasoning_000088",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is approaching a red traffic light, which requires it to stop. This action is necessary to comply with traffic signals and ensure safety.</th"
+        },
+        {
+          "id": "mcq_reasoning_000091",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stopped at the intersection until the traffic light changes to green.</think><answer>D</answer>\n<think>The ego vehicle should remain stopped at the intersection un"
+        },
+        {
+          "id": "mcq_reasoning_000092",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The driver is likely slowing down due to the presence of the black sedan in the right lane, which may indicate that the vehicle ahead is preparing to stop or may be approaching a red traffic li"
+        },
+        {
+          "id": "mcq_reasoning_000095",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stopped at the red light until it turns green.</think><answer>D</answer>\n\n<think>The ego vehicle should remain stopped at the red light until it turns green.</thin"
+        },
+        {
+          "id": "mcq_reasoning_000096",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The black truck at the intersection is likely reducing speed because it is following the red light at the intersection. Red lights indicate that vehicles must stop, and reducing speed allows dr"
+        },
+        {
+          "id": "mcq_reasoning_000099",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stopped at the intersection until the traffic light turns green. This is because the red traffic light indicates that the vehicle must stop, and it is safe to do s"
+        },
+        {
+          "id": "mcq_reasoning_000100",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely reducing its speed due to the presence of the red traffic light at the intersection. The light is currently red, indicating that vehicles should stop and prepare to "
+        },
+        {
+          "id": "mcq_reasoning_000103",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its current speed and position, as there is a black car ahead that is approximately 30 meters away. This allows for a safe distance to maintain and reduces the r"
+        },
+        {
+          "id": "mcq_reasoning_000104",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be reducing its speed due to the presence of a red traffic light on the right side of the road. This indicates that the vehicle ahead is likely preparing to yield to traff"
+        },
+        {
+          "id": "mcq_reasoning_000107",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and stay in the left lane to avoid blocking the intersection. This is necessary because the yellow box markings indicate that the intersection is curre"
+        },
+        {
+          "id": "mcq_reasoning_000108",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the proximity of the intersection indicated by the yellow box markings. This suggests that the vehicle is preparing to stop or change lanes, which c"
+        },
+        {
+          "id": "mcq_reasoning_000111",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should prepare to slow down and possibly stop as it approaches a red traffic light. This is because the light is currently red, indicating that vehicles should stop at the inter"
+        },
+        {
+          "id": "mcq_reasoning_000112",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is approaching a red traffic light. This is a common behavior in urban driving, as vehicles must stop at red lights to prevent accidents and "
+        },
+        {
+          "id": "mcq_reasoning_000115",
+          "correct_answer": "A",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should continue moving forward since the light is green and there are no obstacles. This indicates that the vehicle is likely to proceed safely through the intersection without "
+        },
+        {
+          "id": "mcq_reasoning_000116",
+          "correct_answer": "D",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead is likely decreasing its speed to comply with the traffic signal, which is currently red. This is necessary to ensure that the vehicles on the right are stopped, preventing an"
+        },
+        {
+          "id": "mcq_reasoning_000119",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should prepare to slow down or maintain a safe distance. Given that the white vehicle ahead may be approaching a school zone, it is important to maintain a safe distance to avoi"
+        },
+        {
+          "id": "mcq_reasoning_000120",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the presence of the school zone sign, which typically indicates a need to reduce speed for the safety of children in the area.</think><answer>A</"
+        },
+        {
+          "id": "mcq_reasoning_000123",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary or proceed slowly to ensure the safety of the pedestrians crossing the road. Given that the pedestrians are crossing the road, it is crucial to maintain"
+        },
+        {
+          "id": "mcq_reasoning_000124",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead is likely slowing down to yield to pedestrians crossing the street. This is necessary because pedestrians are often crossing the road at the same time as vehicles, and slowing"
+        },
+        {
+          "id": "mcq_reasoning_000127",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary or move slowly until the pedestrian has crossed. This is necessary to ensure safety and prevent any potential collisions with the pedestrians.</think><a"
+        },
+        {
+          "id": "mcq_reasoning_000128",
+          "correct_answer": "D",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead is likely slowing down to yield to a pedestrian crossing the road because the pedestrian is likely crossing the road, which is a common behavior in urban environments.减速意味着车辆减"
+        },
+        {
+          "id": "mcq_reasoning_000131",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should continue driving straight and maintain its speed. This is the safest course of action given the presence of parked cars and the potential for other vehicles to enter the "
+        },
+        {
+          "id": "mcq_reasoning_000132",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should prioritize being cautious of parked cars that may block visibility and pedestrians entering the street. This is crucial because it ensures that the vehicle can safely nav"
+        },
+        {
+          "id": "mcq_reasoning_000135",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should continue moving straight ahead at a cautious speed.</think><answer>D</answer>\n<think>The ego vehicle should continue moving straight ahead at a cautious speed because the"
+        },
+        {
+          "id": "mcq_reasoning_000136",
+          "correct_answer": "D",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead may be slowing down due to the presence of parked cars on the right, which could indicate that the driver is preparing to make a right turn at the upcoming intersection. This "
+        },
+        {
+          "id": "mcq_reasoning_000139",
+          "correct_answer": "D",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should continue to slow down as it approaches the left curve. This is necessary because the curve is likely to be steep and the vehicle must maintain its speed to navigate safel"
+        },
+        {
+          "id": "mcq_reasoning_000140",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down to prepare for the curve in the road. This is common when driving on a highway or urban road, as it helps maintain control over the vehicle's speed and dir"
+        },
+        {
+          "id": "mcq_reasoning_000143",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and stay in the right lane. This is because the traffic is moving normally, and there are no immediate obstacles in the immediate vicinity. Additionall"
+        },
+        {
+          "id": "mcq_reasoning_000144",
+          "correct_answer": "D",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the presence of oncoming traffic, which suggests that it could be preparing to yield or change lanes. This behavior is common in urban driving, e"
+        },
+        {
+          "id": "mcq_reasoning_000147",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should maintain its speed and distance from the black vehicle ahead. This is necessary to ensure safety and prevent any potential collisions.</think><answer>C</answer>\n<think>Th"
+        },
+        {
+          "id": "mcq_reasoning_000148",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the presence of pedestrians crossing the road, which could indicate that the vehicle is preparing to yield to the pedestrians or to yield to the mer"
+        },
+        {
+          "id": "mcq_reasoning_000151",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and stay in the right lane, as the vehicle ahead is relatively close but not yet causing an immediate need to slow down or change lanes. This allows th"
+        },
+        {
+          "id": "mcq_reasoning_000152",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead may be slowing down due to the presence of traffic in the opposite lanes, indicating an upcoming intersection or a yield situation. This could be due to the driver's awareness"
+        },
+        {
+          "id": "mcq_reasoning_000155",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and stay in its lane, as the vehicle ahead is approximately 20 meters away. This allows the vehicle ahead to react to any potential hazards and maintai"
+        },
+        {
+          "id": "mcq_reasoning_000156",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead may be slowing down due to the presence of oncoming traffic or to prepare for a potential turn, as there are no visible traffic signals indicating otherwise.</think><answer>C<"
+        },
+        {
+          "id": "mcq_reasoning_000159",
+          "correct_answer": "A",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should maintain its speed and be prepared to brake, as the vehicle ahead is only 20 meters away. This is necessary to ensure safety and prevent any potential collisions.</think>"
+        },
+        {
+          "id": "mcq_reasoning_000160",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the slippery conditions caused by the wet road surface, which requires drivers to reduce speed for increased safety.</think><answer>D</answer>\n<thin"
+        },
+        {
+          "id": "mcq_reasoning_000163",
+          "correct_answer": "A",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should maintain its speed and continue straight through the intersection. Since the pedestrian has crossed the crosswalk, there is no immediate need for the vehicle to stop or c"
+        },
+        {
+          "id": "mcq_reasoning_000164",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the presence of a pedestrian crossing the street. This could indicate that the vehicle is preparing to yield to the pedestrian, ensuring safety and "
+        },
+        {
+          "id": "mcq_reasoning_000167",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should wait until the white SUV completes its left turn and ensure that pedestrians have crossed before proceeding.</think><answer>A</answer>\n<think>The ego vehicle should wait "
+        },
+        {
+          "id": "mcq_reasoning_000168",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is preparing to make a left turn at the intersection. This action requires the vehicle to reduce speed and maintain a safe distance from the "
+        },
+        {
+          "id": "mcq_reasoning_000171",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and continue driving straight because the road is clear and there are no immediate obstacles or traffic signals requiring a stop. This is a common prac"
+        },
+        {
+          "id": "mcq_reasoning_000172",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to approaching a potential hazard or traffic conditions that are not immediately visible, such as a car merging from the right or a change in road cond"
+        },
+        {
+          "id": "mcq_reasoning_000175",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and distance from the silver sedan ahead. This is necessary to ensure that the sedan does not exceed the speed limit and that the ego vehicle does not "
+        },
+        {
+          "id": "mcq_reasoning_000176",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be preparing to make a turn or responding to traffic changes. This could be due to the presence of traffic signals or road markings indicating a left turn or a lane change"
+        },
+        {
+          "id": "mcq_reasoning_000179",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should prepare to slow down or maintain speed to ensure a safe following distance. This is necessary because the 'SLOW' warning sign indicates that the vehicle ahead may be slow"
+        },
+        {
+          "id": "mcq_reasoning_000180",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the 'SLOW' warning sign, indicating a need for reduced speed. This is a common behavior in urban driving to maintain safety and comply with traff"
+        },
+        {
+          "id": "mcq_reasoning_000183",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should wait until the traffic light turns green or until it's safe to proceed. This is because the light is currently red, which indicates that the vehicle must stop and prepare"
+        },
+        {
+          "id": "mcq_reasoning_000184",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the wet road conditions, which can reduce traction and increase stopping distance. This is especially true when the vehicle is preparing to make a r"
+        },
+        {
+          "id": "mcq_reasoning_000187",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should continue to approach the intersection cautiously while preparing to stop if necessary.</think><answer>D</answer>\n<think>The ego vehicle should continue to approach the in"
+        },
+        {
+          "id": "mcq_reasoning_000188",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead, possibly the black sedan, is likely slowing down due to the proximity to the intersection where other vehicles are approaching. Drivers often reduce speed when navigating int"
+        },
+        {
+          "id": "mcq_reasoning_000191",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should proceed straight or make a right turn as indicated by the lane markings and the green light. This is because the traffic light is currently green, which means that vehicl"
+        },
+        {
+          "id": "mcq_reasoning_000192",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the intersection, as it might be preparing to yield to the car approaching from the right or to assess traffic conditions before proceeding. This co"
+        },
+        {
+          "id": "mcq_reasoning_000195",
+          "correct_answer": "A",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should proceed straight or make a left turn since the traffic light is green. This is because the light is currently green, indicating that the vehicle can safely proceed withou"
+        },
+        {
+          "id": "mcq_reasoning_000196",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the motorcycle approaching from the left, which could pose a potential hazard if it attempts to pass or change lanes unexpectedly.</think><answer>C<"
+        },
+        {
+          "id": "mcq_reasoning_000199",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should wait for the dark-colored car to clear the intersection before proceeding. This is necessary because the car ahead is likely to be stopped or moving slowly, which could p"
+        },
+        {
+          "id": "mcq_reasoning_000200",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be preparing to stop at a traffic light or yield to oncoming traffic, as it is likely to be moving slower than the speed limit and may need to reduce speed to comply with "
+        }
+      ]
+    },
+    {
+      "seed": 2,
+      "accuracy": 0.8910891089108911,
+      "correct": 90,
+      "total": 101,
+      "details": [
+        {
+          "id": "mcq_reasoning_000002",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed or prepare to slow down. The green traffic light is currently red, indicating that the vehicle must stop. This is necessary to ensure safety and comply"
+        },
+        {
+          "id": "mcq_reasoning_000003",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The van is likely slowing down to navigate around a parked truck on the left, which is a common practice when approaching a stop sign or a vehicle that is not moving. This action helps to reduc"
+        },
+        {
+          "id": "mcq_reasoning_000006",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should prepare to either continue straight or make a right turn at the intersection. This is because the green traffic light is currently red, indicating that the vehicle must s"
+        },
+        {
+          "id": "mcq_reasoning_000007",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down in preparation to stop at the intersection due to pedestrians or yielding to turning vehicles. This action is necessary to ensure safety and compliance wit"
+        },
+        {
+          "id": "mcq_reasoning_000010",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and be prepared to stop if the minivan ahead slows down further. This is necessary to ensure safety and prevent any potential collisions.</think><answe"
+        },
+        {
+          "id": "mcq_reasoning_000011",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the road construction, which could create obstacles or necessitate cautious driving. This is a common behavior in urban environments where vehicl"
+        },
+        {
+          "id": "mcq_reasoning_000014",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should maintain current speed and continue straight. Given the presence of the minivan ahead, which is likely moving slower than the vehicle ahead, it is safe to continue drivin"
+        },
+        {
+          "id": "mcq_reasoning_000015",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the presence of orange traffic cones indicating roadwork or a lane closure. This indicates that the vehicle may need to stop or slow down to avoi"
+        },
+        {
+          "id": "mcq_reasoning_000016",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The current road conditions suggest that the traffic is likely to continue moving forward, but the presence of the box truck blocking the right lane may require caution. It is important to main"
+        },
+        {
+          "id": "mcq_reasoning_000019",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should consider slowing down or preparing to change lanes. The minivan is following closely, indicating that the roadwork may require a reduction in speed or a change in directi"
+        },
+        {
+          "id": "mcq_reasoning_000020",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead, the white minivan, is slowing down due to traffic cones indicating roadwork.</think><answer>C</answer>\n<think>The vehicle ahead, the white minivan, is slowing down because th"
+        },
+        {
+          "id": "mcq_reasoning_000023",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary until the traffic light turns green. This is necessary because the red light is currently on, and it is safe to proceed while waiting for the green sign"
+        },
+        {
+          "id": "mcq_reasoning_000024",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is approaching a red traffic light at the intersection. This indicates that the driver may need to reduce speed to comply with traffic signal"
+        },
+        {
+          "id": "mcq_reasoning_000027",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and continue straight, as traffic is steady. Given the presence of the gray sedan ahead, it is important to ensure safety and avoid any potential colli"
+        },
+        {
+          "id": "mcq_reasoning_000028",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to a potential hazard that is not visible, such as merging vehicles or an intersection. This could lead to a slower speed and a safer driving environme"
+        },
+        {
+          "id": "mcq_reasoning_000031",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and continue straight. This is because the black SUV is likely making a left turn, which could pose a risk to the vehicle if it does not stop. Addition"
+        },
+        {
+          "id": "mcq_reasoning_000032",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down to yield to the black SUV making a left turn. This action is necessary to ensure the safety of the vehicles ahead, as the black SUV is likely to be maki"
+        },
+        {
+          "id": "mcq_reasoning_000035",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed or prepare to slow down.</think><answer>C</answer>\n<think>The ego vehicle should maintain its speed or prepare to slow down.</think><answer>C</answer>\n"
+        },
+        {
+          "id": "mcq_reasoning_000036",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the presence of parked vehicles on both sides of the street, anticipating obstacles or pedestrians. This behavior is common in urban driving, esp"
+        },
+        {
+          "id": "mcq_reasoning_000039",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and stay alert for the cyclist. Cyclists are typically unpredictable and may not be aware of the presence of the parked cars, so it's important to be p"
+        },
+        {
+          "id": "mcq_reasoning_000040",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to parked cars on the side of the road, creating space for pedestrians or cyclists. This could be a precautionary measure to ensure safety and prevent "
+        },
+        {
+          "id": "mcq_reasoning_000043",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary at the red traffic light until it turns green. This is necessary because the traffic signal is currently red, indicating that the vehicle must stop and "
+        },
+        {
+          "id": "mcq_reasoning_000044",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely decelerating because it is approaching a red traffic light at an intersection. This indicates that the vehicle is preparing to stop, which is necessary to comply wit"
+        },
+        {
+          "id": "mcq_reasoning_000047",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stopped at the intersection. The red light indicates that vehicles must stop, and it is safe to do so while waiting for the green light to turn on. Additionally, t"
+        },
+        {
+          "id": "mcq_reasoning_000048",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the red traffic light ahead, indicating it needs to stop. This is necessary to comply with traffic signals and ensure safety.</think><answer>B</answ"
+        },
+        {
+          "id": "mcq_reasoning_000051",
+          "correct_answer": "A",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should remain stopped at the intersection. The red traffic light indicates that vehicles must stop, and it is safe to do so as the traffic signal is currently red.</think><answe"
+        },
+        {
+          "id": "mcq_reasoning_000052",
+          "correct_answer": "A",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The vehicle is likely slowing down due to the presence of the red traffic light at the intersection. This indicates that the driver may need to reduce speed to comply with traffic signals and e"
+        },
+        {
+          "id": "mcq_reasoning_000055",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary until the traffic light turns green. This is necessary because the red light is currently on, and it is safe to proceed once the light turns green.</thi"
+        },
+        {
+          "id": "mcq_reasoning_000056",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is approaching a red traffic light, which requires it to stop. Additionally, there are pedestrians crossing the street, and the driver must y"
+        },
+        {
+          "id": "mcq_reasoning_000059",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stopped until the traffic light turns green. This is necessary because the red traffic light indicates that the vehicle must stop, and it is safe to do so without "
+        },
+        {
+          "id": "mcq_reasoning_000060",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is approaching a red traffic light at the intersection. This is necessary to comply with traffic laws and ensure safety.</think><answer>A</an"
+        },
+        {
+          "id": "mcq_reasoning_000063",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should continue traveling straight at a low speed.</think><answer>D</answer>\n\n<think>The ego vehicle should continue traveling straight at a low speed because it is currently in"
+        },
+        {
+          "id": "mcq_reasoning_000064",
+          "correct_answer": "D",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead may be slowing down due to the presence of pedestrians in the immediate vicinity, which could indicate that the vehicle is preparing to yield or stop. This is a common behavio"
+        },
+        {
+          "id": "mcq_reasoning_000067",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and stay in the right lane. This is necessary because the traffic signal ahead is red, indicating that vehicles must stop. Given that the vehicle ahead"
+        },
+        {
+          "id": "mcq_reasoning_000068",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to a bus further down the road, indicating a potential stop for passengers. This could be necessary to ensure safety and compliance with traffic laws.<"
+        },
+        {
+          "id": "mcq_reasoning_000071",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should prepare to slow down or stop. This is necessary because the pedestrian is crossing the street, which could pose a risk to the vehicle.减速或停车是必要的，以确保安全。</think><answer>C</a"
+        },
+        {
+          "id": "mcq_reasoning_000072",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the presence of the pedestrian crossing the street. Pedestrians are typically required to stop at crosswalks, and vehicles should maintain a safe"
+        },
+        {
+          "id": "mcq_reasoning_000075",
+          "correct_answer": "B",
+          "extracted": "A",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should maintain its current speed and stay in the same lane. This is necessary to ensure that the bus does not exceed the speed limit and to avoid any potential collisions with "
+        },
+        {
+          "id": "mcq_reasoning_000076",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the presence of the parked utility truck with cones. The truck is likely obstructing the driver's view, and the presence of the cones suggests th"
+        },
+        {
+          "id": "mcq_reasoning_000079",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and be prepared to slow down or change lanes if necessary. This is necessary to ensure safety and compliance with traffic laws.</think><answer>A</answe"
+        },
+        {
+          "id": "mcq_reasoning_000080",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely reducing its speed because it is likely slowing down due to the presence of the work truck and the surrounding cones, indicating a potential hazard and the need to n"
+        },
+        {
+          "id": "mcq_reasoning_000083",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary until the traffic light turns green.</think><answer>D</answer>\nThe ego vehicle should remain stationary until the traffic light turns green. This is bec"
+        },
+        {
+          "id": "mcq_reasoning_000084",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely reducing its speed because it is approaching a red traffic light. This is necessary to comply with traffic laws and ensure safety.</think><answer>A</answer>\n<think>T"
+        },
+        {
+          "id": "mcq_reasoning_000087",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary since the traffic light is red. This is the correct action to take as the light is currently red, indicating that vehicles must stop at the intersection"
+        },
+        {
+          "id": "mcq_reasoning_000088",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is approaching a red traffic light, which requires it to stop. This action is necessary to comply with traffic laws and ensure safety.</think"
+        },
+        {
+          "id": "mcq_reasoning_000091",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stopped at the intersection until the traffic light changes to green. This is necessary because the red traffic light indicates that the vehicle must stop, and it "
+        },
+        {
+          "id": "mcq_reasoning_000092",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The driver is likely slowing down due to the presence of the black sedan in the right lane, which may indicate that the vehicle ahead is preparing to stop or may be approaching a stop sign. Thi"
+        },
+        {
+          "id": "mcq_reasoning_000095",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stopped at the red light until it turns green. This is necessary because the traffic signal is currently red, indicating that the vehicle must stop to comply with "
+        },
+        {
+          "id": "mcq_reasoning_000096",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The black truck at the intersection is likely reducing speed because it is aware of the red light at the intersection. The vehicle ahead is likely stopped due to the red light, and the truck is"
+        },
+        {
+          "id": "mcq_reasoning_000099",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stopped at the intersection until the traffic light turns green. This is necessary because the red traffic light indicates that vehicles must stop, and it is safe "
+        },
+        {
+          "id": "mcq_reasoning_000100",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is slowing down due to approaching a red traffic light at the intersection. This indicates that the driver is preparing to stop, which is necessary to ensure safety and comply"
+        },
+        {
+          "id": "mcq_reasoning_000103",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its current speed and position, as there is a black car ahead that is approximately 30 meters away. This allows for a safe distance to maintain and reduces the r"
+        },
+        {
+          "id": "mcq_reasoning_000104",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely reducing its speed because it is likely to be preparing to yield to traffic due to give-way signs on the right side of the road. This indicates that the vehicle ahea"
+        },
+        {
+          "id": "mcq_reasoning_000107",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and stay in the left lane to avoid blocking the intersection. The yellow box markings indicate that vehicles should be stopped at the intersection, and"
+        },
+        {
+          "id": "mcq_reasoning_000108",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the proximity of the intersection indicated by the yellow box markings. This indicates that the vehicle is likely preparing to stop at the intersect"
+        },
+        {
+          "id": "mcq_reasoning_000111",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The ego vehicle should maintain its speed and continue straight through the intersection. This is because the red traffic light is currently red, indicating that vehicles must stop. Given that "
+        },
+        {
+          "id": "mcq_reasoning_000112",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is approaching a red traffic light. This is a common behavior when driving in a city where traffic signals are red, as it signals to stop and"
+        },
+        {
+          "id": "mcq_reasoning_000115",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should continue moving forward since the light is green and there are no obstacles. This is necessary to ensure safety and compliance with traffic signals.</think><answer>B</ans"
+        },
+        {
+          "id": "mcq_reasoning_000116",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead might be preparing to stop for an upcoming intersection or yield to merging traffic. This could be due to the presence of traffic signals or the need to maintain safety in the"
+        },
+        {
+          "id": "mcq_reasoning_000119",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should prepare to slow down or maintain a safe distance. Given that the white vehicle ahead may be approaching a school zone, it is important to maintain a safe distance to avoi"
+        },
+        {
+          "id": "mcq_reasoning_000120",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the presence of the school zone sign, which typically indicates a need to reduce speed for the safety of children in the area. This sign may also"
+        },
+        {
+          "id": "mcq_reasoning_000123",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary or proceed slowly to ensure the safety of the pedestrians crossing the road.</think><answer>B</answer>\nThe ego vehicle should remain stationary or proce"
+        },
+        {
+          "id": "mcq_reasoning_000124",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down to yield to pedestrians crossing the street. This is necessary because pedestrians are typically crossing the road at a faster speed than vehicles, and "
+        },
+        {
+          "id": "mcq_reasoning_000127",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should remain stationary or move slowly until the pedestrian has crossed the road. This is necessary because the pedestrian is likely to continue walking, and moving quickly cou"
+        },
+        {
+          "id": "mcq_reasoning_000128",
+          "correct_answer": "D",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead is likely slowing down to yield to a pedestrian crossing the road. This action is necessary to ensure safety and compliance with traffic laws, as pedestrians are typically req"
+        },
+        {
+          "id": "mcq_reasoning_000131",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should continue driving straight and maintain its speed.</think><answer>C</answer>\n<think>The ego vehicle should continue driving straight and maintain its speed.</think><answer"
+        },
+        {
+          "id": "mcq_reasoning_000132",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should prioritize being cautious of parked cars that may block visibility and pedestrians entering the street. This is crucial because the presence of parked vehicles can lead t"
+        },
+        {
+          "id": "mcq_reasoning_000135",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should continue moving straight ahead at a cautious speed. This is because the road ahead is clear and there are no immediate obstacles or traffic signals indicating a need to s"
+        },
+        {
+          "id": "mcq_reasoning_000136",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the presence of parked cars on the right, which could indicate that the driver is preparing to make a right turn at the upcoming intersection. This "
+        },
+        {
+          "id": "mcq_reasoning_000139",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should continue to slow down as it approaches the left curve. This is necessary because the curve is likely to be steep and the vehicle must maintain its speed to navigate safel"
+        },
+        {
+          "id": "mcq_reasoning_000140",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down to prepare for the curve in the road. This is common when driving on a highway or urban road, as it helps maintain control over the vehicle's speed and dir"
+        },
+        {
+          "id": "mcq_reasoning_000143",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and stay in the right lane, as there are no immediate obstacles and the traffic flow is normal.</think><answer>D</answer>\n<think>The ego vehicle should"
+        },
+        {
+          "id": "mcq_reasoning_000144",
+          "correct_answer": "D",
+          "extracted": "B",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead may be slowing down due to the presence of oncoming traffic, which suggests that it could be preparing to yield or change lanes. This is a common behavior in traffic, especial"
+        },
+        {
+          "id": "mcq_reasoning_000147",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and distance from the black vehicle ahead. This is necessary to ensure that the black vehicle does not exceed the speed limit and could potentially cau"
+        },
+        {
+          "id": "mcq_reasoning_000148",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the presence of pedestrians crossing the road, which could indicate that the vehicle is preparing to yield to the pedestrians or that the road is no"
+        },
+        {
+          "id": "mcq_reasoning_000151",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and stay in the right lane, as the vehicle ahead is relatively close but not yet causing an immediate need to slow down or change lanes. This is necess"
+        },
+        {
+          "id": "mcq_reasoning_000152",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead may be slowing down due to the presence of traffic in the opposite lanes, indicating an upcoming intersection or a yield situation. This could be due to the driver's awareness"
+        },
+        {
+          "id": "mcq_reasoning_000155",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and stay in its lane, as the vehicle ahead is approximately 20 meters away. This allows the ego vehicle to maintain its position while navigating throu"
+        },
+        {
+          "id": "mcq_reasoning_000156",
+          "correct_answer": "D",
+          "extracted": "C",
+          "is_correct": false,
+          "generated": "<think>The vehicle ahead may be slowing down due to the presence of oncoming traffic or to prepare for a potential turn, as there are no visible traffic signals indicating otherwise.</think><answer>C<"
+        },
+        {
+          "id": "mcq_reasoning_000159",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and be prepared to brake, as the vehicle ahead is only 20 meters away. This is necessary to ensure safety and prevent any potential collisions.</think>"
+        },
+        {
+          "id": "mcq_reasoning_000160",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the slippery conditions caused by the wet road surface, which requires drivers to reduce speed for increased safety.</think><answer>B</answer>\n<thin"
+        },
+        {
+          "id": "mcq_reasoning_000163",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and continue straight through the intersection. Since the pedestrian has crossed the crosswalk, it is safe to proceed without any immediate obstacles o"
+        },
+        {
+          "id": "mcq_reasoning_000164",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the presence of pedestrians crossing the street. This could indicate that the vehicle is preparing to yield to the pedestrians and reduce speed to e"
+        },
+        {
+          "id": "mcq_reasoning_000167",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should wait until the white SUV completes its left turn and ensure that pedestrians have crossed before proceeding.</think><answer>B</answer>\nThe ego vehicle should wait until t"
+        },
+        {
+          "id": "mcq_reasoning_000168",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down because it is preparing to make a left turn at the intersection. This action requires the vehicle to reduce speed to safely navigate the intersection an"
+        },
+        {
+          "id": "mcq_reasoning_000171",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and continue driving straight because the road is clear and there are no immediate obstacles or traffic signals requiring a stop. This allows the vehic"
+        },
+        {
+          "id": "mcq_reasoning_000172",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to approaching a potential hazard or traffic conditions that are not immediately visible, such as a car merging from the right or a change in road cond"
+        },
+        {
+          "id": "mcq_reasoning_000175",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should maintain its speed and distance from the silver sedan ahead. This is necessary to ensure safety and prevent any potential collisions.</think><answer>A</answer>\n<think>The"
+        },
+        {
+          "id": "mcq_reasoning_000176",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be preparing to make a turn or responding to traffic changes. This could be due to the presence of traffic signals, the need to maintain a safe distance from other vehicle"
+        },
+        {
+          "id": "mcq_reasoning_000179",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should prepare to slow down or maintain speed to ensure a safe following distance. This is necessary because the 'SLOW' warning sign indicates that the vehicle ahead may be slow"
+        },
+        {
+          "id": "mcq_reasoning_000180",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead is likely slowing down due to the 'SLOW' warning sign, which indicates a need for reduced speed. This is a common practice in urban driving to ensure safety and compliance wit"
+        },
+        {
+          "id": "mcq_reasoning_000183",
+          "correct_answer": "D",
+          "extracted": "D",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should wait until the traffic light turns green or until it's safe to proceed.</think><answer>D</answer>\n\n<think>The ego vehicle should wait until the traffic light turns green "
+        },
+        {
+          "id": "mcq_reasoning_000184",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the wet road conditions, which can reduce traction and increase stopping distance. This is especially true in urban environments where vehicles ofte"
+        },
+        {
+          "id": "mcq_reasoning_000187",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should continue to approach the intersection cautiously while preparing to stop if necessary.</think><answer>C</answer>\n<think>The ego vehicle should continue to approach the in"
+        },
+        {
+          "id": "mcq_reasoning_000188",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead, possibly the black sedan, is likely slowing down due to the proximity to the intersection where other vehicles are approaching. Drivers often reduce speed when navigating int"
+        },
+        {
+          "id": "mcq_reasoning_000191",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should proceed straight or make a right turn as indicated by the lane markings and the green light. This is because the traffic light is currently green, indicating that vehicle"
+        },
+        {
+          "id": "mcq_reasoning_000192",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the intersection, as it might be preparing to yield to the car approaching from the right or to assess traffic conditions before proceeding. This co"
+        },
+        {
+          "id": "mcq_reasoning_000195",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should proceed straight or make a left turn since the traffic light is green. This is because the light is currently green, indicating that vehicles are allowed to proceed.</thi"
+        },
+        {
+          "id": "mcq_reasoning_000196",
+          "correct_answer": "B",
+          "extracted": "B",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be slowing down due to the motorcycle approaching from the left, which could pose a potential hazard if it attempts to pass or change lanes unexpectedly.</think><answer>B<"
+        },
+        {
+          "id": "mcq_reasoning_000199",
+          "correct_answer": "C",
+          "extracted": "C",
+          "is_correct": true,
+          "generated": "<think>The ego vehicle should wait for the dark-colored car to clear the intersection before proceeding. This is necessary because the car ahead is likely to be stopped or moving slowly, which could p"
+        },
+        {
+          "id": "mcq_reasoning_000200",
+          "correct_answer": "A",
+          "extracted": "A",
+          "is_correct": true,
+          "generated": "<think>The vehicle ahead may be preparing to stop at a traffic light or yield to oncoming traffic. This is a common behavior in urban driving, especially when there is a red light indicating a stop.减速"
+        }
+      ]
+    }
+  ]
+}
