@@ -16,10 +16,10 @@ GRPO（Group Relative Policy Optimization）により、3 要素の報酬信号�
 
 | 観点 | Alpamayo（§5.3） | MiniPamayo Stage 4 |
 |---|---|---|
-| アルゴリズム | GRPO | **同一** |
-| 報酬: 推論品質 | LRM（DeepSeek-R1, Cosmos-Reason）| 外部 LLM API（デフォルト: gpt-4o-mini）|
+| アルゴリズム | GRPO（softmax-weighted REINFORCE + KL） | **同一**（Alpamayo §5.3.2 準拠） |
+| 報酬: 推論品質 | LRM（DeepSeek-R1, Cosmos-Reason）画像+GT+PRED | マルチモーダル LLM API（デフォルト: gpt-4o）画像+GT+PRED |
 | 報酬: CoC-Action 一貫性 | ルールベース（バイナリ）| **同一** |
-| 報酬: 軌道品質 | L2 + 衝突 + ジャーク | **同一** |
+| 報酬: 軌道品質 | -(λ_L2·L2 + λ_coll·I[coll] + λ_jerk·J) ペナルティ形式 | **同一** |
 | 勾配制御 | LLM のみ trainable | **同一** |
 | Reference policy | SFT モデルを frozen で保持 | **同一** |
 | データキュレーション | 内部予測と外部報酬の不一致が大きいサンプルを優先 | 全データ使用（データ量が小さいため） |
@@ -71,30 +71,22 @@ GRPO は PPO の critic（value function）を排し、グループ内の相対�
 
 1. **ロールアウト**: 現在のポリシー `π_θ` から各プロンプトに対して K 個の応答をサンプリング
 2. **報酬計算**: 各応答に対して 3 要素の報酬を計算し、合成報酬 R(o_i) を算出
-3. **Advantage 計算**: グループ G = {o_1, ..., o_K} 内の相対的な advantage
+3. **Advantage 計算**: グループ G = {o_1, ..., o_K} 内の相対的な advantage（std 正規化なし）
    ```
-   A_i = (R(o_i) - mean(G)) / std(G)
+   A_i = r_i - r̄  (group mean)
    ```
-4. **ポリシー更新**: clipped surrogate objective + KL 正則化
+4. **ポリシー更新**: softmax-weighted policy gradient + KL 正則化（Alpamayo §5.3.2）
    ```
-   L_GRPO = -E[ min(r_t(θ) * A_i, clip(r_t(θ), 1-ε, 1+ε) * A_i) ] + β * KL(π_θ || π_ref)
+   L_GRPO = -Σ softmax(β_grpo * A_i) × (log π_θ(τ_i) - λ_KL * KL(π_θ || π_ref))
    ```
-   ここで `r_t(θ) = π_θ(o|q) / π_old(o|q)` は policy ratio
-
-### Multi-step 更新（Cosmos Reason Mini の知見）
-
-Cosmos Reason Mini での RL 検証で以下の知見が得られている:
-
-- **μ=4（multi-step 更新）**: 同じロールアウトデータに対して μ 回の最適化ステップを実行
-- Policy ratio `r_t(θ)` は **old policy**（ロールアウト生成時のポリシー）に対して計算
-- μ > 1 のとき、ステップを重ねるごとにポリシーが変化するため clipping が有効に機能
-- MCQ+CoT SFT 併用時: 92.5% → 93.3% への改善が確認されている
+   ここで `β_grpo` は softmax temperature、`λ_KL` は KL ペナルティ係数。
+   PPO-style の clipping は使用しない。
 
 ### KL 正則化
 
 - Reference policy: Stage 3 SFT モデルを frozen で保持
 - KL 項により、RL でポリシーが SFT モデルから過度に逸脱することを防ぐ
-- β（KL 係数）でその強度を調整
+- λ_KL（KL 係数）でその強度を調整
 
 ---
 
@@ -102,47 +94,60 @@ Cosmos Reason Mini での RL 検証で以下の知見が得られている:
 
 ### 1. 推論品質 (r_reason)
 
-LRM（大規模推論モデル）による 0-5 スケールの採点。
+LRM（大規模推論モデル）による 0-5 スケールの比較採点（Alpamayo §5.3.2 準拠）。
+
+**入力（3要素）**:
+- **画像**: 運転シーンのカメラ映像（視覚的根拠の検証に使用）
+- **GT CoC**: データセットからの正解推論トレース（比較基準）
+- **PRED CoC**: 現在のポリシーが生成した推論トレース（評価対象）
 
 **評価観点**:
-- **行動一貫性**: 推論が正しい運転行動を記述しているか
-- **因果推論品質**: 因果要因が正しく特定されているか
+- **行動一貫性**: PRED が GT と整合する運転行動を記述しているか
+- **因果推論品質**: CoC の原則に従い、シーンで観察可能な因果要因を正しく特定しているか
 
 **MiniPamayo での実装**:
-- 外部 LLM API（Claude API / GPT-4o）で代替
+- マルチモーダル LLM API（デフォルト: gpt-4o）— Vision API で画像入力に対応
 - **オフライン計算**: API レイテンシのためオンライン計算は非現実的
   1. ロールアウト生成後、全応答をバッチで API に送信
-  2. 採点結果をキャッシュ
+  2. 採点結果をディスクキャッシュ（SHA256 ハッシュキー）
   3. ポリシー更新時にキャッシュから読み出し
 
-**プロンプト例**:
+**プロンプト**（Alpamayo 論文原文準拠）:
 ```
-以下は自動運転シーンに対する推論トレースです。
-0-5 のスケールで評価してください。
+You are an expert evaluator for autonomous driving reasoning traces.
+The reasoning trace describes what the ego vehicle should be doing and
+the reasons and factors that lead to the behavior. Your task is to score
+how well a predicted reasoning trace (PRED) aligns with the ground truth
+(GT) in terms of behavior consistency and causal reasoning.
 
-評価基準:
-- 5: 因果要因が正確に特定され、運転行動と一貫した推論
-- 3: おおよそ妥当だが、因果要因の一部が不正確または欠落
-- 1: 推論が視覚入力と矛盾、または行動と不整合
-- 0: 無関係な推論
+The attached image shows the driving scene from the front camera.
+Use this visual context to verify the reasoning.
 
-[推論トレース]
-{reasoning_trace}
+[Ground Truth Reasoning (GT)]
+{gt_reasoning}
 
-[予測された行動]
-{predicted_action}
+[Predicted Reasoning (PRED)]
+{pred_reasoning}
 
-スコア (0-5):
+Scoring rubric (0-5):
+5 Behavior & causal reasoning fully consistent.
+4 Behavior correct; causal reasoning mostly consistent.
+3 Behavior roughly correct, but incomplete or slightly incorrect reasoning.
+2 Behavior partially incorrect or reasoning largely inconsistent.
+1 Behavior is wrong or contradicts GT.
+0 Completely unrelated or opposite.
+
+Score (0-5):
 ```
 
 ### 2. CoC-Action 一貫性 (r_consistency)
 
 バイナリ報酬。推論トレースの意図と実際の予測軌道が一致しているかを検証する。
 
-**手順**:
+**手順**（Alpamayo §5.3.2: モデルの推論と行動の内部一貫性を評価）:
 1. 予測軌道（離散トークン → 連続制御入力 → waypoint 列）から **meta-action** を抽出
-2. 推論トレースに含まれる Driving Decision（`go_straight`, `turn_left`, `stop` 等）を抽出
-3. 両者を照合:
+2. **モデルが生成した**推論トレースから Driving Decision（`go_straight`, `turn_left`, `stop` 等）をパース
+3. 両者を照合（GT decision ではなく、予測テキスト内の decision を使用）:
    - **一致 → r_consistency = 1**
    - **不一致 → r_consistency = 0**
 
@@ -167,34 +172,36 @@ LRM（大規模推論モデル）による 0-5 スケールの採点。
 
 ### 3. 低レベル軌道品質 (r_traj)
 
-予測軌道の物理的品質を評価する。3 つのサブ報酬の重み付き和。
+予測軌道の物理的品質をペナルティ形式で評価する（Alpamayo §5.3.2 準拠）。
 
-**3a. L2 距離 (r_l2)**:
-- 予測軌道とエキスパート軌道の waypoint 間 L2 距離
-- 正規化して 0-1 に変換: `r_l2 = exp(-alpha * mean_l2_distance)` (alpha=0.5)
-
-**3b. 衝突ペナルティ (r_collision)**:
-- 予測軌道上の各 waypoint と周囲障害物の距離を計算
-- nuScenes annotation（bounding box）を利用
-- 衝突判定: 最近接距離が閾値以下なら衝突
-- `r_collision = 1 - n_collisions / n_waypoints`
-
-**3c. ジャーク抑制 (r_jerk)**:
-- 制御入力列の 2 次差分（ジャーク）を計算
-- 急激な制御変化にペナルティ
-- `r_jerk = exp(-gamma * mean_jerk)` (gamma=2.0)
-
-**合成報酬**:
 ```
-r_traj = w_l2 * r_l2 + w_col * r_collision + w_jerk * r_jerk
+r_traj = -(λ_L2 · ||x_pred - x_expert||²_2 + λ_coll · I[collision] + λ_jerk · J(x_pred))
 ```
+
+**3a. L2 距離ペナルティ**:
+- 予測軌道とエキスパート軌道の全 waypoint 間 L2 距離の二乗和
+- `λ_L2 = 1.0`（デフォルト）
+
+**3b. 衝突ペナルティ（バイナリ指示関数）**:
+- 予測軌道上のいずれかの waypoint が障害物と衝突するか判定
+- nuScenes annotation（bounding box）+ ego 車両マージンで inflated OBB 判定
+- **バイナリ**: 1 つでも衝突があれば `I[collision] = 1`、なければ `0`
+- `λ_coll = 5.0`（デフォルト）
+
+**3c. ジャーク抑制ペナルティ**:
+- 加速度列の 1 次差分の絶対値和: `J(x_pred) = Σ|a_{i+1} - a_i|`
+- `λ_jerk = 0.1`（デフォルト）
+
+> 注: r_traj は負のペナルティ値。値が 0 に近いほど高品質な軌道。
 
 ### 合成報酬
 
 3 要素を重み付き和で合成:
 ```
-R(o_i) = w_reason * r_reason + w_consistency * r_consistency + w_traj * r_traj
+R(o_i) = w_reason * (r_reason / 5) + w_consistency * r_consistency + w_traj * r_traj
 ```
+
+r_reason は 0-5 スケールを [0,1] に正規化。r_traj は負のペナルティ項。
 
 ---
 
@@ -216,36 +223,13 @@ minipamayo/src/minipamayo/
 
 ### 主要クラス / 関数
 
-**`grpo.py`**:
+**`train_stage4.py`**（単一スクリプトに統合）:
 ```python
-class GRPOTrainer:
-    """GRPO によるポリシー最適化。"""
-
-    def __init__(self, policy, ref_policy, reward_fn, config):
-        self.policy = policy          # 学習対象（LLM のみ trainable）
-        self.ref_policy = ref_policy  # SFT モデル（frozen）
-        self.reward_fn = reward_fn
-        self.config = config
-
-    def rollout(self, prompts, K):
-        """各プロンプトに対して K 個の応答をサンプリング。"""
-        ...
-
-    def compute_advantages(self, rewards):
-        """グループ内相対 advantage を計算。"""
-        # A_i = (R(o_i) - mean(G)) / std(G)
-        ...
-
-    def policy_step(self, rollout_data, advantages, mu=4):
-        """Multi-step ポリシー更新（μ 回の最適化ステップ）。"""
-        for step in range(mu):
-            # ratio = pi_theta / pi_old
-            # clipped surrogate + KL penalty
-            ...
-
-    def train_epoch(self):
-        """ロールアウト → 報酬計算 → ポリシー更新のループ。"""
-        ...
+# GRPO の主要処理フロー:
+# 1. ロールアウト: K 個の応答をサンプリング
+# 2. 報酬計算: 3 要素の合成報酬
+# 3. Advantage: A_i = r_i - r̄（グループ平均）
+# 4. ポリシー更新: softmax-weighted policy gradient + KL penalty
 ```
 
 **`rewards.py`**:
@@ -303,10 +287,9 @@ def extract_meta_action(trajectory, velocities, thresholds):
 ### Step 1: GRPO の基本実装
 
 - [ ] ロールアウト生成（temperature sampling で K 個の応答をサンプリング）
-- [ ] グループ内相対 advantage の計算
-- [ ] Clipped surrogate objective の実装
+- [ ] グループ内相対 advantage の計算（`A_i = r_i - r̄`、std 正規化なし）
+- [ ] Softmax-weighted policy gradient の実装
 - [ ] KL 正則化の実装（SFT モデルとの KL divergence）
-- [ ] Multi-step 更新 (μ=4) の実装
 - [ ] 単体テスト: ダミー報酬で advantage 計算が正しいことを確認
 
 ### Step 2: 報酬関数の実装
@@ -340,10 +323,9 @@ def extract_meta_action(trajectory, velocities, thresholds):
 
 ### Step 6: Cosmos Reason Mini での知見活用
 
-- [ ] Multi-step 更新 (μ=4) の実装と検証
-- [ ] Policy ratio は old policy に対して計算（μ > 1 で clipping が有効に機能することを確認）
 - [ ] Train/eval データ分割でリーク防止
 - [ ] reward hacking の監視（報酬が上がるが実際の品質が低下していないか）
+- [ ] KL ダイバージェンスの推移を監視
 
 ---
 
@@ -374,18 +356,17 @@ def extract_meta_action(trajectory, velocities, thresholds):
 | パラメータ | 値 | 備考 |
 |---|---|---|
 | K（ロールアウト数） | 4〜8 | VRAM 制約。逐次生成のため VRAM は K に比例しない |
-| μ（multi-step 更新） | 4 | Cosmos Reason Mini での知見 |
-| ε（clipping 係数） | 0.2 | GRPO 標準値 |
-| β（KL 係数） | 0.01〜0.1 | チューニング対象。小さすぎると SFT から逸脱、大きすぎると学習が進まない |
+| β_grpo（softmax temperature） | 0.1 | softmax(β·A) の温度パラメータ |
+| λ_KL（KL ペナルティ係数） | 0.05 | SFT モデルからの逸脱を制御 |
 | 学習率 | 1e-6〜5e-6 | RL では SFT より小さい学習率を使う |
 | Temperature（サンプリング） | 0.7〜1.0 | ロールアウト生成時 |
 | w_reason（推論品質の重み） | 0.4 | チューニング対象 |
 | w_consistency（一貫性の重み） | 0.3 | チューニング対象 |
 | w_traj（軌道品質の重み） | 0.3 | チューニング対象 |
-| w_l2 / w_col / w_jerk | 0.5 / 0.3 / 0.2 | r_traj 内のサブ重み |
-| alpha（L2 報酬スケーリング） | 0.5 | r_l2 = exp(-alpha * mean_l2) |
-| gamma（ジャーク報酬スケーリング） | 2.0 | r_jerk = exp(-gamma * mean_jerk) |
-| r_reason モデル | gpt-4o-mini | 外部 LLM API（--reason_model で変更可） |
+| λ_L2（L2 距離ペナルティ） | 1.0 | r_traj 内の L2 ペナルティ係数 |
+| λ_coll（衝突ペナルティ） | 5.0 | r_traj 内のバイナリ衝突ペナルティ係数 |
+| λ_jerk（ジャークペナルティ） | 0.1 | r_traj 内のジャークペナルティ係数 |
+| r_reason モデル | gpt-4o | マルチモーダル LLM API（--reason_model で変更可） |
 | Batch size | 1〜2 | VRAM 制約 |
 | Gradient accumulation | 8〜16 | 実効バッチサイズを確保 |
 | Max sequence length | 2048 | CoC 推論 + 離散軌道トークンを含む |
@@ -437,31 +418,35 @@ for epoch in range(n_epochs):
             r_reason = reason_reward.compute(output)       # オフライン（事前計算済み）
             r_consistency = consistency_reward.compute(output)
             r_traj = trajectory_reward.compute(output, batch.expert_traj)
-            R = w_reason * r_reason + w_consistency * r_consistency + w_traj * r_traj
+            R = w_reason * (r_reason / 5) + w_consistency * r_consistency + w_traj * r_traj
             rewards.append(R)
 
-        # 3. Advantage 計算
+        # 3. Advantage 計算（std 正規化なし）
         rewards = torch.tensor(rewards)
-        advantages = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
+        advantages = rewards - rewards.mean()  # A_i = r_i - r̄
 
-        # 4. Multi-step ポリシー更新
-        old_log_probs = compute_log_probs(policy, rollouts)  # ロールアウト時のログ確率
-        for mu_step in range(mu):
-            new_log_probs = compute_log_probs(policy, rollouts)
-            ratio = (new_log_probs - old_log_probs).exp()
+        # 4. Softmax-weighted ポリシー更新（単一ステップ）
+        softmax_weights = torch.softmax(beta_grpo * advantages, dim=0)
 
-            # Clipped surrogate
-            surr1 = ratio * advantages
-            surr2 = torch.clamp(ratio, 1 - eps, 1 + eps) * advantages
-            policy_loss = -torch.min(surr1, surr2).mean()
+        total_loss = 0.0
+        for k, output in enumerate(rollouts):
+            # 現在のポリシーでのログ確率
+            new_log_prob = compute_log_prob(policy, output)
 
-            # KL penalty
-            kl = compute_kl(policy, ref_policy, rollouts)
-            loss = policy_loss + beta * kl
+            # Reference policy でのログ確率
+            with torch.no_grad():
+                ref_log_prob = compute_log_prob(ref_policy, output)
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            # KL ペナルティ
+            kl = (new_log_prob - ref_log_prob).mean()
+
+            # Softmax-weighted GRPO loss
+            total_loss -= softmax_weights[k] * (new_log_prob.sum() - lambda_kl * kl)
+
+        optimizer.zero_grad()
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(policy.llm.parameters(), 1.0)
+        optimizer.step()
 ```
 
 ---

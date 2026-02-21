@@ -269,7 +269,7 @@ speed to follow safely.
 <action_0> <action_1> ... <action_127><|im_end|>
 ```
 
-**Loss 計算**: assistant の出力部分全体（推論テキスト + 離散アクショントークン）に cross-entropy loss を適用。Joint next-token prediction で推論と行動を同時に学習する。
+**Loss 計算**: assistant の出力部分全体（推論テキスト + 離散アクショントークン）に cross-entropy loss を適用。Joint next-token prediction で推論と行動を同時に学習する。推論トークンとアクショントークンの loss 重みは**均一（1:1）**とする（Alpamayo 論文 §5.2 準拠）。
 
 ---
 

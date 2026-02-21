@@ -9,9 +9,11 @@ Composite reward:
   R = w_reason * r_reason/5 + w_consistency * r_consistency + w_traj * r_traj
 """
 
+import base64
 import hashlib
 import json
 import math
+import re
 from pathlib import Path
 
 import torch
@@ -23,24 +25,33 @@ from .models.dynamics import forward_dynamics_batch
 EGO_HALF_WIDTH = 1.0  # meters
 EGO_HALF_LENGTH = 2.25  # meters
 
-# --- r_reason prompt template (from stage4-rl.md) ---
+# --- r_reason prompt template (Alpamayo §5.3.2 aligned) ---
+# LRM critic receives: image + GT CoC + PRED CoC, scores PRED vs GT.
 REASON_REWARD_PROMPT = """\
-以下は自動運転シーンに対する推論トレースです。
-0-5 のスケールで評価してください。
+You are an expert evaluator for autonomous driving reasoning traces. \
+The reasoning trace describes what the ego vehicle should be doing and \
+the reasons and factors that lead to the behavior. Your task is to score \
+how well a predicted reasoning trace (PRED) aligns with the ground truth \
+(GT) in terms of behavior consistency and causal reasoning.
 
-評価基準:
-- 5: 因果要因が正確に特定され、運転行動と一貫した推論
-- 3: おおよそ妥当だが、因果要因の一部が不正確または欠落
-- 1: 推論が視覚入力と矛盾、または行動と不整合
-- 0: 無関係な推論
+The attached image shows the driving scene from the front camera. \
+Use this visual context to verify the reasoning.
 
-[推論トレース]
-{reasoning_trace}
+[Ground Truth Reasoning (GT)]
+{gt_reasoning}
 
-[予測された行動]
-{predicted_action}
+[Predicted Reasoning (PRED)]
+{pred_reasoning}
 
-スコア (0-5):"""
+Scoring rubric (0-5):
+5 Behavior & causal reasoning fully consistent.
+4 Behavior correct; causal reasoning mostly consistent.
+3 Behavior roughly correct, but incomplete or slightly incorrect reasoning.
+2 Behavior partially incorrect or reasoning largely inconsistent.
+1 Behavior is wrong or contradicts GT.
+0 Completely unrelated or opposite.
+
+Respond with ONLY a single integer (0-5). No explanation."""
 
 
 # ============================================================
@@ -48,22 +59,40 @@ REASON_REWARD_PROMPT = """\
 # ============================================================
 
 
-class ReasonReward:
-    """Reasoning quality reward via external LLM API (0-5 scale).
+def _encode_image_base64(image_path: str | Path) -> str:
+    """Encode image file to base64 data URL for OpenAI Vision API."""
+    path = Path(image_path)
+    suffix = path.suffix.lower()
+    mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}.get(
+        suffix, "image/jpeg"
+    )
+    with open(path, "rb") as f:
+        data = base64.b64encode(f.read()).decode("utf-8")
+    return f"data:{mime};base64,{data}"
 
-    Uses OpenAI API to score reasoning traces. Results are cached to disk
-    to avoid redundant API calls across runs.
+
+class ReasonReward:
+    """Reasoning quality reward via multimodal LLM API (0-5 scale).
+
+    Alpamayo §5.3.2 aligned: LRM critic receives image + GT CoC + PRED CoC,
+    scores how well PRED matches GT on behavior alignment and causal reasoning.
+
+    Uses OpenAI Vision API (gpt-4o). Results are cached to disk.
 
     Usage:
-        rr = ReasonReward(cache_dir="data/reason_reward_cache")
-        score = rr.compute("reasoning text...", "predicted action text...")
+        rr = ReasonReward(model="gpt-4o")
+        score = rr.compute(
+            image_path="path/to/image.jpg",
+            gt_reasoning="GT CoC trace...",
+            pred_reasoning="PRED CoC trace...",
+        )
         # Returns float in [0, 5]
     """
 
     def __init__(
         self,
         cache_dir: str | Path = "data/reason_reward_cache",
-        model: str = "gpt-4o-mini",
+        model: str = "gpt-4o",
     ):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -78,54 +107,76 @@ class ReasonReward:
             self._client = OpenAI()
         return self._client
 
-    def _cache_key(self, reasoning_text: str, action_text: str) -> str:
-        content = f"{reasoning_text}||{action_text}"
+    def _cache_key(self, image_path: str, gt_reasoning: str, pred_reasoning: str) -> str:
+        content = f"{image_path}||{gt_reasoning}||{pred_reasoning}"
         return hashlib.sha256(content.encode()).hexdigest()
 
-    def compute(self, reasoning_text: str, action_text: str) -> float:
+    def compute(
+        self,
+        image_path: str | Path,
+        gt_reasoning: str,
+        pred_reasoning: str,
+    ) -> float:
         """Score reasoning quality (0-5 scale).
 
+        Alpamayo §5.3.2: LRM receives image + GT + PRED, scores PRED vs GT
+        on behavior alignment and causal reasoning quality.
+
         Args:
-            reasoning_text: Generated CoC reasoning trace
-            action_text: Predicted driving action description
+            image_path: Path to the driving scene image
+            gt_reasoning: Ground truth CoC reasoning trace
+            pred_reasoning: Model-generated CoC reasoning trace
 
         Returns:
             score: float in [0.0, 5.0]
         """
+        image_path = str(image_path)
+
         # Check cache
-        key = self._cache_key(reasoning_text, action_text)
+        key = self._cache_key(image_path, gt_reasoning, pred_reasoning)
         cache_file = self.cache_dir / f"{key}.json"
         if cache_file.exists():
             with open(cache_file) as f:
                 return json.loads(f.read())["score"]
 
-        # API call
-        prompt = REASON_REWARD_PROMPT.format(
-            reasoning_trace=reasoning_text,
-            predicted_action=action_text,
+        # Build prompt text
+        prompt_text = REASON_REWARD_PROMPT.format(
+            gt_reasoning=gt_reasoning,
+            pred_reasoning=pred_reasoning,
         )
+
+        # Build multimodal message (image + text)
+        image_url = _encode_image_base64(image_path)
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": image_url, "detail": "low"}},
+                    {"type": "text", "text": prompt_text},
+                ],
+            }
+        ]
+
         response = self.client.chat.completions.create(
             model=self.model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             max_tokens=10,
             temperature=0.0,
         )
         text = response.choices[0].message.content.strip()
 
-        # Parse score
-        try:
-            score = float(text.split()[0])
-            score = max(0.0, min(5.0, score))
-        except (ValueError, IndexError):
-            score = 2.5  # fallback
+        # Parse score — extract first number from response
+        match = re.search(r"[0-5](?:\.\d+)?", text)
+        score = max(0.0, min(5.0, float(match.group()))) if match else 2.5
 
         # Cache result
         with open(cache_file, "w") as f:
             json.dump(
                 {
                     "score": score,
-                    "reasoning": reasoning_text[:500],
-                    "action": action_text[:200],
+                    "image_path": image_path,
+                    "gt_reasoning": gt_reasoning[:500],
+                    "pred_reasoning": pred_reasoning[:500],
                 },
                 f,
                 ensure_ascii=False,
@@ -163,26 +214,25 @@ def _point_in_inflated_obb(
     return abs(local_x) <= (half_l + EGO_HALF_LENGTH) and abs(local_y) <= (half_w + EGO_HALF_WIDTH)
 
 
-def collision_reward(
+def has_collision(
     pred_waypoints: torch.Tensor,
     obstacles: list[dict],
-) -> float:
-    """Collision penalty reward.
+) -> bool:
+    """Check if any predicted waypoint collides with obstacles (binary).
 
-    Checks each predicted waypoint against obstacle bounding boxes.
+    Alpamayo §5.3.2: binary collision indicator I[collision(x_pred)].
 
     Args:
         pred_waypoints: (K, 2) predicted ego-centric waypoints
         obstacles: list of dicts with keys: center [x, y], size [w, l], heading
 
     Returns:
-        reward: float in [0, 1]. 1.0 = no collisions, 0.0 = all waypoints collide.
+        True if any waypoint collides with any obstacle.
     """
     if not obstacles:
-        return 1.0
+        return False
 
     K = pred_waypoints.shape[0]
-    n_collisions = 0
 
     for k in range(K):
         px = pred_waypoints[k, 0].item()
@@ -194,10 +244,9 @@ def collision_reward(
             heading = obs["heading"]
 
             if _point_in_inflated_obb(px, py, cx, cy, w / 2, length / 2, heading):
-                n_collisions += 1
-                break  # One collision per waypoint is enough
+                return True
 
-    return 1.0 - n_collisions / K
+    return False
 
 
 # ============================================================
@@ -308,15 +357,15 @@ def trajectory_reward(
     v0: torch.Tensor,
     obstacles: list[dict] | None = None,
     dt: float = 0.5,
-    alpha: float = 0.5,
-    gamma: float = 2.0,
-    w_l2: float = 0.5,
-    w_col: float = 0.3,
-    w_jerk: float = 0.2,
+    lambda_l2: float = 1.0,
+    lambda_coll: float = 5.0,
+    lambda_jerk: float = 0.1,
 ) -> float:
-    """Low-level trajectory quality reward.
+    """Low-level trajectory quality reward (Alpamayo §5.3.2).
 
-    r_traj = w_l2 * r_l2 + w_col * r_collision + w_jerk * r_jerk
+    r_traj = -(λ_L2 · ||x_pred - x_expert||²_2 + λ_coll · I[collision] + λ_jerk · J(x_pred))
+
+    Penalty formulation: negative values indicate worse trajectories.
 
     Args:
         pred_a: (K,) acceleration
@@ -325,42 +374,32 @@ def trajectory_reward(
         v0: scalar initial speed
         obstacles: list of obstacle dicts (None = no collision penalty)
         dt: timestep
-        alpha: L2 reward scaling
-        gamma: jerk penalty scaling
-        w_l2: weight for L2 distance reward
-        w_col: weight for collision penalty reward
-        w_jerk: weight for jerk suppression reward
+        lambda_l2: weight for L2 distance penalty
+        lambda_coll: weight for binary collision penalty
+        lambda_jerk: weight for jerk penalty
 
     Returns:
-        reward: float in [0, 1]
+        reward: float (negative penalty)
     """
     # Forward dynamics to get predicted waypoints
     pred_wp = forward_dynamics_batch(
         pred_a.unsqueeze(0), pred_kappa.unsqueeze(0), v0.unsqueeze(0), dt=dt
     ).squeeze(0)  # (K, 2)
 
-    # L2 reward: r_l2 = exp(-alpha * mean_l2_distance)
-    l2_dist = torch.norm(pred_wp - gt_waypoints, dim=1).mean().item()
-    r_l2 = math.exp(-alpha * l2_dist)
+    # L2 distance penalty: ||x_pred - x_expert||²_2
+    l2_penalty = (pred_wp - gt_waypoints).pow(2).sum().item()
 
-    # Collision reward: r_collision = 1 - n_collisions / n_waypoints
-    r_col = collision_reward(pred_wp, obstacles) if obstacles is not None else 1.0
+    # Binary collision indicator: I[collision(x_pred)]
+    coll_indicator = 1.0 if (obstacles and has_collision(pred_wp, obstacles)) else 0.0
 
-    # Jerk penalty: r_jerk = exp(-gamma * mean_jerk)
-    if pred_a.shape[0] >= 3:
-        a_jerk = torch.diff(pred_a, n=2).abs().mean().item()
-        k_jerk = torch.diff(pred_kappa, n=2).abs().mean().item()
-        jerk = a_jerk + k_jerk * 100  # scale kappa jerk
-        r_jerk = math.exp(-gamma * jerk)
-    else:
-        r_jerk = 1.0
+    # Jerk penalty: J(x_pred) = sum|a_{i+1} - a_i|
+    jerk = torch.diff(pred_a).abs().sum().item() if pred_a.shape[0] >= 2 else 0.0
 
-    # Weighted combination (design: w_l2=0.5, w_col=0.3, w_jerk=0.2)
-    return w_l2 * r_l2 + w_col * r_col + w_jerk * r_jerk
+    return -(lambda_l2 * l2_penalty + lambda_coll * coll_indicator + lambda_jerk * jerk)
 
 
 # ============================================================
-# Composite reward: R = w_reason * r_reason/5 + w_consistency * r_consistency + w_traj * r_traj
+# Composite reward: R = w_reason * r_reason/5 + w_consistency * r_consistency + r_traj
 # ============================================================
 
 
@@ -377,13 +416,12 @@ def composite_reward(
     w_consistency: float = 0.3,
     w_traj: float = 0.3,
 ) -> float:
-    """Composite reward combining all three signals.
+    """Composite reward combining all three signals (Alpamayo §5.3.2).
 
     R = w_reason * (r_reason/5) + w_consistency * r_consistency + w_traj * r_traj
 
-    When r_reason is None, weights are renormalized over the remaining signals:
-      R = (w_consistency / (w_consistency + w_traj)) * r_consistency
-        + (w_traj / (w_consistency + w_traj)) * r_traj
+    r_traj is a negative penalty term from trajectory_reward().
+    When r_reason is None, weights are renormalized over the remaining signals.
 
     Args:
         pred_a: (K,) acceleration
@@ -399,16 +437,14 @@ def composite_reward(
         w_traj: weight for trajectory quality reward
 
     Returns:
-        reward: float in [0, 1]
+        reward: float
     """
     r_c = consistency_reward(pred_a, pred_kappa, v0, decision, dt)
     r_t = trajectory_reward(pred_a, pred_kappa, gt_waypoints, v0, obstacles, dt)
 
     if r_reason is not None:
-        # Normalize r_reason from [0, 5] to [0, 1]
         r_r_normalized = max(0.0, min(1.0, r_reason / 5.0))
         return w_reason * r_r_normalized + w_consistency * r_c + w_traj * r_t
     else:
-        # Renormalize weights when r_reason is unavailable
         w_sum = w_consistency + w_traj
         return (w_consistency / w_sum) * r_c + (w_traj / w_sum) * r_t

@@ -17,12 +17,13 @@ Usage:
 import argparse
 import copy
 import json
+import os
 from pathlib import Path
 
 import torch
 from transformers import AutoTokenizer
 
-from .data.coc_dataset import CoCDataset, build_chat_token_ids
+from .data.coc_dataset import CoCDataset, build_chat_token_ids, format_coc_text
 from .models.discrete_head import DiscreteActionTokenizer
 from .models.minipamayo import MiniPamayo
 from .rewards import ReasonReward, composite_reward
@@ -39,9 +40,8 @@ def parse_args():
     parser.add_argument("--K_traj", type=int, default=64, help="Trajectory waypoints")
     parser.add_argument("--n_bins", type=int, default=256)
     parser.add_argument("--n_rollouts", type=int, default=4, help="Rollouts per sample")
-    parser.add_argument("--mu", type=int, default=4, help="Multi-step updates per rollout")
-    parser.add_argument("--eps", type=float, default=0.2, help="GRPO clipping coefficient")
-    parser.add_argument("--beta", type=float, default=0.05, help="KL coefficient")
+    parser.add_argument("--grpo_beta", type=float, default=0.1, help="GRPO softmax temperature")
+    parser.add_argument("--lambda_kl", type=float, default=0.05, help="KL penalty coefficient")
     parser.add_argument("--lr", type=float, default=5e-6)
     parser.add_argument("--max_epochs", type=int, default=3)
     parser.add_argument("--max_gen_tokens", type=int, default=300)
@@ -51,15 +51,15 @@ def parse_args():
     parser.add_argument("--max_samples", type=int, default=0, help="Limit dataset size (0=all)")
     parser.add_argument("--max_text_len", type=int, default=2048)
     parser.add_argument(
-        "--use_reason_reward",
+        "--no_reason_reward",
         action="store_true",
-        help="Enable r_reason via external LLM API (requires OPENAI_API_KEY)",
+        help="Disable r_reason (skips external LLM API calls)",
     )
     parser.add_argument(
         "--reason_model",
         type=str,
-        default="gpt-4o-mini",
-        help="LLM model for r_reason scoring",
+        default="gpt-4o",
+        help="Multimodal LLM model for r_reason scoring",
     )
     return parser.parse_args()
 
@@ -201,11 +201,25 @@ def parse_decision_from_rollout(token_ids, text_tokenizer, vocab_offset):
     return decision
 
 
+def _load_dotenv():
+    """Load .env file from project root if present."""
+    env_path = Path(__file__).resolve().parents[2] / ".env"
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, _, val = line.partition("=")
+                    val = val.strip().strip("\"'")
+                    os.environ.setdefault(key.strip(), val)
+
+
 def main():
+    _load_dotenv()
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
-    print(f"K_traj={args.K_traj}, n_rollouts={args.n_rollouts}, mu={args.mu}")
+    print(f"K_traj={args.K_traj}, n_rollouts={args.n_rollouts}")
 
     # Tokenizers
     action_tokenizer = DiscreteActionTokenizer(n_bins=args.n_bins)
@@ -263,14 +277,16 @@ def main():
         weight_decay=0.01,
     )
 
-    # ReasonReward (optional, requires OPENAI_API_KEY)
+    # ReasonReward (enabled by default, requires OPENAI_API_KEY)
     reason_reward_fn = None
-    if args.use_reason_reward:
+    if not args.no_reason_reward:
         reason_reward_fn = ReasonReward(
             cache_dir="data/reason_reward_cache",
             model=args.reason_model,
         )
         print(f"r_reason enabled (model={args.reason_model})")
+    else:
+        print("r_reason disabled (--no_reason_reward)")
 
     # Training
     print("\n=== Starting GRPO Training ===")
@@ -293,7 +309,6 @@ def main():
             pixel_values = sample["pixel_values"].unsqueeze(0).to(device)
             v0 = sample["v0"]
             gt_waypoints = sample["gt_waypoints"]
-            gt_decision = gt_annotations[i]["coc"]["driving_decision"]
             obstacles = gt_annotations[i].get("obstacles", [])
 
             # Build prompt embeddings with chat template + egomotion
@@ -324,28 +339,33 @@ def main():
                 pred_a = pred_kv[:, 0]
                 pred_kappa = pred_kv[:, 1]
 
-                # r_reason (optional)
+                # r_reason (optional): Alpamayo §5.3.2 — image + GT CoC + PRED CoC
                 r_reason_score = None
                 if reason_reward_fn is not None:
-                    decision_text = parse_decision_from_rollout(
-                        ro["token_ids"], text_tokenizer, vocab_offset
-                    )
-                    reasoning_text = text_tokenizer.decode(
+                    pred_text = text_tokenizer.decode(
                         [t for t in ro["token_ids"] if t < vocab_offset],
                         skip_special_tokens=True,
                     )
-                    action_text = (
-                        f"longitudinal: {decision_text['longitudinal']}, "
-                        f"lateral: {decision_text['lateral']}"
+                    gt_coc_text = format_coc_text(gt_annotations[i]["coc"])
+                    image_path = gt_annotations[i]["image_path"]
+                    r_reason_score = reason_reward_fn.compute(
+                        image_path=image_path,
+                        gt_reasoning=gt_coc_text,
+                        pred_reasoning=pred_text,
                     )
-                    r_reason_score = reason_reward_fn.compute(reasoning_text, action_text)
+
+                # r_consistency: compare predicted CoC decision vs meta-action
+                # Alpamayo §5.3.2: consistency between model's own reasoning and action
+                pred_decision = parse_decision_from_rollout(
+                    ro["token_ids"], text_tokenizer, vocab_offset
+                )
 
                 r = composite_reward(
                     pred_a,
                     pred_kappa,
                     gt_waypoints,
                     v0,
-                    gt_decision,
+                    pred_decision,
                     obstacles=obstacles,
                     r_reason=r_reason_score,
                 )
@@ -354,70 +374,54 @@ def main():
             rewards_t = torch.tensor(rewards, dtype=torch.float32, device=device)
             epoch_rewards.append(rewards_t.mean().item())
 
-            # 3. Advantage (group relative)
-            if rewards_t.std() > 1e-8:
-                advantages = (rewards_t - rewards_t.mean()) / (rewards_t.std() + 1e-8)
-            else:
-                advantages = torch.zeros_like(rewards_t)
+            # 3. Advantage (group relative, no std normalization — Alpamayo §5.3.2)
+            advantages = rewards_t - rewards_t.mean()  # A_i = r_i - r̄
 
-            # 4. Multi-step policy update
-            for _mu_step in range(args.mu):
-                total_loss = torch.tensor(0.0, device=device, requires_grad=True)
+            # 4. Softmax-weighted GRPO update (single step, no PPO clipping)
+            # L_GRPO = -sum softmax(beta*A_i) * (log pi_theta(tau_i) - lambda_KL * KL)
+            softmax_weights = torch.softmax(args.grpo_beta * advantages, dim=0)
 
-                for k, ro in enumerate(rollouts):
-                    if len(ro["token_ids"]) == 0:
-                        continue
+            total_loss = torch.tensor(0.0, device=device, requires_grad=True)
+            kl_sum = 0.0
 
-                    # New log probs under current policy
-                    new_lp = compute_sequence_log_prob(
-                        policy, prompt_embeds, ro["token_ids"], device
+            for k, ro in enumerate(rollouts):
+                if len(ro["token_ids"]) == 0:
+                    continue
+
+                # Log probs under current policy
+                new_lp = compute_sequence_log_prob(policy, prompt_embeds, ro["token_ids"], device)
+                seq_log_prob = new_lp.sum()
+
+                # KL with reference policy
+                with torch.no_grad():
+                    ref_prompt = build_prompt_embeds(
+                        ref_policy, pixel_values, v0.item(), text_tokenizer, device
                     )
+                    ref_lp = compute_sequence_log_prob(
+                        ref_policy, ref_prompt, ro["token_ids"], device
+                    )
+                kl = (new_lp - ref_lp).mean()
+                kl_sum += kl.item()
 
-                    # Old log probs (from rollout generation)
-                    old_lp = ro["old_log_probs"][: len(new_lp)]
+                # Weighted policy gradient with KL penalty
+                total_loss = total_loss - softmax_weights[k] * (seq_log_prob - args.lambda_kl * kl)
 
-                    # Policy ratio
-                    ratio = (new_lp - old_lp.detach()).exp()
-                    seq_ratio = ratio.mean()
+            optimizer.zero_grad()
+            total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(policy.llm.parameters(), 1.0)
+            optimizer.step()
 
-                    # Clipped surrogate
-                    adv = advantages[k]
-                    surr1 = seq_ratio * adv
-                    surr2 = torch.clamp(seq_ratio, 1 - args.eps, 1 + args.eps) * adv
-                    policy_loss = -torch.min(surr1, surr2)
-
-                    # KL with reference policy
-                    with torch.no_grad():
-                        # Build ref prompt embeds
-                        ref_prompt = build_prompt_embeds(
-                            ref_policy, pixel_values, v0.item(), text_tokenizer, device
-                        )
-                        ref_lp = compute_sequence_log_prob(
-                            ref_policy, ref_prompt, ro["token_ids"], device
-                        )
-                    kl = (new_lp - ref_lp).mean()
-
-                    total_loss = total_loss + policy_loss + args.beta * kl
-
-                total_loss = total_loss / args.n_rollouts
-                optimizer.zero_grad()
-                total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(policy.llm.parameters(), 1.0)
-                optimizer.step()
-
-                epoch_policy_loss.append(total_loss.item())
-                epoch_kl.append(kl.item())
+            epoch_policy_loss.append(total_loss.item())
+            epoch_kl.append(kl_sum / args.n_rollouts)
 
             global_step += 1
 
             if global_step % args.log_every == 0:
                 avg_r = sum(epoch_rewards[-args.log_every :]) / args.log_every
-                avg_pl = sum(epoch_policy_loss[-args.log_every * args.mu :]) / max(
-                    len(epoch_policy_loss[-args.log_every * args.mu :]), 1
+                avg_pl = sum(epoch_policy_loss[-args.log_every :]) / max(
+                    len(epoch_policy_loss[-args.log_every :]), 1
                 )
-                avg_kl = sum(epoch_kl[-args.log_every * args.mu :]) / max(
-                    len(epoch_kl[-args.log_every * args.mu :]), 1
-                )
+                avg_kl = sum(epoch_kl[-args.log_every :]) / max(len(epoch_kl[-args.log_every :]), 1)
                 print(
                     f"[E{epoch + 1}] Step {global_step:3d} | "
                     f"Reward: {avg_r:.4f} | Policy Loss: {avg_pl:.4f} | KL: {avg_kl:.4f}"

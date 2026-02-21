@@ -55,23 +55,24 @@ def parse_args():
 
 @torch.no_grad()
 def extract_conditions(vlm, pixel_values):
-    """Extract LLM hidden states as condition for flow decoder.
+    """Extract LLM hidden state sequence as condition for flow decoder.
+
+    Alpamayo §5.2: Flow decoder conditions on full VLM hidden state sequence
+    (KV-cache) via cross-attention, not mean-pooled vector.
 
     Args:
         vlm: frozen MiniPamayo model
         pixel_values: (B, 3, 224, 224)
 
     Returns:
-        condition: (B, condition_dim) mean-pooled LLM hidden states
+        condition: (B, L, condition_dim) VLM hidden state sequence
     """
     with torch.amp.autocast("cuda", dtype=torch.bfloat16):
         patch_features = vlm.vision_encoder(pixel_values)
         visual_tokens = vlm.adapter(patch_features)
         outputs = vlm.llm(inputs_embeds=visual_tokens, output_hidden_states=True)
-    # Mean pool over sequence length for stable conditioning
-    last_hidden = outputs.hidden_states[-1]  # (B, N_vis, 896)
-    condition = last_hidden.mean(dim=1).float()  # (B, 896)
-    return condition
+    last_hidden = outputs.hidden_states[-1]  # (B, L, 896)
+    return last_hidden.float().detach()  # (B, L, 896) — stop-gradient (Alpamayo §5.1)
 
 
 @torch.no_grad()

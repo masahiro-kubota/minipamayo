@@ -42,34 +42,42 @@ class SinusoidalTimeEmbedding(nn.Module):
 
 
 class FlowTransformerBlock(nn.Module):
-    """Transformer block with AdaLN (Adaptive Layer Norm) for time conditioning."""
+    """Transformer block with AdaLN + cross-attention for KV-cache conditioning."""
 
     def __init__(self, dim: int, num_heads: int, mlp_ratio: int = 4):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim, elementwise_affine=False)
-        self.norm2 = nn.LayerNorm(dim, elementwise_affine=False)
         self.attn = nn.MultiheadAttention(dim, num_heads, batch_first=True)
+        self.norm_cross = nn.LayerNorm(dim, elementwise_affine=False)
+        self.cross_attn = nn.MultiheadAttention(dim, num_heads, batch_first=True)
+        self.norm2 = nn.LayerNorm(dim, elementwise_affine=False)
         self.mlp = nn.Sequential(
             nn.Linear(dim, dim * mlp_ratio),
             nn.GELU(),
             nn.Linear(dim * mlp_ratio, dim),
         )
-        # AdaLN modulation: time -> (scale1, shift1, scale2, shift2)
-        self.adaLN = nn.Linear(dim, dim * 4)
+        # AdaLN modulation: time -> (scale1, shift1, scale_cross, shift_cross, scale2, shift2)
+        self.adaLN = nn.Linear(dim, dim * 6)
 
-    def forward(self, x: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t_emb: torch.Tensor, kv_cache: torch.Tensor) -> torch.Tensor:
         """
         Args:
             x: (B, L, dim)
             t_emb: (B, dim)
+            kv_cache: (B, L_cond, dim) — projected VLM hidden state sequence
         """
         # AdaLN parameters
-        params = self.adaLN(t_emb).unsqueeze(1)  # (B, 1, dim*4)
-        s1, b1, s2, b2 = params.chunk(4, dim=-1)
+        params = self.adaLN(t_emb).unsqueeze(1)  # (B, 1, dim*6)
+        s1, b1, sc, bc, s2, b2 = params.chunk(6, dim=-1)
 
         # Self-attention with AdaLN
         h = self.norm1(x) * (1 + s1) + b1
         h, _ = self.attn(h, h, h)
+        x = x + h
+
+        # Cross-attention with KV-cache (Alpamayo §5.2)
+        h = self.norm_cross(x) * (1 + sc) + bc
+        h, _ = self.cross_attn(h, kv_cache, kv_cache)
         x = x + h
 
         # MLP with AdaLN
@@ -129,25 +137,25 @@ class TrajectoryDecoder(nn.Module):
         Args:
             a_t: (B, action_dim) noisy action at time t
             t: (B,) timestep in [0, 1]
-            condition: (B, condition_dim) LLM hidden state
+            condition: (B, L_cond, condition_dim) VLM hidden state sequence
 
         Returns:
             v_theta: (B, action_dim) predicted velocity
         """
         # Project inputs
         h_action = self.action_proj(a_t).unsqueeze(1)  # (B, 1, hidden)
-        h_cond = self.cond_proj(condition).unsqueeze(1)  # (B, 1, hidden)
+        kv_cache = self.cond_proj(condition)  # (B, L_cond, hidden)
         t_emb = self.time_emb(t)  # (B, hidden)
 
-        # Concatenate action + condition as sequence
-        x = torch.cat([h_cond, h_action], dim=1)  # (B, 2, hidden)
+        # Action tokens as query sequence
+        x = h_action  # (B, 1, hidden)
 
-        # Transformer blocks with time conditioning
+        # Transformer blocks with time conditioning + cross-attention to KV-cache
         for block in self.blocks:
-            x = block(x, t_emb)
+            x = block(x, t_emb, kv_cache)
 
-        # Take action position output
-        x = self.norm_out(x[:, 1, :])  # (B, hidden)
+        # Output projection
+        x = self.norm_out(x[:, 0, :])  # (B, hidden)
         return self.out_proj(x)  # (B, action_dim)
 
 
@@ -155,8 +163,10 @@ def cfm_loss(
     model: TrajectoryDecoder,
     action_gt: torch.Tensor,
     condition: torch.Tensor,
+    beta_a: float = 2.0,
+    beta_b: float = 5.0,
 ) -> torch.Tensor:
-    """Conditional Flow Matching loss.
+    """Conditional Flow Matching loss with shifted beta schedule (Alpamayo §5.2).
 
     Gaussian OT path: a_t = t * a + (1 - t) * epsilon
     Target field: u = a - epsilon
@@ -165,7 +175,9 @@ def cfm_loss(
     Args:
         model: TrajectoryDecoder
         action_gt: (B, action_dim) ground truth action
-        condition: (B, condition_dim) LLM hidden state
+        condition: (B, L_cond, condition_dim) VLM hidden state sequence
+        beta_a: Beta distribution alpha parameter
+        beta_b: Beta distribution beta parameter
 
     Returns:
         loss: scalar
@@ -173,8 +185,8 @@ def cfm_loss(
     B = action_gt.shape[0]
     device = action_gt.device
 
-    # Sample random time and noise
-    t = torch.rand(B, device=device)
+    # Shifted beta distribution for time sampling (Alpamayo §5.2)
+    t = torch.distributions.Beta(beta_a, beta_b).sample((B,)).to(device)
     epsilon = torch.randn_like(action_gt)
 
     # Gaussian OT path
@@ -201,7 +213,7 @@ def cfm_sample(
 
     Args:
         model: TrajectoryDecoder
-        condition: (B, condition_dim) LLM hidden state
+        condition: (B, L_cond, condition_dim) VLM hidden state sequence
         action_dim: dimension of action vector
         n_steps: number of Euler integration steps
 

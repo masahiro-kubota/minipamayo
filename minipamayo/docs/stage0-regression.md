@@ -103,7 +103,8 @@ y_{i+1} = y_i + Δt/2 * (v_i sin θ_i + v_{i+1} sin θ_{i+1})
 v_{i+1} = v_i + Δt * a_i
 ```
 
-- Δt = 0.1s（10Hz）
+- Δt = 0.1s（10Hz）— Alpamayo 論文値
+  - **実装上の注記**: nuScenes keyframe は 2Hz のため、実装では dt=0.5s を使用。将来 10Hz 補間を実装した場合に dt=0.1s に戻す
 - 予測ホライズン: 64 waypoints = 6.4秒
 
 **GT 制御列の逆算手順**:
@@ -116,19 +117,25 @@ v_{i+1} = v_i + Δt * a_i
    - 正則化パラメータ λ で制御入力の滑らかさを調整
 
 ```python
-def inverse_dynamics(positions, headings, velocities, dt=0.1, lambda_reg=1e-3):
-    """(x, y, θ, v) 軌道から (a, κ) 制御列を最小二乗法で逆算する。"""
-    N = len(positions) - 1
-    # 加速度 a: 速度差分
-    a = np.diff(velocities) / dt
-    # 曲率 κ: ヘディング差分 / (v * dt)
-    kappa = np.diff(headings) / (velocities[:-1] * dt + 1e-8)
+def inverse_dynamics_np(positions, headings, dt=0.5, v_threshold=0.1, lambda_reg=1e-2):
+    """(x, y, θ) 軌道から (a, κ) 制御列をTikhonov正則化で逆算する。"""
+    # 速度: 位置の差分
+    speeds = np.linalg.norm(np.diff(positions, axis=0), axis=1) / dt
 
-    # Tikhonov 正則化で平滑化
-    # min ||Ax - b||^2 + λ||Dx||^2
-    # D は差分行列（制御入力の滑らかさを促進）
-    ...
-    return a_smooth, kappa_smooth  # (N,), (N,)
+    # Tikhonov 正則化による加速度推定
+    # 有限差分行列 D で微分を表現し、正則化項で平滑化
+    # a = (D^T D + λI)^{-1} D^T b
+    D = finite_difference_matrix(K, dt)
+    raw_a = D @ speeds
+    a = np.linalg.solve(D.T @ D + lambda_reg * np.eye(K+1), D.T @ raw_a)
+    a = D @ a  # 正則化された加速度
+
+    # 曲率: heading 差分と速度から算出、Tikhonov 正則化で平滑化
+    # L は平滑化行列（隣接差分）
+    raw_kappa = np.diff(headings) / (speeds_clipped * dt)
+    kappa = np.linalg.solve(np.eye(K) + lambda_reg * L.T @ L, raw_kappa)
+
+    return a, kappa  # (K,), (K,)
 ```
 
 ### 前処理パイプライン

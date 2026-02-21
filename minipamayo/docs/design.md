@@ -189,13 +189,13 @@ Alpamayo の「Trajectory Decoder」に相当。VLM の出力を条件として�
 - **サイジング**: ~150M params
   - Alpamayo 10B 版は LLM 7B に対して Trajectory Decoder 2B（約30%）。同比率で LLM 494M の ~30% = **~150M**
   - Stage 2 では VLM は frozen（推論のみ、~1.16 GB）のため、150M の Decoder 学習には ~1.8 GB（150M×12）+ activation ~3 GB = **~6 GB**。VRAM に十分な余裕あり
-- 条件付け:
-  - **Option A（軽量）**: LLM 最終層 hidden states
-  - **Option B（Alpamayo 寄り）**: LLM KV-cache
+- 条件付け: **LLM KV-cache（hidden state シーケンス）→ cross-attention**（Alpamayo §5.1 準拠）
+  - Decoder の各ブロックで、action token を query、VLM hidden state シーケンスを key/value として cross-attention
+  - AdaLN でタイムステップ条件付けを self-attention、cross-attention、MLP に適用
 - Flow network: 小さな Transformer（LLM と同じ attention head 数・次元、ただし hidden/MLP は小さい）
-- 入力: KV-cache + ノイズ付き制御入力 aₜ（拡散タイムステップ t を embedding して加算）
+- 入力: noisy action aₜ + VLM hidden state sequence（stop-gradient）
 - 出力: velocity field vΘ(aₜ, o) の予測 → Euler 積分で連続軌道を生成
-- Loss: **Conditional Flow Matching (CFM) loss** — Gaussian OT path で `aₜ = t·a + (1-t)·ε`, target field `u = a - ε`
+- Loss: **CFM loss** — Gaussian OT path `aₜ = t·a + (1-t)·ε`, target `u = a - ε`, **t ~ Beta(α, β)**（shifted beta distribution、Alpamayo §5.2）
 - Flow steps: 推論時 10（δt = 0.1）
 - **勾配制御**: Trajectory Decoder 学習時、VLM（Vision Encoder + LLM）からの KV-cache / hidden states には **stop-gradient** を適用し、Decoder の勾配が VLM 側に逆伝播しないようにする（Alpamayo 論文 §5.1 と同様）
 
@@ -217,6 +217,7 @@ Alpamayo 論文に倣い、学習 Stage ごとにモジュールの trainable / 
 - **Stage 1**: LLM の語彙に離散アクショントークンを追加し、cross-entropy loss で学習。全モジュール trainable。
 - **Stage 2**: Stage 0/1 で学習済みの Vision Encoder + Adapter + LLM の重みを初期値として使用し、これらには **stop-gradient を適用**。Flow Head のみを学習する。これにより前段で獲得した表現を壊さずに Flow の学習を安定させる。
   - Alpamayo 論文では Action Expert 学習時に VLM の KV-cache に stop-gradient を適用している（§5.1: "we apply a stop-gradient to the KV-cache produced by the VLM to prevent gradients from the expert back-propagating into the VLM weights"）。
+  - MiniPamayo では LLM hidden state sequence（`.detach()`）を Trajectory Decoder の cross-attention に渡す方式で同等の勾配制御を実現。
 - **Stage 3**: CoC 推論データで SFT。推論トークン + 離散軌道トークンの joint 学習。
 - **Stage 4**: RL ポストトレーニング。LLM のみ trainable（他は frozen）。KL 正則化で SFT モデルからの逸脱を防ぐ。
 - **（発展）**: 各 Stage の fine-tune 後、全体を小さい学習率で end-to-end fine-tune することも検討可。
@@ -262,12 +263,14 @@ SFT（§3.8）だけでは以下の問題が残る（Alpamayo 論文 §5.2）:
 
 これを改善するため、RL ポストトレーニングを行う。
 
-#### アルゴリズム: GRPO
+#### アルゴリズム: GRPO（Alpamayo §5.3.2 準拠）
 
 Alpamayo に倣い **GRPO（Group Relative Policy Optimization）** を採用:
 - モデルから K 個のロールアウトをサンプリング
-- グループ内の相対的な advantage で重み付け
+- Advantage: `A_i = r_i - r̄`（グループ平均、std 正規化なし）
+- **Softmax-weighted policy gradient**: `L = -Σ softmax(β·A_i) × (log π_θ(τ_i) - λ_KL · KL)`
 - KL 正則化で SFT モデル（reference policy）からの逸脱を防止
+- PPO-style の clipping や multi-step 更新は使用しない
 
 #### 報酬信号（3要素）
 
@@ -278,10 +281,9 @@ Alpamayo に倣い **GRPO（Group Relative Policy Optimization）** を採用:
 2. **CoC-Action 一貫性 (r_consistency)**: バイナリ報酬
    - 予測軌道から meta-action を抽出し、推論トレースの意図と照合
    - 一致 → 1、不一致 → 0
-3. **低レベル軌道品質 (r_traj)**:
-   - L2 距離: 予測軌道 vs エキスパート軌道
-   - 衝突ペナルティ: 周囲障害物との衝突判定
-   - ジャーク抑制: 急激な制御変化へのペナルティ
+3. **低レベル軌道品質 (r_traj)**（ペナルティ形式、Alpamayo §5.3.2）:
+   - `r_traj = -(λ_L2·||x_pred-x_expert||²_2 + λ_coll·I[collision] + λ_jerk·J(x_pred))`
+   - L2 距離ペナルティ、バイナリ衝突指示関数、ジャーク抑制
 
 #### MiniPamayo での実装方針
 
@@ -430,10 +432,10 @@ Alpamayo 0.5B は **80,000 時間**の内部データで学習している。Min
 | カメラ | マルチカメラ（7台）＋時系列 | **1 台** | 差分 |
 | アクション表現 | 制御ベース (a, κ) | 制御ベース (a, κ) | **同一** |
 | Dual Representation | 離散トークン（学習）+ Flow（推論） | 同一（同じ LLM vocab に離散トークン追加） | **同一** |
-| 条件付け | KV-cache（stop-gradient） | 同一（同じ GQA 構造の KV-cache） | **同一** |
+| 条件付け | KV-cache（stop-gradient） | Hidden state sequence + cross-attention（stop-gradient） | **同思想** |
 | Reasoning | CoC（構造化推論） | CoC（簡略版サブセット） | 同思想 |
 | 学習戦略 | ドメインSFT → Action Injection → SFT → RL | ドメインSFT → 回帰 → 離散 → Flow → SFT → RL | 同思想 |
-| RL ポストトレーニング | GRPO + マルチ報酬 | GRPO + マルチ報酬（同じ LLM に対する RL） | **同一** |
+| RL ポストトレーニング | GRPO（softmax-weighted） + マルチ報酬 | GRPO（softmax-weighted） + マルチ報酬 | **同一** |
 | 勾配制御 | Stage ごとに stop-grad / KL | 同一 | **同一** |
 | ドメイン SFT | Cosmos-Reason パイプラインで実施 | auto-labeling + SFT | 同思想 |
 | データ | 内部データ 80K 時間 | 公開データセット | **差分** |

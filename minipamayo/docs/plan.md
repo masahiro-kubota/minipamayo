@@ -330,9 +330,10 @@ SFT だけでは残る推論品質の問題（データバイアス、推論-行
 
 ### 8.1 GRPO 実装
 
-- [ ] GRPO（Group Relative Policy Optimization）の基本実装
+- [ ] GRPO（Group Relative Policy Optimization）の基本実装（Alpamayo §5.3.2 準拠）
   - K 個のロールアウトサンプリング（K=4〜8、VRAM 制約）
-  - グループ内相対 advantage 計算
+  - Advantage: `A_i = r_i - r̄`（グループ平均、std 正規化なし）
+  - Softmax-weighted policy gradient: `L = -Σ softmax(β·A_i) × (log π_θ(τ_i) - λ_KL·KL)`
   - KL 正則化（SFT モデルを reference policy として保持）
 - [ ] LLM のみ trainable、他は frozen（§3.7）
 
@@ -342,10 +343,9 @@ SFT だけでは残る推論品質の問題（データバイアス、推論-行
   - オフライン計算（API レイテンシのためオンラインは困難）
 - [ ] **CoC-Action 一貫性 (r_consistency)**: バイナリ報酬
   - 予測軌道 → meta-action 抽出 → 推論テキストの意図と照合
-- [ ] **低レベル軌道品質 (r_traj)**:
-  - L2 距離（予測 vs エキスパート軌道）
-  - ジャーク抑制ペナルティ
-  - 衝突ペナルティ（nuScenes の周囲物体情報を利用）
+- [ ] **低レベル軌道品質 (r_traj)**（ペナルティ形式）:
+  - `r_traj = -(λ_L2·||x_pred-x_expert||²_2 + λ_coll·I[collision] + λ_jerk·J(x_pred))`
+  - バイナリ衝突指示関数（nuScenes の周囲物体情報を利用）
 
 ### 8.3 学習
 
@@ -404,7 +404,7 @@ Phase 8 (Stage 4: RL)
 | VRAM 不足 | 学習不可 | micro-batch=1, checkpointing, 解像度縮小 |
 | LLM に視覚トークンが伝わらない | 学習が進まない | ドメイン SFT で Adapter を先に学習、frozen LLM で adapter だけ先に学習 |
 | ドメイン SFT のデータ品質 | 後段の性能上限 | 教師 VLM のプロンプトを改善、生成データのフィルタリング |
-| 制御ベース表現の GT 逆算精度 | 学習ターゲットの品質 | Tikhonov 正則化で平滑化、逆算結果を可視化して確認 |
+| 制御ベース表現の GT 逆算精度 | 学習ターゲットの品質 | Tikhonov 正則化（有限差分行列 + 正則化項）で平滑化、逆算結果を可視化して確認 |
 | 離散トークンの量子化誤差 | 軌道精度の劣化 | ビン数を調整、量子化範囲をデータ分布に合わせる |
 | Flow の学習が不安定 | Stage 2 停滞 | Flow steps を減らす、条件付けを Option A（軽量）に |
 | CoC auto-labeling の品質 | 推論学習の質 | プロンプトを反復改善、VLM の出力をフィルタリング |

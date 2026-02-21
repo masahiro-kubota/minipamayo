@@ -35,7 +35,7 @@ def forward_dynamics_np(
 
     for i in range(K):
         v_new = v + dt * a[i]
-        theta_new = theta + dt * kappa[i] * v
+        theta_new = theta + dt * kappa[i] * v + dt**2 / 2 * kappa[i] * a[i]
         x_new = x + dt / 2 * (v * np.cos(theta) + v_new * np.cos(theta_new))
         y_new = y + dt / 2 * (v * np.sin(theta) + v_new * np.sin(theta_new))
 
@@ -74,7 +74,7 @@ def forward_dynamics_batch(
 
     for i in range(K):
         v_new = v + dt * a[:, i]
-        theta_new = theta + dt * kappa[:, i] * v
+        theta_new = theta + dt * kappa[:, i] * v + dt**2 / 2 * kappa[:, i] * a[:, i]
         x_new = x + dt / 2 * (v * theta.cos() + v_new * theta_new.cos())
         y_new = y + dt / 2 * (v * theta.sin() + v_new * theta_new.sin())
 
@@ -90,17 +90,20 @@ def inverse_dynamics_np(
     headings: np.ndarray,
     dt: float = 0.5,
     v_threshold: float = 0.1,
+    lambda_reg: float = 1e-2,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Inverse dynamics: K+2 ego poses → K (a, κ) control inputs.
 
-    From K+2 consecutive poses, computes K+1 speeds and K+1 heading diffs,
-    then derives K accelerations and K curvatures.
+    Uses Tikhonov regularization (Alpamayo §5.1) for smooth GT extraction:
+      min ||Dx - b||² + λ||x||²
+      → x = (D^T D + λI)^{-1} D^T b
 
     Args:
         positions: (K+2, 2) — consecutive [x, y] positions
         headings: (K+2,) — consecutive yaw angles (rad)
         dt: time step (s)
         v_threshold: min speed for curvature computation (m/s)
+        lambda_reg: Tikhonov regularization strength
 
     Returns:
         a: (K,) acceleration (m/s²)
@@ -117,14 +120,28 @@ def inverse_dynamics_np(
     heading_diffs = np.diff(headings)  # (K+1,)
     heading_diffs = (heading_diffs + np.pi) % (2 * np.pi) - np.pi
 
-    # K accelerations from K+1 speeds
-    a = np.diff(speeds) / dt  # (K,)
+    # Tikhonov-regularized acceleration: min ||a - raw_a||² + λ||L_a @ a||²
+    # raw_a: finite differences of speeds
+    # L_a: first-order difference matrix for smoothness
+    raw_a = np.diff(speeds) / dt  # (K,) — unregularized acceleration
+    L_a = np.zeros((K - 1, K)) if K > 1 else np.zeros((0, K))
+    for i in range(K - 1):
+        L_a[i, i] = -1.0
+        L_a[i, i + 1] = 1.0
+    a = np.linalg.solve(np.eye(K) + lambda_reg * L_a.T @ L_a, raw_a)  # (K,)
 
-    # K curvatures from heading diffs and speeds
-    kappa = np.zeros(K)
+    # Tikhonov-regularized curvature: kappa = dθ/(dt·v), smoothed
+    raw_kappa = np.zeros(K)
     for i in range(K):
         if speeds[i] > v_threshold:
-            kappa[i] = heading_diffs[i] / (dt * speeds[i])
+            raw_kappa[i] = heading_diffs[i] / (dt * speeds[i])
+    # Regularize: min ||x - raw_kappa||² + λ||Δx||²
+    # Smoothing matrix L: first-order difference on kappa
+    L = np.zeros((K - 1, K)) if K > 1 else np.zeros((0, K))
+    for i in range(K - 1):
+        L[i, i] = -1.0
+        L[i, i + 1] = 1.0
+    kappa = np.linalg.solve(np.eye(K) + lambda_reg * L.T @ L, raw_kappa)  # (K,)
 
     return a, kappa
 

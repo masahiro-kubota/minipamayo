@@ -64,7 +64,7 @@ def parse_args():
     parser.add_argument(
         "--action_loss_weight",
         type=float,
-        default=2.0,
+        default=1.0,
         help="Weight multiplier for action token loss (vs reasoning tokens)",
     )
     return parser.parse_args()

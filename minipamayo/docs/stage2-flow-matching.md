@@ -22,7 +22,7 @@ Alpamayo 論文 §5.1 より:
 |---|---|---|---|
 | デコード方式 | Flow Matching（推論時） | 同一 | §3.2.2 |
 | Dual Representation | 学習: 離散トークン / 推論: Flow | 同一 | §5.1 |
-| 条件付け | VLM の KV-cache に stop-gradient | Mean Pool + Linear（GQA は省略） | §5.1 |
+| 条件付け | VLM の KV-cache に stop-gradient | Hidden state sequence + cross-attention（stop-gradient） | §5.1 |
 | Trajectory Decoder 規模 | 2B（10B 版） / 不明（0.5B 版） | ~150M（LLM 494M の ~30%） | §5.1 |
 | Flow の優位性 | 精度・快適性・速度すべてで自己回帰に勝る | 同じ検証を実施 | §6.6 |
 | 離散トークン vs Flow | Flow が minADE6 で 15-20% 改善 | 比較評価を実施 | §6.6 Table 7 |
@@ -91,9 +91,9 @@ Decoder の各 Transformer ブロックへの入力は以下の要素から構�
 ```
 t (スカラー)
   → Sinusoidal Positional Encoding (d_model)
-  → Linear(d_model, d_model)
+  → Linear(d_model, d_model * 4)
   → SiLU
-  → Linear(d_model, d_model)
+  → Linear(d_model * 4, d_model)
   → タイムステップ embedding (d_model)
 ```
 
@@ -103,35 +103,24 @@ t (スカラー)
 
 VLM の内部表現を Trajectory Decoder に渡す方式として 2 つの選択肢がある。
 
-#### Option A（軽量）: LLM 最終層 hidden states → 条件ベクトル
+#### 採用方式: LLM hidden state sequence → cross-attention（Alpamayo §5.1 準拠）
 
 ```
 LLM 最終層出力 (batch, seq_len_llm, 896)
-  → Mean Pooling → (batch, 896)
-  → Linear(896, d_decoder) → (batch, d_decoder)
-  → 条件ベクトルとして AdaLN で注入
-```
-
-- **利点**: 実装が簡単、メモリ効率が良い
-- **欠点**: LLM の詳細なトークンレベル情報が失われる
-
-#### Option B（Alpamayo 寄り）: LLM KV-cache → cross-attention
-
-```
-LLM の全層 KV-cache (num_layers, batch, num_kv_heads, seq_len_llm, head_dim)
-  → 選択した層の KV-cache を取り出し
+  → Linear(896, d_decoder) → (batch, seq_len_llm, d_decoder)
   → Decoder 各ブロックの cross-attention の key/value として使用
+  → Action token を query として cross-attend
 ```
 
-- **利点**: Alpamayo と同一の設計（§5.1）、トークンレベルの条件付けが可能
-- **欠点**: KV-cache のメモリが追加で必要、実装がやや複雑
+- トークンレベルの条件付けが可能（mean pooling による情報損失なし）
+- Alpamayo §5.1 の KV-cache 条件付けと同思想
+- 各 Transformer ブロックは self-attention + cross-attention + MLP の 3 段構成
+- AdaLN で timestep 条件付けを self-attn、cross-attn、MLP に適用（6 パラメータ）
 
 Alpamayo 論文 §5.1:
 > "we apply a stop-gradient to the KV-cache produced by the VLM"
 
-#### 推奨
-
-**Option A で開始し、動作確認後に Option B に移行する**。fail-fast の方針に従い、まず簡易版で全パイプラインを通す。
+MiniPamayo では VLM の hidden state sequence に `.detach()` を適用して同等の stop-gradient を実現。
 
 ---
 
@@ -169,16 +158,16 @@ u(a_t | a) = a - ε
 Trajectory Decoder v_Θ が予測する velocity field と target field の MSE:
 
 ```
-L_CFM = E_{t~U(0,1), ε~N(0,I), a~p_data} [ || v_Θ(a_t, t, c) - (a - ε) ||² ]
+L_CFM = E_{t~Beta(α,β), ε~N(0,I), a~p_data} [ || v_Θ(a_t, t, c) - (a - ε) ||² ]
 ```
 
-ここで c は条件情報（LLM hidden states or KV-cache）。
+ここで c は条件情報（LLM hidden state sequence）。t は shifted beta distribution `Beta(α=2, β=5)` からサンプリング（Alpamayo §5.2 準拠）。一様分布 U(0,1) と比較して、t が小さい領域（ノイズに近い状態）に重点を置くことで学習効率が向上する。
 
 #### 学習手順（1 ステップ）
 
 1. データバッチから GT 制御入力列 a を取得
 2. ノイズ ε ~ N(0, I) をサンプリング
-3. タイムステップ t ~ U(0, 1) をサンプリング
+3. タイムステップ t ~ Beta(α, β) をサンプリング（shifted beta distribution）
 4. 中間状態を計算: a_t = t * a + (1 - t) * ε
 5. VLM を forward して条件情報 c を取得（**stop-gradient**）
 6. Decoder で velocity field を予測: v_Θ(a_t, t, c)
@@ -302,17 +291,17 @@ minipamayo/
 ### Phase 2: Trajectory Decoder Transformer
 
 - [ ] TimestepEmbedding モジュール（sinusoidal + MLP）
-- [ ] FlowTransformerBlock（self-attention + AdaLN）
+- [ ] FlowTransformerBlock（self-attention + cross-attention + MLP + AdaLN×6）
 - [ ] TrajectoryDecoder 統合クラス
 - [ ] パラメータ数の確認: ~150M に収まること
 - [ ] 単体テスト: ランダム入力で forward / backward が通ること
 
 ### Phase 3: 条件付けの実装
 
-- [ ] Option A: LLM hidden states → Mean Pooling → Linear → AdaLN 条件付け
-- [ ] VLM forward（frozen）から hidden states を取得するパイプライン
+- [ ] LLM hidden state sequence → Linear → cross-attention 条件付け（Alpamayo §5.1 準拠）
+- [ ] VLM forward（frozen）から hidden state sequence を取得するパイプライン
 - [ ] `.detach()` による stop-gradient の確認
-- [ ] （後続）Option B: KV-cache → cross-attention 条件付け
+- [ ] cross-attention: action token を query、VLM hidden states を key/value
 
 ### Phase 4: 学習ループ
 
@@ -387,11 +376,12 @@ Alpamayo 論文 §6.6 Table 8 では、Flow が離散トークンよりジャー
 # Stage 2: Flow Matching
 # ─────────────────────────
 
-# Trajectory Decoder
+# Trajectory Decoder（本番設定 ~150M params）
+# fail-fast 設定: hidden=256, layers=4, heads=4 (~3M params)
 decoder_hidden_dim: 512
 decoder_num_layers: 12
 decoder_num_heads: 8
-decoder_num_kv_heads: 2
+# decoder_num_kv_heads: 標準 MHA を使用（GQA は省略、本文 §4.2 参照）
 decoder_intermediate_size: 2048
 decoder_dropout: 0.0
 
@@ -399,10 +389,13 @@ decoder_dropout: 0.0
 flow_steps_train: 1          # 学習時は 1 step（t をランダムサンプリング）
 flow_steps_inference: 10     # 推論時の Euler 積分ステップ数
 noise_schedule: "linear"     # Gaussian OT path（直線補間）
+time_sampling: "shifted_beta" # Beta(alpha=2, beta=5) — Alpamayo §5.2
+beta_a: 2.0                  # Beta distribution alpha parameter
+beta_b: 5.0                  # Beta distribution beta parameter
 
-# 条件付け
-conditioning: "hidden_states"  # "hidden_states" (Option A) or "kv_cache" (Option B)
-conditioning_pool: "mean"      # "mean", "last_token", "cls"
+# 条件付け（Alpamayo §5.1 準拠）
+conditioning: "hidden_states_sequence"  # LLM hidden state sequence → cross-attention
+# mean pooling は使用しない（トークンレベルの情報を保持）
 
 # 学習
 optimizer: AdamW
