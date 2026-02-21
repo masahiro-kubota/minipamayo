@@ -282,6 +282,7 @@ speed to follow safely.
 | **Vision Encoder** | trainable | 推論に必要な視覚特徴の微調整 |
 | **Adapter** | trainable | 推論コンテキストに合わせた適応 |
 | **LLM** | trainable | CoC 推論能力の獲得（本 Stage の主目的） |
+| **Action Head** | frozen | Stage 0 で学習済み。推論 SFT で壊さない |
 | **Flow Head** | frozen | Stage 2 で学習済み。推論 SFT で壊さない |
 
 ```python
@@ -290,6 +291,7 @@ def set_stage3(model):
     model.vision_encoder.requires_grad_(True)
     model.adapter.requires_grad_(True)
     model.llm.requires_grad_(True)
+    model.action_head.requires_grad_(False)
     if hasattr(model, "flow_head"):
         model.flow_head.requires_grad_(False)
 ```

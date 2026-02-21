@@ -74,12 +74,14 @@ value_reconstructed = v_min + (bin_index + 0.5) * (v_max - v_min) / N_bins
 
 ### LLM 語彙への特殊トークン追加
 
-Qwen2.5-0.5B の語彙（vocab_size: 151,646）に離散アクショントークンを追加する。
+Qwen2.5-0.5B の語彙（vocab_size: 151,936）に離散アクショントークンを追加する。
+
+> **注**: Qwen2.5-0.5B の tokenizer config 上の vocab_size は 151,665 だが、embedding は 64 の倍数にパディングされており実際の `embed_tokens.weight` shape は (151,936, 896)。`resize_token_embeddings()` はこの実サイズを基準にするため、vocab_offset = 151,936 を使用する。
 
 | 方式 | トークン数 | 語彙サイズ | 備考 |
 |---|---|---|---|
-| **方式 A: 共有ビン** | N_bins (= 256) | 151,646 + 256 = 151,902 | a と κ で同じビン ID を共有。位置で区別 |
-| 方式 B: 独立ビン | N_bins_a + N_bins_κ (= 512) | 151,646 + 512 = 152,158 | a と κ で別のトークン ID |
+| **方式 A: 共有ビン** | N_bins (= 256) | 151,936 + 256 = 152,192 | a と κ で同じビン ID を共有。位置で区別 |
+| 方式 B: 独立ビン | N_bins_a + N_bins_κ (= 512) | 151,936 + 512 = 152,448 | a と κ で別のトークン ID |
 
 **採用: 方式 A（共有ビン）**。a と κ はシーケンス内の位置（偶数/奇数）で区別でき、トークン数が少ないほど学習が安定する。
 
@@ -143,7 +145,7 @@ class DiscreteActionTokenizer:
         n_bins: int = 256,
         a_range: tuple[float, float] = (-4.0, 4.0),
         kappa_range: tuple[float, float] = (-0.1, 0.1),
-        vocab_offset: int = 151_646,  # Qwen2.5-0.5B の元の語彙サイズ
+        vocab_offset: int = 151_936,  # Qwen2.5-0.5B の語彙サイズ（embedding パディング済み）
     ):
         self.n_bins = n_bins
         self.a_range = a_range
@@ -317,7 +319,7 @@ vision_encoder: facebook/dinov2-base
 llm: Qwen/Qwen2.5-0.5B
 image_size: 224
 n_visual_tokens: 16
-vocab_size_extended: 151902   # 151646 + 256
+vocab_size_extended: 152192   # 151936 + 256
 
 # 勾配制御（設計書 §3.7）
 trainable_vision: true

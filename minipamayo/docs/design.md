@@ -99,7 +99,7 @@ bf16 学習時の固定コストは **N × 12 bytes**（パラメータ 2B + Ada
   - num_layers: 24
   - num_attention_heads: 14
   - num_kv_heads: 2（GQA — KV cache が効率的、RL rollout に有利）
-  - vocab_size: 151,646
+  - vocab_size: 151,936
 - Alpamayo 0.5B と**同一の LLM** — アーキテクチャ再現の忠実度が高い
 - Stage 0: trainable / Stage 2: frozen（§3.7 参照）
 - **必須要件**: KV-cache を取り出せること（Stage 2 Flow の条件付けに使用）

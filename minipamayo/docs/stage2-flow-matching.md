@@ -22,7 +22,7 @@ Alpamayo 論文 §5.1 より:
 |---|---|---|---|
 | デコード方式 | Flow Matching（推論時） | 同一 | §3.2.2 |
 | Dual Representation | 学習: 離散トークン / 推論: Flow | 同一 | §5.1 |
-| 条件付け | VLM の KV-cache に stop-gradient | 同一（GQA 2 KV heads） | §5.1 |
+| 条件付け | VLM の KV-cache に stop-gradient | Mean Pool + Linear（GQA は省略） | §5.1 |
 | Trajectory Decoder 規模 | 2B（10B 版） / 不明（0.5B 版） | ~150M（LLM 494M の ~30%） | §5.1 |
 | Flow の優位性 | 精度・快適性・速度すべてで自己回帰に勝る | 同じ検証を実施 | §6.6 |
 | 離散トークン vs Flow | Flow が minADE6 で 15-20% 改善 | 比較評価を実施 | §6.6 Table 7 |
@@ -65,9 +65,11 @@ Trajectory Decoder は LLM と同系列の Transformer アーキテクチャを�
 | hidden_dim | 896 | 512 | 条件ベクトルの射影先 |
 | num_layers | 24 | 12 | 半分 |
 | num_attention_heads | 14 | 8 | |
-| num_kv_heads | 2 | 2 | GQA を維持 |
+| num_kv_heads | 2 | 8（省略） | MiniPamayo では標準 MHA を使用（下記注参照） |
 | intermediate_size (MLP) | 4,864 | 2,048 | |
 | **推定パラメータ数** | **494M** | **~140-160M** | 目標 ~150M |
+
+> **GQA 省略の根拠**: Alpamayo 10B 版では KV-cache が巨大なため GQA（Grouped Query Attention）が必須だが、MiniPamayo の TrajectoryDecoder（~150M params）は入力シーケンス長=2（condition + action の 2 トークン）であり、KV-cache サイズがほぼ無視できる。128 次元のアクションを 2 トークンで処理するため GQA の恩恵はほぼゼロであり、標準の `nn.MultiheadAttention` で十分である。
 
 #### 入力構成
 

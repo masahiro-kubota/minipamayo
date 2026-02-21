@@ -17,7 +17,7 @@ GRPO（Group Relative Policy Optimization）により、3 要素の報酬信号�
 | 観点 | Alpamayo（§5.3） | MiniPamayo Stage 4 |
 |---|---|---|
 | アルゴリズム | GRPO | **同一** |
-| 報酬: 推論品質 | LRM（DeepSeek-R1, Cosmos-Reason）| 外部 LLM API（Claude API / GPT-4o）|
+| 報酬: 推論品質 | LRM（DeepSeek-R1, Cosmos-Reason）| 外部 LLM API（デフォルト: gpt-4o-mini）|
 | 報酬: CoC-Action 一貫性 | ルールベース（バイナリ）| **同一** |
 | 報酬: 軌道品質 | L2 + 衝突 + ジャーク | **同一** |
 | 勾配制御 | LLM のみ trainable | **同一** |
@@ -171,7 +171,7 @@ LRM（大規模推論モデル）による 0-5 スケールの採点。
 
 **3a. L2 距離 (r_l2)**:
 - 予測軌道とエキスパート軌道の waypoint 間 L2 距離
-- 正規化して 0-1 に変換: `r_l2 = exp(-α * mean_l2_distance)`
+- 正規化して 0-1 に変換: `r_l2 = exp(-alpha * mean_l2_distance)` (alpha=0.5)
 
 **3b. 衝突ペナルティ (r_collision)**:
 - 予測軌道上の各 waypoint と周囲障害物の距離を計算
@@ -182,7 +182,7 @@ LRM（大規模推論モデル）による 0-5 スケールの採点。
 **3c. ジャーク抑制 (r_jerk)**:
 - 制御入力列の 2 次差分（ジャーク）を計算
 - 急激な制御変化にペナルティ
-- `r_jerk = exp(-γ * mean_jerk)`
+- `r_jerk = exp(-gamma * mean_jerk)` (gamma=2.0)
 
 **合成報酬**:
 ```
@@ -383,6 +383,9 @@ def extract_meta_action(trajectory, velocities, thresholds):
 | w_consistency（一貫性の重み） | 0.3 | チューニング対象 |
 | w_traj（軌道品質の重み） | 0.3 | チューニング対象 |
 | w_l2 / w_col / w_jerk | 0.5 / 0.3 / 0.2 | r_traj 内のサブ重み |
+| alpha（L2 報酬スケーリング） | 0.5 | r_l2 = exp(-alpha * mean_l2) |
+| gamma（ジャーク報酬スケーリング） | 2.0 | r_jerk = exp(-gamma * mean_jerk) |
+| r_reason モデル | gpt-4o-mini | 外部 LLM API（--reason_model で変更可） |
 | Batch size | 1〜2 | VRAM 制約 |
 | Gradient accumulation | 8〜16 | 実効バッチサイズを確保 |
 | Max sequence length | 2048 | CoC 推論 + 離散軌道トークンを含む |
