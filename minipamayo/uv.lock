@@ -1026,6 +1026,7 @@ name = "minipamayo"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "matplotlib" },
     { name = "nuscenes-devkit" },
     { name = "openai" },
     { name = "pillow" },
@@ -1038,6 +1039,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "matplotlib", specifier = ">=3.8.0" },
     { name = "nuscenes-devkit", specifier = ">=1.1.11" },
     { name = "openai", specifier = ">=2.21.0" },
     { name = "pillow", specifier = ">=10.0.0" },
