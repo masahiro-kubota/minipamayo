@@ -20,7 +20,7 @@ class DiscreteActionTokenizer:
     def __init__(
         self,
         n_bins: int = 256,
-        a_range: tuple[float, float] = (-4.0, 4.0),
+        a_range: tuple[float, float] = (-6.0, 6.0),
         kappa_range: tuple[float, float] = (-0.1, 0.1),
         vocab_offset: int = 151936,
     ):

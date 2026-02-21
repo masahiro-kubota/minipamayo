@@ -209,7 +209,7 @@ def extract_meta_action(
     pred_a: torch.Tensor,
     pred_kappa: torch.Tensor,
     v0: torch.Tensor,
-    dt: float = 0.1,
+    dt: float = 0.5,
 ) -> dict[str, str]:
     """Extract meta-action from predicted control inputs.
 
@@ -272,7 +272,7 @@ def consistency_reward(
     pred_kappa: torch.Tensor,
     v0: torch.Tensor,
     decision: dict[str, str],
-    dt: float = 0.1,
+    dt: float = 0.5,
 ) -> float:
     """CoC-Action consistency reward (binary).
 
@@ -307,7 +307,7 @@ def trajectory_reward(
     gt_waypoints: torch.Tensor,
     v0: torch.Tensor,
     obstacles: list[dict] | None = None,
-    dt: float = 0.1,
+    dt: float = 0.5,
     alpha: float = 0.5,
     gamma: float = 2.0,
     w_l2: float = 0.5,
@@ -372,7 +372,7 @@ def composite_reward(
     decision: dict[str, str],
     obstacles: list[dict] | None = None,
     r_reason: float | None = None,
-    dt: float = 0.1,
+    dt: float = 0.5,
     w_reason: float = 0.4,
     w_consistency: float = 0.3,
     w_traj: float = 0.3,

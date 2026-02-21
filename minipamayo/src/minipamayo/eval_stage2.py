@@ -177,7 +177,7 @@ def main():
     # Trajectory via forward dynamics
     pred_a = preds_kv[:, :, 0]
     pred_kappa = preds_kv[:, :, 1]
-    pred_wp = forward_dynamics_batch(pred_a, pred_kappa, v0s, dt=0.1)
+    pred_wp = forward_dynamics_batch(pred_a, pred_kappa, v0s, dt=0.5)
 
     disp_errors = torch.norm(pred_wp - gt_wp, dim=2)
     ade = disp_errors.mean().item()
@@ -192,7 +192,7 @@ def main():
     print("\n  Per-timestep ADE:")
     for t in range(K):
         t_ade = disp_errors[:, t].mean().item()
-        print(f"    t={t} ({(t + 1) * 0.1:.1f}s): {t_ade:.4f} m")
+        print(f"    t={t} ({(t + 1) * 0.5:.1f}s): {t_ade:.4f} m")
 
     # Distribution
     print(f"\n{'=' * 70}")
@@ -250,7 +250,7 @@ def main():
             sample_kv = samples.reshape(args.n_samples, K, 2)
             v0_i = v0.expand(args.n_samples)
 
-            pred_wp_i = forward_dynamics_batch(sample_kv[:, :, 0], sample_kv[:, :, 1], v0_i, dt=0.1)
+            pred_wp_i = forward_dynamics_batch(sample_kv[:, :, 0], sample_kv[:, :, 1], v0_i, dt=0.5)
             gt_wp_i = gt_waypoint.expand(args.n_samples, -1, -1)
             disp_i = torch.norm(pred_wp_i - gt_wp_i, dim=2)
             ade_per_sample = disp_i.mean(dim=1)

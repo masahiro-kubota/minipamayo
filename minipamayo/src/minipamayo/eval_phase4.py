@@ -119,7 +119,7 @@ def main():
     # Trajectory metrics (ADE/FDE)
     pred_a = preds_kv[:, :, 0]  # (N, K)
     pred_kappa = preds_kv[:, :, 1]  # (N, K)
-    pred_waypoints = forward_dynamics_batch(pred_a, pred_kappa, v0s, dt=0.1)  # (N, K, 2)
+    pred_waypoints = forward_dynamics_batch(pred_a, pred_kappa, v0s, dt=0.5)  # (N, K, 2)
 
     displacement_errors = torch.norm(pred_waypoints - gt_waypoints, dim=2)  # (N, K)
     ade = displacement_errors.mean().item()
@@ -135,7 +135,7 @@ def main():
     print("\n  Per-timestep ADE:")
     for t in range(K):
         t_ade = displacement_errors[:, t].mean().item()
-        print(f"    t={t} ({(t + 1) * 0.1:.1f}s): {t_ade:.4f} m")
+        print(f"    t={t} ({(t + 1) * 0.5:.1f}s): {t_ade:.4f} m")
 
     # Distribution
     print(f"\n{'=' * 70}")

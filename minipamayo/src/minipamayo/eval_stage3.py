@@ -37,9 +37,9 @@ def parse_args():
     return parser.parse_args()
 
 
-def autoregressive_generate(model, visual_embeds, prompt_embeds, max_tokens, device):
+def autoregressive_generate(model, prompt_embeds, max_tokens, device):
     """Generate reasoning + action tokens autoregressively."""
-    input_embeds = torch.cat([visual_embeds, prompt_embeds], dim=1)
+    input_embeds = prompt_embeds.clone()
     generated = []
 
     for _ in range(max_tokens):
@@ -49,8 +49,8 @@ def autoregressive_generate(model, visual_embeds, prompt_embeds, max_tokens, dev
         token_id = logits.argmax(dim=-1)  # (1,)
         generated.append(token_id.item())
 
-        # Check for EOS
-        if token_id.item() == 151643:  # Qwen EOS token
+        # Check for EOS or <|im_end|>
+        if token_id.item() in (151643, 151645):
             break
 
         next_embed = model.llm.get_input_embeddings()(token_id.unsqueeze(0))
@@ -130,18 +130,18 @@ def main():
     decision_correct = {"longitudinal": 0, "lateral": 0}
     decision_total = 0
     sample_outputs = []
-
-    prompt_text = "Analyze the driving scene and predict actions.\n"
-    prompt_ids = text_tokenizer.encode(prompt_text, add_special_tokens=False)
-    prompt_ids_t = torch.tensor(prompt_ids, dtype=torch.long, device=device)
     vocab_offset = action_tokenizer.vocab_offset
 
     with torch.no_grad():
         for i, batch in enumerate(loader):
             pixel_values = batch["pixel_values"].to(device)
-            prompt_ids_b = batch["prompt_ids"].squeeze(0).to(device)
+            system_ids = batch["system_ids"].squeeze(0).to(device)
+            user_prefix_ids = batch["user_prefix_ids"].squeeze(0).to(device)
+            ego_question_ids = batch["ego_question_ids"].squeeze(0).to(device)
+            asst_prefix_ids = batch["asst_prefix_ids"].squeeze(0).to(device)
             reasoning_ids = batch["reasoning_ids"].squeeze(0).to(device)
             action_ids = batch["action_ids"].squeeze(0).to(device)
+            eos_ids = batch["eos_ids"].squeeze(0).to(device)
 
             # Visual embeddings
             with torch.amp.autocast("cuda", dtype=torch.bfloat16):
@@ -150,31 +150,51 @@ def main():
 
             embed_layer = model.llm.get_input_embeddings()
 
-            # Teacher-forced loss
-            prompt_embeds = embed_layer(prompt_ids_b.unsqueeze(0))
+            # Text embeddings for each segment
+            system_embeds = embed_layer(system_ids.unsqueeze(0))
+            user_prefix_embeds = embed_layer(user_prefix_ids.unsqueeze(0))
+            ego_question_embeds = embed_layer(ego_question_ids.unsqueeze(0))
+            asst_prefix_embeds = embed_layer(asst_prefix_ids.unsqueeze(0))
             reasoning_embeds = embed_layer(reasoning_ids.unsqueeze(0))
             action_embeds = embed_layer(action_ids.unsqueeze(0))
+            eos_embeds = embed_layer(eos_ids.unsqueeze(0))
 
+            target_dtype = system_embeds.dtype
+
+            # Teacher-forced: full sequence
             inputs_embeds = torch.cat(
                 [
-                    visual_embeds.to(prompt_embeds.dtype),
-                    prompt_embeds,
+                    system_embeds,
+                    user_prefix_embeds,
+                    visual_embeds.to(target_dtype),
+                    ego_question_embeds,
+                    asst_prefix_embeds,
                     reasoning_embeds,
                     action_embeds,
+                    eos_embeds,
                 ],
                 dim=1,
             )
 
-            n_vis = visual_embeds.shape[1]
-            n_prompt = prompt_ids_b.shape[0]
+            n_prefix = (
+                system_ids.shape[0]
+                + user_prefix_ids.shape[0]
+                + visual_embeds.shape[1]
+                + ego_question_ids.shape[0]
+                + asst_prefix_ids.shape[0]
+            )
             n_reasoning = reasoning_ids.shape[0]
             n_action = action_ids.shape[0]
-            total_len = n_vis + n_prompt + n_reasoning + n_action
+            n_eos = eos_ids.shape[0]
+            total_len = inputs_embeds.shape[1]
 
             labels = torch.full((1, total_len), -100, dtype=torch.long, device=device)
-            offset = n_vis + n_prompt
+            offset = n_prefix
             labels[0, offset : offset + n_reasoning] = reasoning_ids
-            labels[0, offset + n_reasoning :] = action_ids
+            offset += n_reasoning
+            labels[0, offset : offset + n_action] = action_ids
+            offset += n_action
+            labels[0, offset : offset + n_eos] = eos_ids
 
             with torch.amp.autocast("cuda", dtype=torch.bfloat16):
                 outputs = model.llm(inputs_embeds=inputs_embeds, labels=labels)
@@ -189,12 +209,19 @@ def main():
                 total_tf_correct += (preds == targets).sum().item()
                 total_tf_tokens += mask.sum().item()
 
-            # Autoregressive generation
-            prompt_embeds_ar = embed_layer(prompt_ids_t.unsqueeze(0))
-            max_gen = n_reasoning + n_action + 20  # allow some extra
-            ar_tokens = autoregressive_generate(
-                model, visual_embeds, prompt_embeds_ar.to(visual_embeds.dtype), max_gen, device
+            # Autoregressive generation (prompt = up to asst_prefix)
+            prompt_embeds_ar = torch.cat(
+                [
+                    system_embeds,
+                    user_prefix_embeds,
+                    visual_embeds.to(target_dtype),
+                    ego_question_embeds,
+                    asst_prefix_embeds,
+                ],
+                dim=1,
             )
+            max_gen = n_reasoning + n_action + 20
+            ar_tokens = autoregressive_generate(model, prompt_embeds_ar, max_gen, device)
 
             # Extract action tokens from AR output
             ar_action_ids = [t for t in ar_tokens if vocab_offset <= t < vocab_offset + args.n_bins]
@@ -273,7 +300,7 @@ def main():
     a_mae = (ar_kv[:, :, 0] - gt_kv[:, :, 0]).abs().mean().item()
     kappa_mae = (ar_kv[:, :, 1] - gt_kv[:, :, 1]).abs().mean().item()
 
-    pred_wp = forward_dynamics_batch(ar_kv[:, :, 0], ar_kv[:, :, 1], v0s, dt=0.1)
+    pred_wp = forward_dynamics_batch(ar_kv[:, :, 0], ar_kv[:, :, 1], v0s, dt=0.5)
     disp_errors = torch.norm(pred_wp - gt_wp, dim=2)
     ade = disp_errors.mean().item()
     fde = disp_errors[:, -1].mean().item()

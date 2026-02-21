@@ -49,22 +49,28 @@ def parse_args():
         default="checkpoints/phase4/best.pt",
         help="Fallback Phase 4 checkpoint",
     )
-    parser.add_argument("--K", type=int, default=64)
+    parser.add_argument("--K", type=int, default=6)
     parser.add_argument("--n_bins", type=int, default=256)
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--ve_lr", type=float, default=1e-5, help="Vision Encoder LR (0.5x main)")
     parser.add_argument("--weight_decay", type=float, default=0.1)
     parser.add_argument("--grad_accum", type=int, default=64)
-    parser.add_argument("--max_epochs", type=int, default=3)
+    parser.add_argument("--max_epochs", type=int, default=20)
     parser.add_argument("--max_grad_norm", type=float, default=1.0)
     parser.add_argument("--log_every", type=int, default=1)
     parser.add_argument("--save_dir", type=str, default="checkpoints/stage3")
     parser.add_argument("--val_ratio", type=float, default=0.2)
     parser.add_argument("--max_text_len", type=int, default=2048)
+    parser.add_argument(
+        "--action_loss_weight",
+        type=float,
+        default=2.0,
+        help="Weight multiplier for action token loss (vs reasoning tokens)",
+    )
     return parser.parse_args()
 
 
-def build_sequence(model, pixel_values, batch, device):
+def build_sequence(model, pixel_values, batch, device, action_loss_weight=1.0):
     """Build the full training sequence with Qwen chat template.
 
     Chat format:
@@ -77,6 +83,7 @@ def build_sequence(model, pixel_values, batch, device):
     Returns:
         inputs_embeds: (1, total_len, hidden_dim)
         labels: (1, total_len)
+        loss_weights: (1, total_len) — per-token loss weights
     """
     system_ids = batch["system_ids"].squeeze(0).to(device)
     user_prefix_ids = batch["user_prefix_ids"].squeeze(0).to(device)
@@ -139,7 +146,12 @@ def build_sequence(model, pixel_values, batch, device):
     offset += n_action
     labels[0, offset : offset + n_eos] = eos_ids
 
-    return inputs_embeds, labels
+    # Per-token loss weights: 1.0 for reasoning/eos, action_loss_weight for action tokens
+    loss_weights = torch.ones((1, total_len), dtype=torch.float32, device=device)
+    action_start = n_prefix + n_reasoning
+    loss_weights[0, action_start : action_start + n_action] = action_loss_weight
+
+    return inputs_embeds, labels, loss_weights
 
 
 @torch.no_grad()
@@ -154,7 +166,7 @@ def evaluate(model, dataloader, device):
     for batch in dataloader:
         pixel_values = batch["pixel_values"].to(device)
 
-        inputs_embeds, labels = build_sequence(model, pixel_values, batch, device)
+        inputs_embeds, labels, _loss_weights = build_sequence(model, pixel_values, batch, device)
 
         with torch.amp.autocast("cuda", dtype=torch.bfloat16):
             outputs = model.llm(inputs_embeds=inputs_embeds, labels=labels)
@@ -294,14 +306,36 @@ def main():
         for batch_idx, batch in enumerate(train_loader):
             pixel_values = batch["pixel_values"].to(device)
 
-            inputs_embeds, labels = build_sequence(model, pixel_values, batch, device)
+            inputs_embeds, labels, loss_weights = build_sequence(
+                model,
+                pixel_values,
+                batch,
+                device,
+                action_loss_weight=args.action_loss_weight,
+            )
 
             with torch.amp.autocast("cuda", dtype=torch.bfloat16):
-                outputs = model.llm(inputs_embeds=inputs_embeds, labels=labels)
-                loss = outputs.loss / args.grad_accum
+                outputs = model.llm(inputs_embeds=inputs_embeds)
+                # Weighted CE loss: shift logits and labels
+                logits = outputs.logits[:, :-1, :].contiguous()
+                targets = labels[:, 1:].contiguous()
+                weights = loss_weights[:, 1:].contiguous()
+                mask = targets != -100
+                if mask.any():
+                    ce = torch.nn.functional.cross_entropy(
+                        logits.view(-1, logits.size(-1)),
+                        targets.view(-1),
+                        ignore_index=-100,
+                        reduction="none",
+                    )
+                    ce = ce.view(targets.shape)
+                    weighted_loss = (ce * weights * mask.float()).sum() / mask.float().sum()
+                else:
+                    weighted_loss = torch.tensor(0.0, device=device)
+                loss = weighted_loss / args.grad_accum
 
             loss.backward()
-            epoch_loss += outputs.loss.float().item()
+            epoch_loss += weighted_loss.float().item()
             epoch_samples += 1
 
             if (batch_idx + 1) % args.grad_accum == 0:

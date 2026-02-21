@@ -38,7 +38,7 @@ def parse_args():
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--ref_checkpoint", type=str, default="checkpoints/stage3/best.pt")
     parser.add_argument("--coc_data", type=str, default="data/coc_annotations.jsonl")
-    parser.add_argument("--K", type=int, default=64)
+    parser.add_argument("--K", type=int, default=6)
     parser.add_argument("--n_bins", type=int, default=256)
     parser.add_argument("--max_text_len", type=int, default=2048)
     parser.add_argument("--show_samples", type=int, default=5)
@@ -278,7 +278,7 @@ def main():
 
         ar_kv = actions.reshape(-1, args.K, 2)
 
-        pred_wp = forward_dynamics_batch(ar_kv[:, :, 0], ar_kv[:, :, 1], v0s, dt=0.1)
+        pred_wp = forward_dynamics_batch(ar_kv[:, :, 0], ar_kv[:, :, 1], v0s, dt=0.5)
         disp_errors = torch.norm(pred_wp - gt_wp, dim=2)
         ade = disp_errors.mean().item()
         fde = disp_errors[:, -1].mean().item()
