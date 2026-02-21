@@ -10,7 +10,7 @@ import torch.nn as nn
 from transformers import AutoModelForCausalLM
 
 from .action_head import MLPActionHead
-from .adapter import MeanPoolAdapter, PerTokenAdapter
+from .adapter import CrossAttentionAdapter, MeanPoolAdapter, PerTokenAdapter
 from .vision_encoder import VisionEncoder
 
 
@@ -34,11 +34,16 @@ class MiniPamayo(nn.Module):
             self.adapter = MeanPoolAdapter(vision_dim=self.vision_encoder.hidden_size, llm_dim=896)
         elif adapter_type == "per_token":
             self.adapter = PerTokenAdapter(vision_dim=self.vision_encoder.hidden_size, llm_dim=896)
+        elif adapter_type == "cross_attention":
+            self.adapter = CrossAttentionAdapter(
+                vision_dim=self.vision_encoder.hidden_size, llm_dim=896
+            )
         else:
             raise ValueError(f"Unknown adapter_type: {adapter_type}")
 
         self.llm = AutoModelForCausalLM.from_pretrained(llm_model_name, dtype=torch.bfloat16)
         self.action_head = MLPActionHead(input_dim=896, output_dim=action_dim)
+        self.flow_head: nn.Module | None = None
 
     def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
         """
@@ -71,6 +76,37 @@ class MiniPamayo(nn.Module):
         self.adapter.requires_grad_(True)
         self.llm.requires_grad_(True)
         self.action_head.requires_grad_(True)
+
+    def set_stage1(self):
+        """Stage 1 (Discrete tokens): all modules trainable (same as Stage 0)."""
+        self.set_stage0()
+
+    def set_stage2(self):
+        """Stage 2 (Flow Matching): VLM frozen, only flow_head trainable."""
+        self.vision_encoder.freeze()
+        self.adapter.requires_grad_(False)
+        self.llm.requires_grad_(False)
+        self.action_head.requires_grad_(False)
+        if self.flow_head is not None:
+            self.flow_head.requires_grad_(True)
+
+    def set_stage3(self):
+        """Stage 3 (CoC SFT): VE + Adapter + LLM trainable, Action/Flow Head frozen."""
+        self.vision_encoder.unfreeze()
+        self.adapter.requires_grad_(True)
+        self.llm.requires_grad_(True)
+        self.action_head.requires_grad_(False)
+        if self.flow_head is not None:
+            self.flow_head.requires_grad_(False)
+
+    def set_stage4(self):
+        """Stage 4 (GRPO RL): only LLM trainable."""
+        self.vision_encoder.freeze()
+        self.adapter.requires_grad_(False)
+        self.llm.requires_grad_(True)
+        self.action_head.requires_grad_(False)
+        if self.flow_head is not None:
+            self.flow_head.requires_grad_(False)
 
     def enable_gradient_checkpointing(self):
         """Enable gradient checkpointing for memory efficiency."""
@@ -134,6 +170,8 @@ class MiniPamayo(nn.Module):
             "llm": self.llm,
             "action_head": self.action_head,
         }
+        if self.flow_head is not None:
+            modules["flow_head"] = self.flow_head
         result = {}
         for name, mod in modules.items():
             total, trainable = _count(mod)

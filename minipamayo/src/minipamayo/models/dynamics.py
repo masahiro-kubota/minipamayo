@@ -14,7 +14,7 @@ def forward_dynamics_np(
     a: np.ndarray,
     kappa: np.ndarray,
     v0: float,
-    dt: float = 0.5,
+    dt: float = 0.1,
 ) -> np.ndarray:
     """Forward unicycle dynamics (numpy, single sample).
 
@@ -49,7 +49,7 @@ def forward_dynamics_batch(
     a: torch.Tensor,
     kappa: torch.Tensor,
     v0: torch.Tensor,
-    dt: float = 0.5,
+    dt: float = 0.1,
 ) -> torch.Tensor:
     """Batch forward unicycle dynamics (torch).
 
@@ -88,7 +88,7 @@ def forward_dynamics_batch(
 def inverse_dynamics_np(
     positions: np.ndarray,
     headings: np.ndarray,
-    dt: float = 0.5,
+    dt: float = 0.1,
     v_threshold: float = 0.1,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Inverse dynamics: K+2 ego poses → K (a, κ) control inputs.
