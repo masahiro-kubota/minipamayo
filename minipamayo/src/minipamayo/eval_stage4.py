@@ -12,7 +12,7 @@ Usage:
     cd minipamayo && uv run python -m minipamayo.eval_stage4 \
         --checkpoint checkpoints/stage4/best.pt \
         --ref_checkpoint checkpoints/stage3/best.pt \
-        --coc_data data/coc_annotations.jsonl
+        --coc_data data/coc_annotations_trainval.jsonl
 """
 
 import argparse
@@ -26,9 +26,9 @@ from .models.discrete_head import DiscreteActionTokenizer
 from .models.dynamics import forward_dynamics_batch
 from .models.minipamayo import MiniPamayo
 from .rewards import (
-    collision_reward,
     composite_reward,
     consistency_reward,
+    has_collision,
     trajectory_reward,
 )
 
@@ -37,7 +37,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="MiniPamayo Stage 4 evaluation")
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--ref_checkpoint", type=str, default="checkpoints/stage3/best.pt")
-    parser.add_argument("--coc_data", type=str, default="data/coc_annotations.jsonl")
+    parser.add_argument("--coc_data", type=str, default="data/coc_annotations_trainval.jsonl")
     parser.add_argument("--K", type=int, default=6)
     parser.add_argument("--n_bins", type=int, default=256)
     parser.add_argument("--max_text_len", type=int, default=2048)
@@ -243,7 +243,7 @@ def main():
                 pred_wp = forward_dynamics_batch(
                     pred_a.unsqueeze(0), pred_kappa.unsqueeze(0), v0.unsqueeze(0)
                 ).squeeze(0)
-                r_col = collision_reward(pred_wp, obstacles)
+                r_col = 1.0 if has_collision(pred_wp, obstacles) else 0.0
 
                 all_rewards.append(r_total)
                 all_r_consistency.append(r_c)
@@ -270,7 +270,7 @@ def main():
         mean_r_c = sum(all_r_consistency) / len(all_r_consistency)
         mean_r_t = sum(all_r_traj) / len(all_r_traj)
         mean_r_col = sum(all_r_collision) / len(all_r_collision)
-        collision_rate = 1.0 - mean_r_col  # fraction of waypoints with collisions
+        collision_rate = mean_r_col  # fraction of samples with collisions
 
         actions = torch.stack(all_actions)
         v0s = torch.stack(all_v0)

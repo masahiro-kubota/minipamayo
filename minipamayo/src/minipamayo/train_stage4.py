@@ -11,13 +11,14 @@ Uses Qwen chat template matching Stage 3:
 Usage:
     cd minipamayo && uv run python -m minipamayo.train_stage4 \
         --stage3_checkpoint checkpoints/stage3/best.pt \
-        --coc_data data/coc_annotations.jsonl
+        --coc_data data/coc_annotations_trainval.jsonl
 """
 
 import argparse
 import copy
 import json
 import os
+import time
 from pathlib import Path
 
 import torch
@@ -31,7 +32,9 @@ from .rewards import ReasonReward, composite_reward
 
 def parse_args():
     parser = argparse.ArgumentParser(description="MiniPamayo Stage 4 GRPO")
-    parser.add_argument("--coc_data", type=str, default="data/coc_annotations.jsonl")
+    parser.add_argument("--coc_data", type=str, default="data/coc_annotations_trainval.jsonl")
+    parser.add_argument("--nuscenes_root", type=str, default="/mnt/ssd/nuscenes")
+    parser.add_argument("--nuscenes_version", type=str, default="v1.0-trainval")
     parser.add_argument(
         "--stage3_checkpoint",
         type=str,
@@ -40,10 +43,11 @@ def parse_args():
     parser.add_argument("--K_traj", type=int, default=64, help="Trajectory waypoints")
     parser.add_argument("--n_bins", type=int, default=256)
     parser.add_argument("--n_rollouts", type=int, default=4, help="Rollouts per sample")
-    parser.add_argument("--grpo_beta", type=float, default=0.1, help="GRPO softmax temperature")
-    parser.add_argument("--lambda_kl", type=float, default=0.05, help="KL penalty coefficient")
-    parser.add_argument("--lr", type=float, default=5e-6)
+    parser.add_argument("--grpo_beta", type=float, default=0.5, help="GRPO softmax temperature")
+    parser.add_argument("--lambda_kl", type=float, default=0.1, help="KL penalty coefficient")
+    parser.add_argument("--lr", type=float, default=3e-6)
     parser.add_argument("--max_epochs", type=int, default=3)
+    parser.add_argument("--grad_accum", type=int, default=8, help="Gradient accumulation steps")
     parser.add_argument("--max_gen_tokens", type=int, default=300)
     parser.add_argument("--temperature", type=float, default=0.8)
     parser.add_argument("--log_every", type=int, default=5)
@@ -58,9 +62,11 @@ def parse_args():
     parser.add_argument(
         "--reason_model",
         type=str,
-        default="gpt-4o",
+        default="gpt-4o-mini",
         help="Multimodal LLM model for r_reason scoring",
     )
+    parser.add_argument("--use_wandb", action="store_true")
+    parser.add_argument("--wandb_project", type=str, default="minipamayo")
     return parser.parse_args()
 
 
@@ -215,6 +221,7 @@ def _load_dotenv():
 
 
 def main():
+    t_start = time.time()
     _load_dotenv()
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -226,12 +233,30 @@ def main():
     text_tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B")
     vocab_offset = action_tokenizer.vocab_offset
 
-    # Load GT annotations
+    # Scene-level split: filter CoC data to train scenes only
+    use_split = args.nuscenes_version == "v1.0-trainval"
+    train_paths = None
+    if use_split:
+        from .data.nuscenes_trajectory_dataset import NuScenesTrajectoryDataset
+
+        train_traj = NuScenesTrajectoryDataset(
+            nuscenes_root=args.nuscenes_root,
+            version=args.nuscenes_version,
+            K=args.K_traj,
+            split="train",
+        )
+        train_paths = {s["image_path"] for s in train_traj.samples}
+        del train_traj
+
+    # Load GT annotations (filtered by scene split)
     gt_annotations = []
     with open(args.coc_data) as f:
         for line in f:
-            gt_annotations.append(json.loads(line))
-    print(f"Loaded {len(gt_annotations)} annotations")
+            rec = json.loads(line)
+            if train_paths is not None and rec["image_path"] not in train_paths:
+                continue
+            gt_annotations.append(rec)
+    print(f"Loaded {len(gt_annotations)} annotations (train split)")
 
     # Dataset (for visual inputs)
     dataset = CoCDataset(
@@ -240,6 +265,7 @@ def main():
         action_tokenizer=action_tokenizer,
         K=args.K_traj,
         max_text_len=args.max_text_len,
+        allowed_image_paths=train_paths,
     )
 
     # Policy model (Stage 3 checkpoint)
@@ -288,6 +314,11 @@ def main():
     else:
         print("r_reason disabled (--no_reason_reward)")
 
+    if args.use_wandb:
+        import wandb
+
+        wandb.init(project=args.wandb_project, name="stage4-grpo", config=vars(args))
+
     # Training
     print("\n=== Starting GRPO Training ===")
     save_dir = Path(args.save_dir)
@@ -298,12 +329,19 @@ def main():
     all_rewards_log = []
 
     for epoch in range(args.max_epochs):
+        t_epoch = time.time()
         policy.train()
         epoch_rewards = []
         epoch_policy_loss = []
         epoch_kl = []
 
         n_samples = min(len(dataset), args.max_samples) if args.max_samples > 0 else len(dataset)
+        total_opt_steps = n_samples // args.grad_accum
+        print(
+            f"Epoch {epoch + 1}: {n_samples} samples, {total_opt_steps} opt steps (grad_accum={args.grad_accum})"
+        )
+        optimizer.zero_grad()
+        t_sample_start = time.time()
         for i in range(n_samples):
             sample = dataset[i]
             pixel_values = sample["pixel_values"].unsqueeze(0).to(device)
@@ -374,6 +412,19 @@ def main():
             rewards_t = torch.tensor(rewards, dtype=torch.float32, device=device)
             epoch_rewards.append(rewards_t.mean().item())
 
+            # Per-sample progress log with ETA
+            elapsed = time.time() - t_sample_start
+            samples_done = i + 1
+            sec_per_sample = elapsed / samples_done
+            eta = sec_per_sample * (n_samples - samples_done)
+            gen_lens = [len(ro["token_ids"]) for ro in rollouts]
+            print(
+                f"  [{samples_done}/{n_samples}] "
+                f"R={rewards_t.mean().item():.2f} "
+                f"gen_len={sum(gen_lens) / len(gen_lens):.0f} "
+                f"({sec_per_sample:.1f}s/sample, ETA {eta / 60:.0f}min)"
+            )
+
             # 3. Advantage (group relative, no std normalization — Alpamayo §5.3.2)
             advantages = rewards_t - rewards_t.mean()  # A_i = r_i - r̄
 
@@ -388,9 +439,9 @@ def main():
                 if len(ro["token_ids"]) == 0:
                     continue
 
-                # Log probs under current policy
+                # Log probs under current policy (per-token average for scale consistency with KL)
                 new_lp = compute_sequence_log_prob(policy, prompt_embeds, ro["token_ids"], device)
-                seq_log_prob = new_lp.sum()
+                seq_log_prob = new_lp.mean()
 
                 # KL with reference policy
                 with torch.no_grad():
@@ -406,26 +457,38 @@ def main():
                 # Weighted policy gradient with KL penalty
                 total_loss = total_loss - softmax_weights[k] * (seq_log_prob - args.lambda_kl * kl)
 
-            optimizer.zero_grad()
-            total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(policy.llm.parameters(), 1.0)
-            optimizer.step()
+            (total_loss / args.grad_accum).backward()
 
             epoch_policy_loss.append(total_loss.item())
             epoch_kl.append(kl_sum / args.n_rollouts)
 
-            global_step += 1
+            if (i + 1) % args.grad_accum == 0 or (i + 1) == n_samples:
+                torch.nn.utils.clip_grad_norm_(policy.llm.parameters(), 1.0)
+                optimizer.step()
+                optimizer.zero_grad()
+                global_step += 1
 
-            if global_step % args.log_every == 0:
-                avg_r = sum(epoch_rewards[-args.log_every :]) / args.log_every
-                avg_pl = sum(epoch_policy_loss[-args.log_every :]) / max(
-                    len(epoch_policy_loss[-args.log_every :]), 1
-                )
-                avg_kl = sum(epoch_kl[-args.log_every :]) / max(len(epoch_kl[-args.log_every :]), 1)
-                print(
-                    f"[E{epoch + 1}] Step {global_step:3d} | "
-                    f"Reward: {avg_r:.4f} | Policy Loss: {avg_pl:.4f} | KL: {avg_kl:.4f}"
-                )
+                if global_step % args.log_every == 0:
+                    n_recent = min(args.grad_accum * args.log_every, len(epoch_rewards))
+                    avg_r = sum(epoch_rewards[-n_recent:]) / max(n_recent, 1)
+                    avg_pl = sum(epoch_policy_loss[-n_recent:]) / max(n_recent, 1)
+                    avg_kl = sum(epoch_kl[-n_recent:]) / max(n_recent, 1)
+                    print(
+                        f"[E{epoch + 1}] Step {global_step:3d} | "
+                        f"Reward: {avg_r:.4f} | Policy Loss: {avg_pl:.4f} | KL: {avg_kl:.4f}"
+                    )
+
+                    if args.use_wandb:
+                        import wandb
+
+                        wandb.log(
+                            {
+                                "train/reward": avg_r,
+                                "train/policy_loss": avg_pl,
+                                "train/kl": avg_kl,
+                            },
+                            step=global_step,
+                        )
 
         # Epoch summary
         mean_reward = sum(epoch_rewards) / len(epoch_rewards)
@@ -437,8 +500,21 @@ def main():
             f"\n=== Epoch {epoch + 1}/{args.max_epochs} | "
             f"Mean Reward: {mean_reward:.4f} | "
             f"Policy Loss: {mean_pl:.4f} | "
-            f"KL: {mean_kl:.4f} ===\n"
+            f"KL: {mean_kl:.4f} | "
+            f"Time: {time.time() - t_epoch:.0f}s ===\n"
         )
+
+        if args.use_wandb:
+            import wandb
+
+            wandb.log(
+                {
+                    "val/mean_reward": mean_reward,
+                    "val/mean_kl": mean_kl,
+                    "epoch": epoch + 1,
+                },
+                step=global_step,
+            )
 
         if mean_reward > best_reward:
             best_reward = mean_reward
@@ -472,9 +548,11 @@ def main():
     print(f"  Reward: {all_rewards_log[0]:.4f} -> {all_rewards_log[-1]:.4f}")
     print(f"  Best reward: {best_reward:.4f}")
 
+    total_time = time.time() - t_start
     if torch.cuda.is_available():
         print(f"\nPeak VRAM: {torch.cuda.max_memory_allocated() / 1e9:.2f} GB")
 
+    print(f"Total time: {total_time:.0f}s ({total_time / 60:.1f}min)")
     print("\nDone.")
 
 

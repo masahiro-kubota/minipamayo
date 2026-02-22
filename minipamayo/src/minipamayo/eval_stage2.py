@@ -33,8 +33,8 @@ def parse_args():
         type=str,
         default="../cosmos-reason-mini/checkpoints/rl-mini-merged/checkpoint-final.pt",
     )
-    parser.add_argument("--nuscenes_root", type=str, default="../cosmos-reason-mini/data/nuscenes")
-    parser.add_argument("--nuscenes_version", type=str, default="v1.0-mini")
+    parser.add_argument("--nuscenes_root", type=str, default="/mnt/ssd/nuscenes")
+    parser.add_argument("--nuscenes_version", type=str, default="v1.0-trainval")
     parser.add_argument("--n_steps", type=int, default=20, help="Euler integration steps")
     parser.add_argument("--n_samples", type=int, default=5, help="Samples per input for diversity")
     parser.add_argument("--show_samples", type=int, default=10)
@@ -49,7 +49,7 @@ def extract_conditions(vlm, pixel_values):
         visual_tokens = vlm.adapter(patch_features)
         outputs = vlm.llm(inputs_embeds=visual_tokens, output_hidden_states=True)
     last_hidden = outputs.hidden_states[-1]
-    return last_hidden.mean(dim=1).float()
+    return last_hidden.float().detach()  # (B, L, 896) — full sequence, not mean-pooled
 
 
 def main():

@@ -9,7 +9,7 @@ Evaluates:
 Usage:
     cd minipamayo && uv run python -m minipamayo.eval_stage3 \
         --checkpoint checkpoints/stage3/best.pt \
-        --coc_data data/coc_annotations.jsonl
+        --coc_data data/coc_annotations_trainval.jsonl
 """
 
 import argparse
@@ -28,8 +28,8 @@ from .models.minipamayo import MiniPamayo
 def parse_args():
     parser = argparse.ArgumentParser(description="MiniPamayo Stage 3 evaluation")
     parser.add_argument("--checkpoint", type=str, required=True)
-    parser.add_argument("--coc_data", type=str, default="data/coc_annotations.jsonl")
-    parser.add_argument("--nuscenes_root", type=str, default="../cosmos-reason-mini/data/nuscenes")
+    parser.add_argument("--coc_data", type=str, default="data/coc_annotations_trainval.jsonl")
+    parser.add_argument("--nuscenes_root", type=str, default="/mnt/ssd/nuscenes")
     parser.add_argument("--K", type=int, default=6)
     parser.add_argument("--n_bins", type=int, default=256)
     parser.add_argument("--max_text_len", type=int, default=256)

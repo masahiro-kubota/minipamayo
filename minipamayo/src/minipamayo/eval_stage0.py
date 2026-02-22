@@ -30,9 +30,9 @@ def parse_args():
     parser.add_argument(
         "--nuscenes_root",
         type=str,
-        default="../cosmos-reason-mini/data/nuscenes",
+        default="/mnt/ssd/nuscenes",
     )
-    parser.add_argument("--nuscenes_version", type=str, default="v1.0-mini")
+    parser.add_argument("--nuscenes_version", type=str, default="v1.0-trainval")
     parser.add_argument(
         "--adapter_type", type=str, default="mean_pool", choices=["mean_pool", "per_token"]
     )

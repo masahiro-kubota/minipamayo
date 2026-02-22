@@ -18,15 +18,16 @@ Design doc: stage3-coc-sft.md
 Usage:
     cd minipamayo && uv run python -m minipamayo.train_stage3 \
         --stage1_checkpoint checkpoints/stage1/best.pt \
-        --coc_data data/coc_annotations.jsonl
+        --coc_data data/coc_annotations_trainval.jsonl
 """
 
 import argparse
 import math
+import time
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 
 from .data.coc_dataset import CoCDataset
@@ -36,7 +37,7 @@ from .models.minipamayo import MiniPamayo
 
 def parse_args():
     parser = argparse.ArgumentParser(description="MiniPamayo Stage 3 CoC SFT")
-    parser.add_argument("--coc_data", type=str, default="data/coc_annotations.jsonl")
+    parser.add_argument("--coc_data", type=str, default="data/coc_annotations_trainval.jsonl")
     parser.add_argument(
         "--stage1_checkpoint",
         type=str,
@@ -59,7 +60,8 @@ def parse_args():
     parser.add_argument("--max_grad_norm", type=float, default=1.0)
     parser.add_argument("--log_every", type=int, default=1)
     parser.add_argument("--save_dir", type=str, default="checkpoints/stage3")
-    parser.add_argument("--val_ratio", type=float, default=0.2)
+    parser.add_argument("--nuscenes_root", type=str, default="/mnt/ssd/nuscenes")
+    parser.add_argument("--nuscenes_version", type=str, default="v1.0-trainval")
     parser.add_argument("--max_text_len", type=int, default=2048)
     parser.add_argument(
         "--action_loss_weight",
@@ -67,6 +69,8 @@ def parse_args():
         default=1.0,
         help="Weight multiplier for action token loss (vs reasoning tokens)",
     )
+    parser.add_argument("--use_wandb", action="store_true")
+    parser.add_argument("--wandb_project", type=str, default="minipamayo")
     return parser.parse_args()
 
 
@@ -192,6 +196,7 @@ def evaluate(model, dataloader, device):
 
 
 def main():
+    t_start = time.time()
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
@@ -201,21 +206,48 @@ def main():
     action_tokenizer = DiscreteActionTokenizer(n_bins=args.n_bins)
     text_tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B")
 
-    # Dataset
+    # Dataset (scene-level split via image_path filtering)
     print("Loading CoC dataset...")
-    full_dataset = CoCDataset(
+    use_split = args.nuscenes_version == "v1.0-trainval"
+    if use_split:
+        from .data.nuscenes_trajectory_dataset import NuScenesTrajectoryDataset
+
+        train_traj = NuScenesTrajectoryDataset(
+            nuscenes_root=args.nuscenes_root,
+            version=args.nuscenes_version,
+            K=args.K,
+            split="train",
+        )
+        val_traj = NuScenesTrajectoryDataset(
+            nuscenes_root=args.nuscenes_root,
+            version=args.nuscenes_version,
+            K=args.K,
+            split="val",
+        )
+        train_paths = {s["image_path"] for s in train_traj.samples}
+        val_paths = {s["image_path"] for s in val_traj.samples}
+        del train_traj, val_traj  # Free memory
+    else:
+        train_paths = None
+        val_paths = None
+
+    train_dataset = CoCDataset(
         annotations_path=args.coc_data,
         tokenizer=text_tokenizer,
         action_tokenizer=action_tokenizer,
         K=args.K,
         max_text_len=args.max_text_len,
+        allowed_image_paths=train_paths,
     )
-    n_val = int(len(full_dataset) * args.val_ratio)
-    n_train = len(full_dataset) - n_val
-    train_dataset, val_dataset = random_split(
-        full_dataset, [n_train, n_val], generator=torch.Generator().manual_seed(42)
+    val_dataset = CoCDataset(
+        annotations_path=args.coc_data,
+        tokenizer=text_tokenizer,
+        action_tokenizer=action_tokenizer,
+        K=args.K,
+        max_text_len=args.max_text_len,
+        allowed_image_paths=val_paths,
     )
-    print(f"Total: {len(full_dataset)}, Train: {n_train}, Val: {n_val}")
+    print(f"Train: {len(train_dataset)}, Val: {len(val_dataset)}")
 
     train_loader = DataLoader(
         train_dataset, batch_size=1, shuffle=True, num_workers=0, drop_last=True
@@ -283,6 +315,11 @@ def main():
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
+    if args.use_wandb:
+        import wandb
+
+        wandb.init(project=args.wandb_project, name="stage3-coc-sft", config=vars(args))
+
     # Initial evaluation
     print("\n=== Initial Evaluation ===")
     init_metrics = evaluate(model, val_loader, device)
@@ -299,6 +336,7 @@ def main():
     optimizer.zero_grad()
 
     for epoch in range(args.max_epochs):
+        t_epoch = time.time()
         model.train()
         epoch_loss = 0.0
         epoch_samples = 0
@@ -351,6 +389,18 @@ def main():
                         f"CE Loss: {avg_loss:.4f} | LR(VE): {lr_ve:.2e} | LR(main): {lr_main:.2e}"
                     )
 
+                    if args.use_wandb:
+                        import wandb
+
+                        wandb.log(
+                            {
+                                "train/ce_loss": avg_loss,
+                                "train/lr_ve": lr_ve,
+                                "train/lr_main": lr_main,
+                            },
+                            step=global_step,
+                        )
+
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
@@ -363,8 +413,18 @@ def main():
             f"\n=== Epoch {epoch + 1}/{args.max_epochs} | "
             f"Train CE: {avg_train_loss:.4f} | "
             f"Val CE: {metrics['val_loss']:.4f} | "
-            f"Token Acc: {metrics['token_accuracy']:.4f} ===\n"
+            f"Token Acc: {metrics['token_accuracy']:.4f} | "
+            f"Time: {time.time() - t_epoch:.0f}s ===\n"
         )
+
+        if args.use_wandb:
+            import wandb
+
+            wandb.log(
+                {f"val/{k}": v for k, v in metrics.items()}
+                | {"train/epoch_loss": avg_train_loss, "epoch": epoch + 1},
+                step=global_step,
+            )
 
         if metrics["val_loss"] < best_val_loss:
             best_val_loss = metrics["val_loss"]
@@ -400,9 +460,11 @@ def main():
         f"  Token Acc: {init_metrics['token_accuracy']:.4f} -> {final_metrics['token_accuracy']:.4f}"
     )
 
+    total_time = time.time() - t_start
     if torch.cuda.is_available():
         print(f"\nPeak VRAM: {torch.cuda.max_memory_allocated() / 1e9:.2f} GB")
 
+    print(f"Total time: {total_time:.0f}s ({total_time / 60:.1f}min)")
     print("\nDone.")
 
 

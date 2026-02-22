@@ -25,9 +25,9 @@ def parse_args():
     parser.add_argument(
         "--nuscenes_root",
         type=str,
-        default="../cosmos-reason-mini/data/nuscenes",
+        default="/mnt/ssd/nuscenes",
     )
-    parser.add_argument("--nuscenes_version", type=str, default="v1.0-mini")
+    parser.add_argument("--nuscenes_version", type=str, default="v1.0-trainval")
     parser.add_argument("--K", type=int, default=6)
     parser.add_argument("--show_samples", type=int, default=10)
     return parser.parse_args()

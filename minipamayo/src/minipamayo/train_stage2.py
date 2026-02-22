@@ -10,10 +10,11 @@ Usage:
 
 import argparse
 import math
+import time
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 
 from .data.nuscenes_trajectory_dataset import NuScenesTrajectoryDataset
 from .models.minipamayo import MiniPamayo
@@ -22,8 +23,8 @@ from .models.trajectory_decoder import TrajectoryDecoder, cfm_loss
 
 def parse_args():
     parser = argparse.ArgumentParser(description="MiniPamayo Stage 2 training")
-    parser.add_argument("--nuscenes_root", type=str, default="../cosmos-reason-mini/data/nuscenes")
-    parser.add_argument("--nuscenes_version", type=str, default="v1.0-mini")
+    parser.add_argument("--nuscenes_root", type=str, default="/mnt/ssd/nuscenes")
+    parser.add_argument("--nuscenes_version", type=str, default="v1.0-trainval")
     parser.add_argument(
         "--phase4_checkpoint",
         type=str,
@@ -49,7 +50,8 @@ def parse_args():
     parser.add_argument("--max_grad_norm", type=float, default=1.0)
     parser.add_argument("--log_every", type=int, default=1)
     parser.add_argument("--save_dir", type=str, default="checkpoints/stage2")
-    parser.add_argument("--val_ratio", type=float, default=0.2)
+    parser.add_argument("--use_wandb", action="store_true")
+    parser.add_argument("--wandb_project", type=str, default="minipamayo")
     return parser.parse_args()
 
 
@@ -96,25 +98,29 @@ def evaluate(decoder, vlm, dataloader, device):
 
 
 def main():
+    t_start = time.time()
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     action_dim = args.K * 2
     print(f"Device: {device}")
     print(f"K={args.K}, action_dim={action_dim}")
 
-    # Dataset
+    # Dataset (scene-level split)
     print("Loading dataset...")
-    full_dataset = NuScenesTrajectoryDataset(
+    use_split = args.nuscenes_version == "v1.0-trainval"
+    train_dataset = NuScenesTrajectoryDataset(
         nuscenes_root=args.nuscenes_root,
         version=args.nuscenes_version,
         K=args.K,
+        split="train" if use_split else None,
     )
-    n_val = int(len(full_dataset) * args.val_ratio)
-    n_train = len(full_dataset) - n_val
-    train_dataset, val_dataset = random_split(
-        full_dataset, [n_train, n_val], generator=torch.Generator().manual_seed(42)
+    val_dataset = NuScenesTrajectoryDataset(
+        nuscenes_root=args.nuscenes_root,
+        version=args.nuscenes_version,
+        K=args.K,
+        split="val" if use_split else None,
     )
-    print(f"Total: {len(full_dataset)}, Train: {n_train}, Val: {n_val}")
+    print(f"Train: {len(train_dataset)}, Val: {len(val_dataset)}")
 
     train_loader = DataLoader(
         train_dataset,
@@ -183,6 +189,11 @@ def main():
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
+    if args.use_wandb:
+        import wandb
+
+        wandb.init(project=args.wandb_project, name="stage2-flow", config=vars(args))
+
     # Initial evaluation
     print("\n=== Initial Evaluation ===")
     init_metrics = evaluate(decoder, vlm, val_loader, device)
@@ -199,6 +210,7 @@ def main():
     optimizer.zero_grad()
 
     for epoch in range(args.max_epochs):
+        t_epoch = time.time()
         decoder.train()
         epoch_loss = 0.0
         epoch_samples = 0
@@ -231,6 +243,11 @@ def main():
                         f"CFM Loss: {avg_loss:.4f} | LR: {lr:.2e}"
                     )
 
+                    if args.use_wandb:
+                        import wandb
+
+                        wandb.log({"train/cfm_loss": avg_loss, "train/lr": lr}, step=global_step)
+
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
@@ -239,11 +256,22 @@ def main():
         metrics = evaluate(decoder, vlm, val_loader, device)
         avg_train_loss = epoch_loss / max(epoch_samples, 1)
 
+        epoch_time = time.time() - t_epoch
         print(
             f"\n=== Epoch {epoch + 1}/{args.max_epochs} | "
             f"Train CFM: {avg_train_loss:.4f} | "
-            f"Val CFM: {metrics['val_cfm_loss']:.4f} ===\n"
+            f"Val CFM: {metrics['val_cfm_loss']:.4f} | "
+            f"Time: {epoch_time:.0f}s ===\n"
         )
+
+        if args.use_wandb:
+            import wandb
+
+            wandb.log(
+                {f"val/{k}": v for k, v in metrics.items()}
+                | {"train/epoch_loss": avg_train_loss, "epoch": epoch + 1},
+                step=global_step,
+            )
 
         if metrics["val_cfm_loss"] < best_val_loss:
             best_val_loss = metrics["val_cfm_loss"]
@@ -285,9 +313,11 @@ def main():
     print(f"  Val CFM: {init_metrics['val_cfm_loss']:.4f} -> {final_metrics['val_cfm_loss']:.4f}")
     print(f"  Decoder params: {n_trainable:,}")
 
+    total_time = time.time() - t_start
     if torch.cuda.is_available():
         print(f"\nPeak VRAM: {torch.cuda.max_memory_allocated() / 1e9:.2f} GB")
 
+    print(f"Total time: {total_time:.0f}s ({total_time / 60:.1f}min)")
     print("\nDone.")
 
 

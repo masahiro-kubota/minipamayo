@@ -92,7 +92,7 @@ class ReasonReward:
     def __init__(
         self,
         cache_dir: str | Path = "data/reason_reward_cache",
-        model: str = "gpt-4o",
+        model: str = "gpt-4o-mini",
     ):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)

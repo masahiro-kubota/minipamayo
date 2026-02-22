@@ -10,11 +10,12 @@ Usage:
 
 import argparse
 import math
+import time
 from pathlib import Path
 
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 
 from .data.nuscenes_trajectory_dataset import NuScenesTrajectoryDataset
 from .models.minipamayo import MiniPamayo
@@ -25,9 +26,9 @@ def parse_args():
     parser.add_argument(
         "--nuscenes_root",
         type=str,
-        default="../cosmos-reason-mini/data/nuscenes",
+        default="/mnt/ssd/nuscenes",
     )
-    parser.add_argument("--nuscenes_version", type=str, default="v1.0-mini")
+    parser.add_argument("--nuscenes_version", type=str, default="v1.0-trainval")
     parser.add_argument(
         "--checkpoint",
         type=str,
@@ -41,7 +42,6 @@ def parse_args():
     parser.add_argument("--max_grad_norm", type=float, default=1.0)
     parser.add_argument("--log_every", type=int, default=1)
     parser.add_argument("--save_dir", type=str, default="checkpoints/phase4")
-    parser.add_argument("--val_ratio", type=float, default=0.2)
     parser.add_argument("--use_wandb", action="store_true")
     parser.add_argument("--wandb_project", type=str, default="minipamayo")
     return parser.parse_args()
@@ -88,6 +88,7 @@ def evaluate(model, dataloader, device, K) -> dict:
 
 
 def main():
+    t_start = time.time()
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
@@ -98,25 +99,28 @@ def main():
 
         wandb.init(project=args.wandb_project, name="phase4-ctrl", config=vars(args))
 
-    # Dataset
+    # Dataset (scene-level split)
     print("Loading nuScenes trajectory dataset...")
-    full_dataset = NuScenesTrajectoryDataset(
+    use_split = args.nuscenes_version == "v1.0-trainval"
+    train_dataset = NuScenesTrajectoryDataset(
         nuscenes_root=args.nuscenes_root,
         version=args.nuscenes_version,
         K=args.K,
+        split="train" if use_split else None,
     )
-    n_val = int(len(full_dataset) * args.val_ratio)
-    n_train = len(full_dataset) - n_val
-    train_dataset, val_dataset = random_split(
-        full_dataset, [n_train, n_val], generator=torch.Generator().manual_seed(42)
+    val_dataset = NuScenesTrajectoryDataset(
+        nuscenes_root=args.nuscenes_root,
+        version=args.nuscenes_version,
+        K=args.K,
+        split="val" if use_split else None,
     )
-    print(f"Total: {len(full_dataset)}, Train: {n_train}, Val: {n_val}")
+    print(f"Train: {len(train_dataset)}, Val: {len(val_dataset)}")
 
     train_loader = DataLoader(
         train_dataset,
         batch_size=1,
         shuffle=True,
-        num_workers=2,
+        num_workers=0,
         pin_memory=True,
         drop_last=True,
     )
@@ -124,7 +128,7 @@ def main():
         val_dataset,
         batch_size=1,
         shuffle=False,
-        num_workers=2,
+        num_workers=0,
         pin_memory=True,
     )
 
@@ -174,6 +178,7 @@ def main():
     optimizer.zero_grad()
 
     for epoch in range(args.max_epochs):
+        t_epoch = time.time()
         model.train()
         epoch_loss = 0.0
         epoch_samples = 0
@@ -238,12 +243,14 @@ def main():
         metrics = evaluate(model, val_loader, device, args.K)
         avg_train_loss = epoch_loss / max(epoch_samples, 1)
 
+        epoch_time = time.time() - t_epoch
         print(
             f"\n=== Epoch {epoch + 1}/{args.max_epochs} | "
             f"Train Loss: {avg_train_loss:.4f} | "
             f"Val Loss: {metrics['val_loss']:.4f} | "
             f"a MAE: {metrics['a_mae']:.5f} | "
-            f"kappa MAE: {metrics['kappa_mae']:.5f} ===\n"
+            f"kappa MAE: {metrics['kappa_mae']:.5f} | "
+            f"Time: {epoch_time:.0f}s ===\n"
         )
 
         if args.use_wandb:
@@ -312,9 +319,11 @@ def main():
         has_grad = any(p.grad is not None and p.grad.abs().sum() > 0 for p in module.parameters())
         print(f"  {name}: {'OK' if has_grad else 'NO GRADIENT'}")
 
+    total_time = time.time() - t_start
     if torch.cuda.is_available():
         print(f"\nPeak VRAM: {torch.cuda.max_memory_allocated() / 1e9:.2f} GB")
 
+    print(f"Total time: {total_time:.0f}s ({total_time / 60:.1f}min)")
     print("\nDone.")
 
 

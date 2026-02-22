@@ -5,7 +5,7 @@ Predicts [steer, throttle] from a single CAM_FRONT image.
 
 Usage:
     cd minipamayo && uv run python -m minipamayo.train_stage0 \
-        --nuscenes_root ../cosmos-reason-mini/data/nuscenes \
+        --nuscenes_root /mnt/ssd/nuscenes \
         --checkpoint ../cosmos-reason-mini/checkpoints/rl-mini-merged/checkpoint-final.pt
 """
 
@@ -26,9 +26,9 @@ def parse_args():
     parser.add_argument(
         "--nuscenes_root",
         type=str,
-        default="../cosmos-reason-mini/data/nuscenes",
+        default="/mnt/ssd/nuscenes",
     )
-    parser.add_argument("--nuscenes_version", type=str, default="v1.0-mini")
+    parser.add_argument("--nuscenes_version", type=str, default="v1.0-trainval")
     parser.add_argument(
         "--checkpoint",
         type=str,
