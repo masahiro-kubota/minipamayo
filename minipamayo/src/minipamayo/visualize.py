@@ -58,15 +58,15 @@ def parse_args():
         "--stage",
         type=str,
         required=True,
-        choices=["phase4", "stage1", "stage2", "stage3", "stage4"],
+        choices=["phase4", "stage1", "stage2", "stage3", "stage4", "coc_labels"],
     )
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--decoder_checkpoint", type=str, default=None)
     parser.add_argument("--vlm_checkpoint", type=str, default=None)
     parser.add_argument("--ref_checkpoint", type=str, default=None)
-    parser.add_argument("--coc_data", type=str, default="data/coc_annotations.jsonl")
-    parser.add_argument("--nuscenes_root", type=str, default="../cosmos-reason-mini/data/nuscenes")
-    parser.add_argument("--nuscenes_version", type=str, default="v1.0-mini")
+    parser.add_argument("--coc_data", type=str, default="data/coc_annotations_trainval.jsonl")
+    parser.add_argument("--nuscenes_root", type=str, default="/mnt/ssd/nuscenes")
+    parser.add_argument("--nuscenes_version", type=str, default="v1.0-trainval")
     parser.add_argument("--n_samples", type=int, default=5, help="Flow matching samples (stage2)")
     parser.add_argument("--n_vis", type=int, default=N_VIS, help="Number of samples to visualize")
     parser.add_argument("--output", type=str, default=None)
@@ -158,7 +158,7 @@ def draw_bev_plot(
                 linewidth=0.5,
                 zorder=2,
             )
-            t = matplotlib.transforms.Affine2D().rotate_around(-cy, cx, -heading) + ax.transData
+            t = matplotlib.transforms.Affine2D().rotate_around(-cy, cx, heading) + ax.transData
             rect.set_transform(t)
             ax.add_patch(rect)
 
@@ -263,7 +263,7 @@ def extract_conditions(vlm, pixel_values):
         visual_tokens = vlm.adapter(patch_features)
         outputs = vlm.llm(inputs_embeds=visual_tokens, output_hidden_states=True)
     last_hidden = outputs.hidden_states[-1]
-    return last_hidden.mean(dim=1).float()
+    return last_hidden.float().detach()  # (B, L, 896) — full sequence, not mean-pooled
 
 
 def autoregressive_generate(model, prompt_embeds, max_tokens):
@@ -808,6 +808,63 @@ def vis_stage4(args, device):
 # ============================================================
 
 
+def vis_coc_labels(args):
+    """Visualize CoC annotation labels: image + decision + components + trace."""
+    gt_annotations = []
+    with open(args.coc_data) as f:
+        for line in f:
+            gt_annotations.append(json.loads(line))
+
+    n_vis = min(args.n_vis, len(gt_annotations))
+    indices = _select_indices(len(gt_annotations), n_vis)
+
+    fig, axes = plt.subplots(
+        n_vis, 2, figsize=(16, 4 * n_vis), gridspec_kw={"width_ratios": [1, 1.5]}
+    )
+    if n_vis == 1:
+        axes = axes.reshape(1, -1)
+
+    for row, idx in enumerate(indices):
+        ann = gt_annotations[idx]
+        coc = ann["coc"]
+        decision = coc["driving_decision"]
+
+        # Image
+        img = Image.open(ann["image_path"]).convert("RGB")
+        axes[row, 0].imshow(img)
+        axes[row, 0].set_title(f"[{idx}] {ann['image_path'].split('/')[-1]}", fontsize=7)
+        axes[row, 0].axis("off")
+
+        # CoC text
+        lines = []
+        lines.append(f"[Decision]  long: {decision['longitudinal']}  |  lat: {decision['lateral']}")
+        lines.append("")
+        lines.append("[Critical Components]")
+        for comp in coc["critical_components"]:
+            lines.append(f"  - {comp['type']}: {comp['description']}")
+        lines.append("")
+        lines.append("[CoC Trace]")
+        lines.append(coc["coc_trace"])
+        text = "\n".join(lines)
+
+        wrapped = "\n".join(_wrap_text(text, width=70))
+        axes[row, 1].axis("off")
+        axes[row, 1].text(
+            0.02,
+            0.98,
+            wrapped,
+            transform=axes[row, 1].transAxes,
+            fontsize=8,
+            verticalalignment="top",
+            fontfamily="monospace",
+            wrap=True,
+        )
+
+    fig.suptitle(f"CoC Labels ({len(gt_annotations)} samples)", fontsize=14, fontweight="bold")
+    fig.tight_layout()
+    return fig
+
+
 def _select_indices(total, n_vis):
     """Select evenly-spaced indices from dataset."""
     if total <= n_vis:
@@ -837,6 +894,8 @@ def main():
         fig = vis_stage3(args, device)
     elif args.stage == "stage4":
         fig = vis_stage4(args, device)
+    elif args.stage == "coc_labels":
+        fig = vis_coc_labels(args)
 
     # Save
     output_path = args.output or f"outputs/vis_{args.stage}.png"
