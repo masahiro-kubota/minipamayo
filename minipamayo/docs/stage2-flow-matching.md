@@ -437,3 +437,39 @@ Stage 2 の完了判定基準:
 | **快適性** | ジャークが離散トークン版より改善 | 推奨 |
 | **OOM しない** | RTX 4090 (24 GB) 以内で学習・推論が完了 | 必須 |
 | **Flow steps の影響** | 10 steps で十分な精度が出ることを確認 | 推奨 |
+
+---
+
+## 13. Full nuScenes (v1.0-trainval) 学習結果
+
+### 設定
+
+- データ: nuScenes v1.0-trainval, **シーン単位分割** (公式 split)
+  - Train: 23,230 samples (700 scenes), Val: 4,969 samples (150 scenes)
+- K=6 (dt=0.5s), Decoder のみ trainable（VLM frozen）
+- lr=1e-4, cosine w/ warmup, 10 epochs
+- Phase 4 checkpoint（scene split 版）から初期化
+
+### 学習推移
+
+| Epoch | Train CFM | Val CFM | Time |
+|---|---|---|---|
+| 初期 | — | 2.070 | — |
+| 1 | 1.074 | 1.120 | 3.2min |
+| 2 | 0.971 | 1.067 | 3.2min |
+| 3 | 0.932 | 1.046 | 3.2min |
+| 4 | 0.916 | 1.026 | 3.2min |
+| 5 | 0.906 | 1.014 | 3.2min |
+| 6 | 0.899 | 1.029 | 3.2min |
+| 7 | 0.897 | 0.995 | 3.2min |
+| **8** | **0.879** | **0.986** (Best) | 3.2min |
+| 9 | 0.873 | 1.001 | 3.2min |
+| 10 | 0.876 | 0.988 | 3.2min |
+| **合計** | | | **33min** |
+
+### 分析
+
+- Val CFM は Epoch 8 の 0.986 が Best。初期値 2.070 から 52.4% 改善
+- Train-Val gap: 0.879 vs 0.986（+12.2%）。多少の overfitting だが許容範囲
+- Epoch 6 で Val が一時上昇（1.029）後、Epoch 7-8 で回復。学習率が下がり安定
+- Decoder のみ trainable のため学習が高速（1 epoch = 3.2min, 全10 epochs = 33min）

@@ -445,3 +445,43 @@ Phase 4 の Exit 条件をすべて満たしたうえで:
 - 制御ベース表現の GT 逆算が安定していること（forward → inverse → forward の round-trip 誤差が十分小さい）
 - ADE/FDE が改善傾向にあること（完全な収束は不要）
 - 可視化で軌道の向きが概ね正しいこと
+
+---
+
+## Full nuScenes (v1.0-trainval) Phase 4 学習結果
+
+### 設定
+
+- データ: nuScenes v1.0-trainval, **シーン単位分割** (公式 split)
+  - Train: 23,230 samples (700 scenes), Val: 4,969 samples (150 scenes)
+  - 重複: 0（temporal leakage なし）
+- K=6 (dt=0.5s, 3秒ホライズン)
+- batch_size=1, grad_accum=8, lr=1e-4, cosine w/ warmup, 3 epochs
+- wandb: https://wandb.ai/norikenpi-individual/minipamayo/runs/nam0lhhl
+
+### 学習推移
+
+| | Train Loss | Val Loss | a MAE | kappa MAE | Time |
+|---|---|---|---|---|---|
+| 初期 | — | 1.858 | 1.912 | 2.712 | — |
+| Epoch 1 | 0.2274 | 0.2393 | 0.797 | 0.060 | 32min |
+| Epoch 2 | 0.2087 | 0.2366 | 0.787 | 0.016 | 30min |
+| Epoch 3 | 0.2071 | 0.2359 | 0.782 | 0.011 | 30min |
+| **合計** | | | | | **95min** |
+
+### 分析
+
+- Val Loss は Epoch 1→3 で 0.239→0.236 と緩やかに改善。Train Loss は 0.227→0.207
+- a MAE: 1.912 → 0.782（59% 削減）、kappa MAE: 2.712 → 0.011（99.6% 削減）
+- kappa の学習が特に良好。a はまだ改善余地あり
+- Train-Val gap は小さく（0.207 vs 0.236）、overfitting は軽微
+
+### random split との比較
+
+| 指標 | random split (旧) | scene split (新) | 差分 |
+|---|---|---|---|
+| Val Loss | 0.216 | 0.236 | +9.3% |
+| a MAE | 0.729 | 0.782 | +7.3% |
+| kappa MAE | 0.010 | 0.011 | +10% |
+
+旧 random split では同一シーンの連続フレーム（0.5秒間隔の類似画像）が train/val に混在し、val サンプルの 80.6% が train に漏れていた。scene split 版の Val 値は約 7-10% 高いが、これがリークなしの正当な汎化性能。

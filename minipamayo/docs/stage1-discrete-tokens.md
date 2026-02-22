@@ -377,13 +377,69 @@ Stage 0 との差分: Action Head MLP (<1M) が不要になり、語彙拡張 (+
 
 ---
 
+## Full nuScenes (v1.0-trainval) 学習結果
+
+### 設定
+
+- データ: nuScenes v1.0-trainval, **シーン単位分割** (公式 split)
+  - Train: 23,230 samples (700 scenes), Val: 4,969 samples (150 scenes)
+  - 重複: 0（temporal leakage なし）
+- K=6 (dt=0.5s, 3秒ホライズン), n_bins=256, action_tokens=12
+- batch_size=1, grad_accum=16, lr=5e-5, 3 epochs
+- Phase 4 checkpoint（scene split 版）から初期化
+
+### 学習推移
+
+| Epoch | Train CE | Val CE | Token Acc | Time |
+|---|---|---|---|---|
+| 1 | 3.844 | 3.157 | 22.9% | 27min |
+| 2 | 2.907 | 3.136 | 23.5% | 27min |
+| 3 | 2.745 | 3.146 | 23.4% | 27min |
+| **合計** | | | | **83min** |
+
+### 分析
+
+- **ランダムと比較**: 256 bins のランダム精度 = 1/256 = 0.39%。23.5% はランダムの 60 倍 → モデルは学習している
+- **Epoch 3 で微減**: Val CE 3.136→3.146, Token Acc 23.5%→23.4%。軽微な overfitting
+- **旧 random split と比較**: Val CE 3.09→3.14 (+1.6%), Token Acc 25.8%→23.5% (-2.3pt)。リークなしの正当な値
+
+### random split との比較
+
+| 指標 | random split (旧) | scene split (新) | 差分 |
+|---|---|---|---|
+| Best Val CE | 2.987 | 3.136 | +5.0% |
+| Best Token Acc | 25.8% | 23.5% | -2.3pt |
+
+旧実装では temporal leakage により val 精度が水増しされていた。scene split 版が正しい汎化性能。
+
+### 旧結果（random split, 参考値 — temporal leakage あり）
+
+| Epoch | Train CE | Val CE | Token Acc | Time |
+|---|---|---|---|---|
+| 1 | 3.909 | 3.088 | 24.2% | 26.2min |
+| 2 | 2.971 | 2.987 | 25.8% | 26.2min |
+
+> random split では val サンプルの 80.6% が train に漏れていたため、Val 値は過度に楽観的。scene split 版では Val CE / Token Acc が異なる値になると予想。
+
+### 改善余地
+
+1. **n_bins=256 が過剰**: K=6（12 トークン）に対して 256 段階の離散化は多すぎる。64 や 128 bins の方が学習しやすい可能性
+2. **3 epochs が不足**: CE がまだ下降中に打ち切り。10 epochs で十分収束する可能性
+3. **batch_size=1**: 学習効率が低い。VRAM に余裕があれば batch_size=2-4 で改善可能
+
+### Stage 2 への影響
+
+Stage 1 は「LLM に action token を出力させる能力を仕込む」段階。最終的な軌道精度は Stage 2（Flow Matching decoder）が担う。Stage 1 の Token Acc が低くても、LLM の hidden state に action の情報が埋め込まれていれば Stage 2 で補える設計。致命的ではないが、今後の改善候補として記録。
+
+---
+
 ## 完了状況
 
 | Step | 状態 | 備考 |
 |------|------|------|
-| Step 1: 量子化パラメータの決定 | 未着手 | |
-| Step 2: DiscreteActionTokenizer の実装 | 未着手 | |
-| Step 3: LLM 語彙拡張 | 未着手 | |
-| Step 4: 学習ループの実装 | 未着手 | |
-| Step 5: デコードパイプラインの実装 | 未着手 | |
-| Step 6: 学習の実行と評価 | 未着手 | |
+| Step 1: 量子化パラメータの決定 | 完了 | a: [-4, 4], kappa: [-0.1, 0.1] |
+| Step 2: DiscreteActionTokenizer の実装 | 完了 | |
+| Step 3: LLM 語彙拡張 | 完了 | 151,936 + 256 = 152,192 |
+| Step 4: 学習ループの実装 | 完了 | |
+| Step 5: デコードパイプラインの実装 | 完了 | |
+| Step 6: 学習の実行と評価 | 進行中 | full dataset 3 epochs 実行中 |

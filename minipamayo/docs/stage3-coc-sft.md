@@ -516,3 +516,36 @@ RTX 4090 (24 GB) で十分余裕あり。シーケンスが長くなるため St
 | OOM しない | VRAM モニタリング | 24 GB 以内 |
 
 Exit 条件をクリアしたら Stage 4（RL ポストトレーニング）に進む。Stage 3 の学習済み重みが Stage 4 の初期値（SFT policy）および reference policy となる。
+
+---
+
+## Full nuScenes (v1.0-trainval) 学習結果
+
+- **データ**: Train 23,230 / Val 4,969（scene-level split、leakage なし）
+- **構成**: batch_size=1, grad_accum=64, lr=2e-5 (VE: 1e-5), cosine schedule
+- **チェックポイント**: `checkpoints/stage3/best.pt`
+
+### Epoch ごとの結果
+
+| Epoch | Train CE | Val CE | Token Acc | Time |
+|---|---|---|---|---|
+| 1 | 0.8647 | 0.6588 | 80.6% | 1983s (33min) |
+| 2 | 0.5839 | 0.6367 | 81.2% | 1876s (31min) |
+| 3 | 0.5589 | 0.6292 | 81.5% | 1848s (31min) |
+| 4 | 0.5482 | 0.6277 | 81.5% | 1862s (31min) |
+| 5 | 0.5454 | **0.6274** | **81.5%** | 1891s (32min) |
+
+- Peak VRAM: 6.52 GB
+- 合計時間: 9709s (162 min)
+- Token Acc 推移: 33.3% → 81.5%
+
+### 分析
+
+- **学習は順調**: Val CE は E1→E5 で 0.659 → 0.627 と単調減少。Token Acc も 80.6% → 81.5% で改善。
+- **過学習なし**: Train CE (0.545) < Val CE (0.627) だが差は大きくなく、5 epoch では過学習の兆候なし。
+- **高い Token Acc**: 81.5% は推論テキスト＋離散アクショントークンの joint prediction としては良好。CoC の構造（Driving Decision + Critical Components + CoC Trace + Action）を高精度で模倣学習できている。
+- **VRAM**: 6.52 GB と余裕あり。batch_size 増加の余地あり。
+
+### wandb
+
+- Run: https://wandb.ai/norikenpi-individual/minipamayo/runs/t6vjpfp1
