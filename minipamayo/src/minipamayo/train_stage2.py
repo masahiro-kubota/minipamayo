@@ -8,7 +8,7 @@ Usage:
     cd minipamayo && uv run python -m minipamayo.train_stage2 \
         --phase4_checkpoint checkpoints/phase4/best.pt
 
-    # Full VLM-match config (24 layers, 896 hidden, ~150M)
+    # Full config (24 layers, 896 hidden, ~280M)
     uv run python -m minipamayo.train_stage2 \
         --hidden_size 896 --num_attention_heads 14
 """
@@ -46,10 +46,10 @@ def parse_args():
     parser.add_argument("--K", type=int, default=6)
     # Expert architecture (must satisfy: hidden_size = num_attention_heads * 64)
     parser.add_argument(
-        "--hidden_size", type=int, default=512, help="Expert hidden dim (must be heads*64)"
+        "--hidden_size", type=int, default=640, help="Expert hidden dim (must be heads*64)"
     )
     parser.add_argument("--num_hidden_layers", type=int, default=24, help="Must match VLM (24)")
-    parser.add_argument("--num_attention_heads", type=int, default=8, help="Expert Q heads")
+    parser.add_argument("--num_attention_heads", type=int, default=10, help="Expert Q heads")
     parser.add_argument(
         "--intermediate_size", type=int, default=None, help="FFN dim (default: hidden*4)"
     )

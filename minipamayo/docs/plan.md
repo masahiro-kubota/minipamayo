@@ -242,7 +242,7 @@ Alpamayo の Dual Representation 戦略の前半（§3.6 Stage B）。制御入�
 
 VLM の KV-cache を条件として、Alpamayo 準拠の Flow Matching Expert で連続的かつ多様な軌道を生成する（§3.6 Stage C）。
 
-### 6.1 Expert 実装（Alpamayo 準拠、~100-150M params）
+### 6.1 Expert 実装（Alpamayo 準拠、~146M params、Expert/VLM≈30%）
 
 - [x] Qwen2 Transformer ベースの Expert（`AutoModel.from_config(Qwen2Config(...))`）
 - [x] KV-cache 互換性制約: `num_kv_heads=2`, `head_dim=64`, `num_hidden_layers=24`

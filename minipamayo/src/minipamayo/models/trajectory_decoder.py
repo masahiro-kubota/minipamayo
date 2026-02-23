@@ -8,8 +8,9 @@ KV-cache compatibility constraint:
   Expert must have same num_kv_heads (2) and head_dim (64) as Qwen2.5-0.5B
   so VLM's past_key_values can be consumed directly by Expert.
 
-Default config: 24 layers, 512 hidden, 8 heads (~100M params).
-Full VLM-match: 24 layers, 896 hidden, 14 heads (~270M params).
+Default config: 24 layers, 640 hidden, 10 heads (~146M params).
+  Matches Alpamayo's Expert/VLM ratio (~25%): 146M / 494M ≈ 30%.
+Full config: 24 layers, 896 hidden, 14 heads (~280M params).
 """
 
 import math
@@ -167,9 +168,9 @@ class TrajectoryDecoder(nn.Module):
     def __init__(
         self,
         K: int = 6,
-        hidden_size: int = 512,
+        hidden_size: int = 640,
         num_hidden_layers: int = 24,
-        num_attention_heads: int = 8,
+        num_attention_heads: int = 10,
         intermediate_size: int | None = None,
         num_fourier_feats: int = 20,
         fourier_max_freq: float = 100.0,

@@ -189,8 +189,9 @@ Alpamayo の「Expert」に相当。VLM の KV-cache を直接条件として受
 - **アーキテクチャ**: Qwen2 Transformer（`AutoModel.from_config(Qwen2Config(...))`）
   - VLM の `text_config` をベースに Expert 専用の config を構築（Alpamayo パターン）
   - `embed_tokens` は削除し、代わりに Fourier Feature V2 + MLP で action embeddings を生成
-- **サイジング**: デフォルト ~95M params（24 層, hidden=512, 8 heads）、フル ~280M params（24 層, hidden=896, 14 heads）
-  - Stage 2 では VLM は frozen（推論のみ、~1.16 GB）のため、95M の Expert 学習には ~1.2 GB（95M×12）+ activation ~3 GB = **~5 GB**。VRAM に十分な余裕あり
+- **サイジング**: デフォルト ~146M params（24 層, hidden=640, 10 heads）、フル ~280M params（24 層, hidden=896, 14 heads）
+  - Alpamayo の Expert/VLM 比率（~25%）に合わせたサイジング: 146M / 494M ≈ 30%
+  - Stage 2 では VLM は frozen（推論のみ、~1.16 GB）のため、146M の Expert 学習には ~1.5 GB（146M×10）+ activation ~3 GB = **~5.7 GB**。VRAM に十分な余裕あり
 - **条件付け**: VLM の **past_key_values（KV-cache）を Expert に直接渡す**（Alpamayo §5.1 準拠）
   - Expert の `num_kv_heads`（2）と `head_dim`（64）が VLM（Qwen2.5-0.5B）と一致する必要がある
   - Expert の `num_hidden_layers`（24）も VLM と一致が必要（レイヤーごとの KV-cache 対応）

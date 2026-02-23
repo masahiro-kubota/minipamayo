@@ -15,7 +15,7 @@
 | Vision Encoder | DINOv2 | DINOv2 ViT-B/14 (86M) | **同系列**（サイズは後述） |
 | LLM | Qwen2.5-0.5B | **Qwen2.5-0.5B** | **同一モデル** |
 | カメラ | マルチカメラ（7台）＋時系列 | **1台**（フロント） | **差分** |
-| Trajectory Decoder | Flow Matching Expert (~2B) | Flow Matching Expert (~95M) | **規模差 ~21倍**（後述 §6.1） |
+| Trajectory Decoder | Flow Matching Expert (~2B) | Flow Matching Expert (~146M) | **規模差 ~14倍**（後述 §6.1） |
 | 学習戦略 | Action Injection → SFT → RL | 回帰 → 離散 → Flow → SFT → RL | 同思想（MiniPamayo は fail-fast で段階的） |
 | 総パラメータ（VLM + Decoder） | ~0.5B + α | ~730M | 同オーダー |
 
@@ -126,7 +126,7 @@ VLM が「この画像を見たらどう動くべきか」を学習するには�
 |---|---|---|---|
 | 学習時 | 離散トークン（cross-entropy） | 同じ | **同一**（同一 LLM vocab） |
 | 推論時 | Flow Matching デコーダ | 同じ | **同一** |
-| Trajectory Decoder 規模 | ~2B（10B 版、ソースコード確認済み） | ~95M（24L, 512h, 8heads） | **規模差 ~21倍**（§6.1 参照） |
+| Trajectory Decoder 規模 | ~2B（10B 版、ソースコード確認済み） | ~146M（24L, 640h, 10heads） | **規模差 ~14倍**（§6.1 参照） |
 | Flow の条件付け | KV-cache（past_key_values） | KV-cache（past_key_values） | **同一**（Alpamayo 準拠に移行済み） |
 | 学習方式 | **同時学習**（CE + CFM を同一ループで） | **順次学習**（Stage 1 → Stage 2） | **意図的な差分** |
 
@@ -160,12 +160,12 @@ HuggingFace `nvidia/Alpamayo-R1-10B` の `config.json` から確認した具体�
 |---|---|---|
 | **アーキテクチャ** | Qwen3 Transformer（VLM text_config コピー） | Qwen2 Transformer（同パターン） |
 | **層数** | **36** | **24**（VLM と一致） |
-| **hidden_dim** | **2048** | **512** |
-| **attention heads** | **16** | **8** |
+| **hidden_dim** | **2048** | **640** |
+| **attention heads** | **16** | **10** |
 | **num_kv_heads** | 8 | **2**（VLM と一致） |
-| **intermediate_size** | **8256** | **2048** |
-| **推定パラメータ** | **~2B** | **~95M** |
-| **倍率** | — | **~21倍小さい** |
+| **intermediate_size** | **8256** | **2560** |
+| **推定パラメータ** | **~2B** | **~146M** |
+| **Expert/VLM 比率** | ~25% (2B/8B) | **~30% (146M/494M)** |
 
 #### 条件付け方式（Alpamayo 準拠に移行済み）
 
@@ -180,10 +180,12 @@ MiniPamayo の Expert は Alpamayo と同じく Qwen2 Transformer アーキテ�
 
 #### 残る規模差と改善方針
 
-~21倍の規模差は、**カーブシーンで Flow Matching が曲線軌跡を生成しにくい** 問題の一因と考えられる。改善策：
+Expert/VLM 比率は Alpamayo (~25%) と近い水準 (~30%) に合わせている。絶対的な規模差（~14倍）は VLM 自体の規模差（494M vs 8B ≈ 16倍）とほぼ比例しており、**比率としては整合的**。
+
+カーブシーンで曲線軌跡が生成しにくい問題が残る場合の改善策：
 
 1. **Classifier-Free Guidance (CFG)**: 訓練時に conditioning を確率的にドロップし、推論時にガイダンスで増幅
-2. **Expert スケールアップ**: 512h → 896h（~280M、フル構成）
+2. **Expert スケールアップ**: 640h → 896h（~280M、フル構成）
 3. **カーブシーンのオーバーサンプリング**: `WeightedRandomSampler` で実装済み（3× 重み付け）
 
 ### 意図的な差分: 順次学習（Stage 分割）
@@ -310,7 +312,7 @@ MiniPamayo は 1 カメラのため、マルチカメラ効率化は不要。た
 | LLM が異なる（SmolLM2-360M vs Qwen2.5-0.5B） | **同一モデル**（Qwen2.5-0.5B）を採用 |
 | DINOv2 サイズ（ViT-S vs ViT-B/L？） | **ViT-B/14** に変更。射影ギャップ 1.2倍 |
 | 予測ホライズン（3.2s vs 6.4s） | **6.4秒**に統一。128 離散トークン |
-| Trajectory Decoder の方式不明 | Alpamayo 準拠 KV-cache Expert（~95M デフォルト） |
+| Trajectory Decoder の方式不明 | Alpamayo 準拠 KV-cache Expert（~146M、Expert/VLM≈30%） |
 
 ### 残る構造的な差
 | 差分 | 影響 | 対応方針 |
