@@ -11,7 +11,7 @@ Stage 3（CoC SFT）で推論トークンと行動トークンを**同じシー�
 
 | Alpamayo 論文 | MiniPamayo Stage 1 | 差分 |
 |---|---|---|
-| §3.2.2 制御ベース表現の離散化 | 同一方式（均一量子化、128 トークン） | なし |
+| §3.2.2 制御ベース表現の離散化 | 同一方式（均一量子化、12 トークン） | K=6 vs K=64 |
 | §5.1 Dual Representation（学習時離散） | 同一思想（cross-entropy + teacher forcing） | なし |
 | §5.1 離散トークンで推論と軌道が共通空間を共有 | 同一（Qwen2.5-0.5B の語彙に特殊トークン追加） | なし |
 | §5.1 RL 時に離散トークンを通じて勾配を流す | Stage 4 で実装予定 | Stage 1 では基盤のみ |
@@ -22,7 +22,7 @@ Stage 3（CoC SFT）で推論トークンと行動トークンを**同じシー�
 1. **推論と軌道の共通空間**: Reasoning トークンと行動トークンが同一のトークン空間を共有し、密な結合が可能
 2. **RL での直接勾配**: ポストトレーニング時に離散トークンを通じて直接勾配を流せる
 3. **強い教師信号**: 離散表現が車両ダイナミクスの強い教師信号となる
-4. **高速推論**: Flow Matching による推論時デコードは 128 トークンの自己回帰生成より高速
+4. **高速推論**: Flow Matching による推論時デコードは 12 トークンの自己回帰生成より高速
 
 ---
 
@@ -51,9 +51,9 @@ value_reconstructed = v_min + (bin_index + 0.5) * (v_max - v_min) / N_bins
 
 | パラメータ | 値 | 備考 |
 |---|---|---|
-| 範囲 | [-4.0, 4.0] m/s² | データ分布から決定（急ブレーキ〜急加速をカバー） |
-| ビン数 (N_bins_a) | 256 | 分解能: ~0.031 m/s² |
-| 分解能 | (4.0 - (-4.0)) / 256 = 0.03125 m/s² | 十分な精度 |
+| 範囲 | [-6.0, 6.0] m/s² | データ分布から決定（急ブレーキ〜急加速をカバー） |
+| ビン数 (N_bins_a) | 256 | 分解能: ~0.047 m/s² |
+| 分解能 | (6.0 - (-6.0)) / 256 = 0.046875 m/s² | 十分な精度 |
 
 ### 曲率 κ の量子化
 
@@ -67,10 +67,10 @@ value_reconstructed = v_min + (bin_index + 0.5) * (v_max - v_min) / N_bins
 
 ### 離散トークンの構成
 
-- 予測ホライズン: **6.4 秒**（64 waypoints @ 10Hz）— Alpamayo と同一
+- 予測ホライズン: **3 秒**（6 waypoints @ dt=0.5s）— nuScenes 2Hz keyframe を直接使用
 - 各タイムステップで 2 値 (a, κ) を予測
-- 合計: **64 × 2 = 128 離散トークン**
-- トークン順序: `[a₁, κ₁, a₂, κ₂, ..., a₆₄, κ₆₄]`（交互配置）
+- 合計: **6 × 2 = 12 離散トークン**
+- トークン順序: `[a₁, κ₁, a₂, κ₂, ..., a₆, κ₆]`（交互配置）
 
 ### LLM 語彙への特殊トークン追加
 
@@ -118,14 +118,12 @@ model.resize_token_embeddings(VOCAB_SIZE_ORIGINAL + N_BINS)
 minipamayo/
 ├── src/
 │   └── minipamayo/
-│       └── models/
-│           ├── discrete_head.py        # 新規: 量子化・逆量子化、トークン ID マッピング
-│           ├── dynamics.py             # 変更: 量子化パラメータの追加
-│           └── minipamayo.py           # 変更: 離散トークンモードの追加
-├── configs/
-│   └── stage1.yaml                     # 新規: Stage 1 ハイパーパラメータ
-└── scripts/
-    └── train_stage1.py                 # 新規: Stage 1 学習スクリプト
+│       ├── models/
+│       │   ├── discrete_head.py        # 新規: 量子化・逆量子化、トークン ID マッピング
+│       │   ├── dynamics.py             # 変更: inverse_dynamics_np 追加
+│       │   └── minipamayo.py           # 変更: 離散トークンモードの追加
+│       ├── train_stage1.py             # 新規: Stage 1 学習スクリプト
+│       └── eval_stage1.py              # 新規: Stage 1 評価スクリプト
 ```
 
 ### models/discrete_head.py
@@ -143,7 +141,7 @@ class DiscreteActionTokenizer:
     def __init__(
         self,
         n_bins: int = 256,
-        a_range: tuple[float, float] = (-4.0, 4.0),
+        a_range: tuple[float, float] = (-6.0, 6.0),
         kappa_range: tuple[float, float] = (-0.1, 0.1),
         vocab_offset: int = 151_936,  # Qwen2.5-0.5B の語彙サイズ（embedding パディング済み）
     ):
@@ -201,10 +199,10 @@ class DiscreteActionTokenizer:
 # 量子化パラメータ（データ分布から決定）
 QUANTIZATION_CONFIG = {
     "n_bins": 256,
-    "a_range": (-4.0, 4.0),       # m/s²
+    "a_range": (-6.0, 6.0),       # m/s²
     "kappa_range": (-0.1, 0.1),   # 1/m
-    "n_waypoints": 64,
-    "dt": 0.1,                    # 10Hz
+    "n_waypoints": 6,
+    "dt": 0.5,                    # nuScenes 2Hz keyframe
 }
 ```
 
@@ -246,7 +244,7 @@ import torch, json
 ### Step 4: 学習ループの実装
 
 - [ ] 入力シーケンス構成:
-  - `[visual_tokens(16), BOS, action_token_1, ..., action_token_128]`
+  - `[visual_tokens(16), BOS, action_token_1, ..., action_token_12]`
   - BOS トークン（自己回帰開始のマーカー）を追加
 - [ ] Loss: cross-entropy（LLM の標準 next-token prediction）
   - action token 部分のみで loss を計算（visual token 部分は無視）
@@ -258,7 +256,7 @@ import torch, json
 
 ### Step 5: デコードパイプラインの実装
 
-- [ ] 自己回帰生成: `[visual_tokens, BOS]` → 128 トークンを逐次生成
+- [ ] 自己回帰生成: `[visual_tokens, BOS]` → 12 トークンを逐次生成
 - [ ] 離散トークン → 連続制御入力への逆量子化
 - [ ] 連続制御入力 → 軌道への変換（ユニサイクルダイナミクス Euler 積分）
 - [ ] 可視化: 予測軌道 vs GT を画像上にプロット
@@ -309,10 +307,10 @@ stage: 1
 
 # 量子化
 n_bins: 256
-a_range: [-4.0, 4.0]        # m/s²
+a_range: [-6.0, 6.0]        # m/s²
 kappa_range: [-0.1, 0.1]    # 1/m
-n_waypoints: 64
-n_action_tokens: 128         # 64 * 2
+n_waypoints: 6
+n_action_tokens: 12          # 6 * 2
 
 # モデル
 vision_encoder: facebook/dinov2-base

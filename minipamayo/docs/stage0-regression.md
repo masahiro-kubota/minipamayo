@@ -5,17 +5,17 @@
 MiniPamayo の最初のステージとして、**行動予測パイプライン全体が動作すること**を検証する。
 
 1. **Phase 3（fail-fast 最小検証）**: MLP 回帰ヘッドで `[steer, throttle]` (2,) を予測し、勾配が DINO → Adapter → LLM → Action Head の全経路に流れることを確認する
-2. **Phase 4（制御ベース表現への移行）**: Action Head の出力を (a, κ) × 64 waypoints に拡張し、Adapter を Cross-Attention Pooling に置換する
+2. **Phase 4（制御ベース表現への移行）**: Action Head の出力を (a, κ) × 6 waypoints に拡張し、Adapter を Cross-Attention Pooling に置換する
 
 ### Alpamayo 論文との対応表
 
 | Alpamayo 0.5B | MiniPamayo Stage 0 | 差分 |
 |---|---|---|
 | Action Injection（VLM に制御入力予測を注入） | Phase 3: MLP 回帰 → Phase 4: 制御ベース表現 | 同思想（段階的に導入） |
-| 制御ベース表現 (a, κ) × 64 @ 10Hz | Phase 4 で同一表現を採用 | **同一** |
+| 制御ベース表現 (a, κ) × 64 @ 10Hz | Phase 4 で同種表現を採用（K=6 @ dt=0.5s） | 差分（10Hz→2Hz） |
 | ユニサイクルダイナミクス + Euler 積分 | 同一の積分方式 | **同一** |
 | GT 逆算: 最小二乗法 + Tikhonov 正則化 | 同一の逆算方式 | **同一** |
-| 予測ホライズン 6.4秒 | 6.4秒（64 waypoints @ 10Hz） | **同一** |
+| 予測ホライズン 6.4秒 | 3秒（6 waypoints @ dt=0.5s） | 差分（nuScenes 2Hz keyframe を直接使用） |
 | DINOv2 → Projector → Qwen2.5-0.5B | DINOv2 ViT-B/14 → Adapter → Qwen2.5-0.5B | **同系列** |
 | マルチカメラ 7台 + 時系列 | 単一カメラ（CAM_FRONT） | 差分（MiniPamayo の制約） |
 | 内部データ 80K 時間 | nuScenes 公開データ | 差分（技術理解目的なので許容） |
@@ -90,7 +90,7 @@ speed = np.linalg.norm(pos_next - pos_curr) / dt
 throttle = speed - speed_prev  # 加速度近似
 ```
 
-#### Phase 4（制御ベース表現）: (a, κ) × 64
+#### Phase 4（制御ベース表現）: (a, κ) × 6
 
 Alpamayo 論文 §3.2.2 に準拠した制御ベース表現。ego pose 軌道から最小二乗法で逆算する。
 
@@ -103,16 +103,15 @@ y_{i+1} = y_i + Δt/2 * (v_i sin θ_i + v_{i+1} sin θ_{i+1})
 v_{i+1} = v_i + Δt * a_i
 ```
 
-- Δt = 0.1s（10Hz）— Alpamayo 論文値
-  - **実装上の注記**: nuScenes keyframe は 2Hz のため、実装では dt=0.5s を使用。将来 10Hz 補間を実装した場合に dt=0.1s に戻す
-- 予測ホライズン: 64 waypoints = 6.4秒
+- Δt = 0.5s（nuScenes keyframe 2Hz）
+  - Alpamayo は Δt=0.1s（10Hz）だが、MiniPamayo は nuScenes 2Hz keyframe を直接使用
+- 予測ホライズン: 6 waypoints × 0.5s = 3秒
 
 **GT 制御列の逆算手順**:
 
-1. nuScenes の ego pose 列（キーフレーム 2Hz）を取得
-2. 10Hz に補間（線形補間 + slerp for quaternion）
-3. 各フレームの (x, y, θ, v) を計算
-4. 既知の (x, y, θ, v) 軌道からユニサイクルダイナミクスの逆問題を解く
+1. nuScenes の ego pose 列（キーフレーム 2Hz、dt=0.5s）を取得
+2. 各フレームの (x, y, θ, v) を計算
+3. 既知の (x, y, θ, v) 軌道からユニサイクルダイナミクスの逆問題を解く
 5. 最小二乗法 + 2次 Tikhonov 正則化で (a, κ) 制御列を推定（Alpamayo §5.1 準拠）
    - 2次差分行列 D₂ で jerk の smoothness を保証
    - 加速度・曲率それぞれに λ（Tikhonov）と ridge の正則化パラメータ
@@ -162,31 +161,22 @@ transform = transforms.Compose([
 
 ```
 minipamayo/
-├── pyproject.toml                              # 新規: プロジェクト設定
+├── pyproject.toml
 ├── src/minipamayo/
 │   ├── __init__.py
 │   ├── models/
 │   │   ├── __init__.py
-│   │   ├── vision_encoder.py                   # 新規: DINOv2 ViT-B/14 ラッパー
-│   │   ├── adapter.py                          # 新規: Vision→LLM Adapter
-│   │   ├── llm.py                              # 新規: Qwen2.5-0.5B ラッパー
-│   │   ├── action_head.py                      # 新規: MLP 回帰ヘッド
-│   │   ├── dynamics.py                         # 新規: ユニサイクルダイナミクス
-│   │   └── minipamayo.py                       # 新規: 統合モデル
+│   │   ├── vision_encoder.py                   # DINOv2 ViT-B/14 ラッパー
+│   │   ├── adapter.py                          # Vision→LLM Adapter (MeanPool/PerToken/CrossAttn)
+│   │   ├── action_head.py                      # MLP 回帰ヘッド
+│   │   ├── dynamics.py                         # ユニサイクルダイナミクス (forward/inverse)
+│   │   └── minipamayo.py                       # 統合モデル (勾配制御 set_stage0〜4)
 │   ├── data/
 │   │   ├── __init__.py
-│   │   ├── nuscenes_dataset.py                 # 新規: nuScenes データセット
-│   │   ├── action_label.py                     # 新規: GT 制御列の逆算
-│   │   └── transforms.py                       # 新規: 画像前処理
-│   └── training/
-│       ├── __init__.py
-│       ├── trainer.py                          # 新規: 学習ループ
-│       └── losses.py                           # 新規: Huber loss 等
-├── configs/
-│   └── stage0.yaml                             # 新規: Stage 0 設定
-├── scripts/
-│   ├── train_stage0.py                         # 新規: 学習スクリプト
-│   └── eval_stage0.py                          # 新規: 評価スクリプト
+│   │   ├── nuscenes_dataset.py                 # nuScenes 画像データセット
+│   │   └── nuscenes_trajectory_dataset.py      # nuScenes 軌道データセット (inverse dynamics 統合)
+│   ├── train_stage0.py                         # Stage 0 学習スクリプト (学習ループ統合)
+│   └── eval_stage0.py                          # Stage 0 評価スクリプト
 ├── data/                                       # データディレクトリ（.gitignore）
 │   └── nuscenes/                               # nuScenes データ
 └── checkpoints/                                # チェックポイント（.gitignore）
@@ -260,7 +250,7 @@ minipamayo/
 
 #### 3.4 学習ループ
 
-- [x] `train_stage0.py` に学習ループを実装（`training/trainer.py` ではなく単一スクリプトに統合）
+- [x] `train_stage0.py` に学習ループを実装（単一スクリプトに統合）
   - micro-batch = 1
   - gradient accumulation = 16（実効バッチサイズ 16）
   - bf16 mixed precision（`torch.amp.autocast`）
@@ -305,22 +295,20 @@ minipamayo/
 
 #### 4.2 Action Head 拡張
 
-- [ ] Action Head の出力を `[steer, throttle]` (2,) → `(a, κ)` (64, 2) に拡張
-  - MLP: (896 → 512 → 256 → 128) — 64 waypoints × 2 values
-  - 出力を (64, 2) にリシェイプ
+- [ ] Action Head の出力を `[steer, throttle]` (2,) → `(a, κ)` (6, 2) に拡張
+  - MLP: (896 → 256 → 12) — 6 waypoints × 2 values
+  - 出力を (6, 2) にリシェイプ
 - [ ] Loss: Huber loss on (a, κ) 制御入力列
   ```python
-  loss = F.huber_loss(pred_controls, gt_controls, delta=1.0)  # (B, 64, 2)
+  loss = F.huber_loss(pred_controls, gt_controls, delta=1.0)  # (B, 6, 2)
   ```
 
 #### 4.3 GT 制御列の逆算パイプライン
 
-- [ ] `data/action_label.py` を実装
-  - nuScenes の ego pose 列（2Hz キーフレーム）を取得
-  - 10Hz に補間（線形 + quaternion slerp）
+- [x] GT 制御列の逆算を `data/nuscenes_trajectory_dataset.py` に統合
+  - nuScenes の ego pose 列（2Hz キーフレーム、dt=0.5s）を取得
   - 各フレームの (x, y, θ, v) を算出
-  - `inverse_dynamics()` で (a, κ) 制御列を逆算
-  - 逆算結果を事前計算してキャッシュ（JSON / HDF5）
+  - `inverse_dynamics_np()` で (a, κ) 制御列を逆算（2次 Tikhonov 正則化）
 
 #### 4.4 Adapter 改善（平均 Pool + Linear → Cross-Attention Pooling）
 
@@ -403,13 +391,13 @@ camera: CAM_FRONT
 # モデル変更点
 adapter: cross_attention_pooling            # Cross-Attention Pooling
 n_visual_tokens: 16                         # 16 queries
-action_output: 128                          # (a, κ) × 64 waypoints
+action_output: 12                           # (a, κ) × 6 waypoints
 
 # アクション表現
 action_representation: unicycle_control     # 制御ベース表現
-prediction_horizon: 64                      # 64 waypoints
-prediction_hz: 10                           # 10Hz
-prediction_seconds: 6.4                     # 6.4秒
+prediction_horizon: 6                       # 6 waypoints
+dt: 0.5                                     # nuScenes keyframe 2Hz
+prediction_seconds: 3.0                     # 3秒
 
 # GT 逆算
 a_lambda: 1.0e-4                             # 加速度 2次Tikhonov正則化

@@ -22,7 +22,7 @@ bf16 学習時の固定コストは **N × 12 bytes**（パラメータ 2B + Ada
 | VLM Stage 2 / ドメイン SFT (全解凍) | 582M | 6.98 GB | ~3 GB | **~10 GB** |
 | **Cosmos RL (全解凍 + ref policy)** | 582M + ref 582M×2 | 6.98 + 1.16 GB | ~3 GB | **~11 GB** |
 | MiniPamayo Stage 0-1 (全解凍) | 582M + head <1M | 6.98 GB | ~3 GB | **~10 GB** |
-| MiniPamayo Stage 2 (Flow 学習) | Traj. Decoder ~150M | 1.80 GB + VLM推論 1.16 GB | ~3 GB | **~6 GB** |
+| MiniPamayo Stage 2 (Flow 学習) | Traj. Decoder ~146M | 1.75 GB + VLM推論 1.16 GB | ~3 GB | **~6 GB** |
 | MiniPamayo Stage 3 (CoC SFT, 全解凍) | 582M | 6.98 GB | ~4 GB | **~11 GB** |
 | **MiniPamayo Stage 4 RL (LLM + ref)** | LLM 494M + ref 582M×2 | 5.93 + 1.16 GB | ~3 GB | **~10 GB** |
 
@@ -146,9 +146,10 @@ Alpamayo では raw position waypoint はセンサノイズの影響を受けや
 - 制御入力: **a = {(aᵢ, κᵢ)}** — 各タイムステップの加速度 `a` と曲率 `κ`
 - ダイナミクス: Euler 積分で (x, y, θ, v) の軌道に変換
 - **MiniPamayo での設定**:
-  - 予測ホライズン: **6.4秒**（64 waypoints @ 10Hz）— Alpamayo と同一
-  - 制御入力: 64 × 2 = **128 値**
+  - 予測ホライズン: **3秒**（6 waypoints @ dt=0.5s）— nuScenes keyframe 2Hz に対応
+  - 制御入力: 6 × 2 = **12 値**
   - GT 制御列: ego pose の軌道から最小二乗法（Tikhonov 正則化）で逆算
+  - **Alpamayo との差分**: Alpamayo は 6.4秒（64 waypoints @ 10Hz）。MiniPamayo は nuScenes 2Hz keyframe を直接使用し、10Hz 補間は行わない
 
 ```
 x_{i+1} = x_i + Δt/2 * (v_i cos θ_i + v_{i+1} cos θ_{i+1})
@@ -164,7 +165,7 @@ v_{i+1} = v_i + Δt * a_i
 #### Stage A — MLP 回帰ヘッド（Stage 0 で使用）
 
 - 入力: LLM 最終層 hidden state
-- 出力: 制御入力列 `{(aᵢ, κᵢ)}` — (K, 2)（初期は `[steer, throttle]` (2,) でも可）
+- 出力: 制御入力列 `{(aᵢ, κᵢ)}` — (6, 2)（初期は `[steer, throttle]` (2,) でも可）
 - Loss: Huber / L2
 
 #### Stage B — 離散トークン化 + MLP 回帰の Dual Representation（Stage 1 で使用）
@@ -173,14 +174,14 @@ Alpamayo の核心的設計の一つ。**学習時は離散トークン、推論
 
 - **学習時の離散表現**:
   - 制御入力 (aᵢ, κᵢ) を所定の範囲で均一量子化し、離散トークン化
-  - 64 waypoints × 2 values = **128 離散トークン** を LLM の語彙に特殊トークンとして追加
+  - 6 waypoints × 2 values = **12 離散トークン** を LLM の語彙に特殊トークンとして追加
   - LLM が推論トークン（将来の CoC）とアクショントークンを**同じ自己回帰フレームワーク**で生成
   - Loss: cross-entropy（LLM の標準的な next-token prediction）
 - **Dual Representation のメリット**（Alpamayo 論文 §5.1）:
   1. 推論（Reasoning）と軌道が共通のトークン空間を共有し、密な結合が可能
   2. RL ポストトレーニング時に離散トークンを通じて直接勾配を流せる
   3. 離散表現が車両ダイナミクスの強い教師信号となる
-  4. Flow Matching による推論時デコードは 128 トークンの自己回帰生成より高速
+  4. Flow Matching による推論時デコードは 12 トークンの自己回帰生成より高速
 
 #### Stage C — Flow Matching Expert（Stage 2 で使用）
 
@@ -339,8 +340,8 @@ MiniPamayo は単一カメラのため Alpamayo のマルチカメラ効率化�
 | Stage | 出力 | 形状 | 備考 |
 |---|---|---|---|
 | Stage 0（回帰 fail-fast） | steer, throttle | (2,) | 最小検証用 |
-| Stage 0（回帰） | 制御入力列 (a, κ) | (64, 2) | 制御ベース表現、6.4秒 @ 10Hz |
-| Stage 1（離散トークン） | 離散アクショントークン | (128,) tokens | 64 waypoints × 2 values |
+| Stage 0（回帰） | 制御入力列 (a, κ) | (6, 2) | 制御ベース表現、3秒 @ dt=0.5s |
+| Stage 1（離散トークン） | 離散アクショントークン | (12,) tokens | 6 waypoints × 2 values |
 | Stage 2（Flow） | 制御入力列 (a, κ) | (K, 2) — Flow で生成 | 連続・マルチモーダル |
 | Stage 3（推論 SFT） | CoC 推論 + 離散トークン | テキスト + (2K,) tokens | 自己回帰生成 |
 | Stage 4（RL） | CoC 推論 + 離散トークン | テキスト + (2K,) tokens | RL で品質向上 |
@@ -357,7 +358,7 @@ MiniPamayo は単一カメラのため Alpamayo のマルチカメラ効率化�
 | Adapter | ~2M | ~4 MB | 方式による |
 | Qwen2.5-0.5B | 494M | ~988 MB | hidden=896, 24 layers, GQA |
 | Action Head (MLP) | <1M | ~2 MB | |
-| Trajectory Decoder | ~150M | ~300 MB | §3.6 参照。LLM の ~30% |
+| Trajectory Decoder | ~146M | ~292 MB | §3.6 参照。LLM の ~30% |
 | **VLM 合計** | **~582M** | **~1.16 GB** | |
 | **全体合計** | **~730M** | **~1.46 GB** | |
 
@@ -375,7 +376,7 @@ bf16 学習時の固定コスト: **N × 12 bytes**（パラメータ 2B + AdamW
 | VLM Stage 2 / ドメイン SFT (全解凍) | 582M | 6.98 GB | ~3 GB | **~10 GB** |
 | **Cosmos RL (全解凍 + ref policy)** | 582M + ref 582M×2 | 6.98 + 1.16 GB | ~3 GB | **~11 GB** |
 | MiniPamayo Stage 0-1 (全解凍) | 582M + head <1M | 6.98 GB | ~3 GB | **~10 GB** |
-| MiniPamayo Stage 2 (Flow 学習) | Traj. Decoder ~150M | 1.80 GB + VLM推論 1.16 GB | ~3 GB | **~6 GB** |
+| MiniPamayo Stage 2 (Flow 学習) | Traj. Decoder ~146M | 1.75 GB + VLM推論 1.16 GB | ~3 GB | **~6 GB** |
 | MiniPamayo Stage 3 (CoC SFT, 全解凍) | 582M | 6.98 GB | ~4 GB | **~11 GB** |
 | **MiniPamayo Stage 4 RL (LLM + ref)** | LLM 494M + ref 582M×2 | 5.93 + 1.16 GB | ~3 GB | **~10 GB** |
 
@@ -387,7 +388,7 @@ Stage 2 では VLM は frozen（推論のみ）のため、Trajectory Decoder �
 
 - 利用可能: 24 - 1.16 (VLM推論) - 2 (activation) - 1.5 (overhead) = **~19 GB**
 - 最大 Decoder サイズ: 19 GB / 12 bytes ≈ **1.6B**（Alpamayo 10B の 2B には届かないが十分大きい）
-- 採用サイズ: **~150M**（LLM 494M の ~30%、Alpamayo 10B の LLM:Decoder 比率と同等）
+- 採用サイズ: **~146M**（LLM 494M の ~30%、Alpamayo の Expert/VLM 比率 ~25% に近い）
 
 **結論**: 全パイプラインを通じて最大 ~11 GB。RTX 4090 (24 GB) で十分実行可能。
 
@@ -438,8 +439,8 @@ Alpamayo 0.5B は **80,000 時間**の内部データで学習している。Min
 | Vision Encoder | DINOv2 | DINOv2 ViT-B/14 (86M) | **同系列**（Alpamayo 0.5B の DINOv2 サイズは論文に明記なし） |
 | LLM | Qwen2.5-0.5B | **Qwen2.5-0.5B** | **同一モデル** |
 | Adapter | DINOv2 → Qwen Projector | DINOv2 → Qwen Adapter | **同じ課題** |
-| Trajectory Decoder | Flow Matching（サイズ不明） | Flow Matching (~150M) | 同思想（LLM の ~30%） |
-| 予測ホライズン | 6.4秒（64 waypoints @ 10Hz） | **6.4秒**（64 waypoints @ 10Hz） | **同一** |
+| Trajectory Decoder | Flow Matching（サイズ不明） | Flow Matching (~146M) | 同思想（LLM の ~30%） |
+| 予測ホライズン | 6.4秒（64 waypoints @ 10Hz） | 3秒（6 waypoints @ dt=0.5s） | 差分（nuScenes 2Hz keyframe を直接使用） |
 | カメラ | マルチカメラ（7台）＋時系列 | **1 台** | 差分 |
 | アクション表現 | 制御ベース (a, κ) | 制御ベース (a, κ) | **同一** |
 | Dual Representation | 離散トークン（学習）+ Flow（推論） | 同一（同じ LLM vocab に離散トークン追加） | **同一** |
@@ -464,7 +465,7 @@ image_size: 224
 n_visual_tokens: 16
 text_input: null  # or fixed short prompt
 flow_steps: 10    # Stage 2 開始時
-trajectory_decoder_params: 150M       # LLM の ~30%
+trajectory_decoder_params: 146M       # LLM の ~30%
 micro_batch_size: 1
 grad_accumulation_steps: 16
 precision: bf16

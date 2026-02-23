@@ -249,16 +249,16 @@ MiniPamayo は fail-fast アプローチを取っているため、データも�
 class DrivingSample:
     image: torch.Tensor          # (3, 224, 224) — フロントカメラ RGB
     ego_state: torch.Tensor      # (D,) — 速度, yaw rate 等
-    gt_controls: torch.Tensor    # (64, 2) — (a, κ) 制御入力列 @ 10Hz, 6.4秒
+    gt_controls: torch.Tensor    # (6, 2) — (a, κ) 制御入力列 @ dt=0.5s, 3秒
     # または
-    gt_trajectory: torch.Tensor  # (64, 2) — (x, y) waypoints @ 10Hz, 6.4秒
+    gt_trajectory: torch.Tensor  # (6, 2) — (x, y) waypoints @ dt=0.5s, 3秒
     metadata: dict               # データセット名、シーンID 等
 ```
 
 各データセットからの変換:
-- **nuScenes**: ego pose → 10Hz 補間 → inverse dynamics → (a, κ)
+- **nuScenes**: ego pose (2Hz keyframe) → inverse dynamics (dt=0.5s) → (a, κ)
 - **comma2k19 / commaCarSegments**: CAN bus (steering_angle, speed) → (a, κ) 変換
-- **nuPlan**: ego trajectory → 10Hz リサンプル → inverse dynamics → (a, κ)
+- **nuPlan**: ego trajectory → 2Hz リサンプル → inverse dynamics (dt=0.5s) → (a, κ)
 - **CARLA**: 直接 (a, κ) を取得可能（privileged 情報）
 
 ### 4.3 データ量の目安

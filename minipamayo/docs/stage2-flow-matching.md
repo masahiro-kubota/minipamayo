@@ -11,7 +11,7 @@ Alpamayo 論文 §5.1 より:
 
 - **精度**: 連続空間で直接軌道を生成するため、量子化誤差がない
 - **快適性**: ジャーク（加加速度）が小さく、滑らかな軌道を生成
-- **推論速度**: 128 トークンの自己回帰生成より、10 step の Euler 積分の方が高速
+- **推論速度**: 12 トークンの自己回帰生成より、10 step の Euler 積分の方が高速
 - **多様性**: ノイズからの生成により、同一条件から複数の妥当な軌道をサンプリング可能
 
 ---
@@ -22,8 +22,8 @@ Alpamayo 論文 §5.1 より:
 |---|---|---|---|
 | デコード方式 | Flow Matching（推論時） | 同一 | §3.2.2 |
 | Dual Representation | 学習: 離散トークン / 推論: Flow | 同一 | §5.1 |
-| 条件付け | VLM の KV-cache に stop-gradient | Hidden state sequence + cross-attention（stop-gradient） | §5.1 |
-| Trajectory Decoder 規模 | 2B（10B 版） / 不明（0.5B 版） | ~150M（LLM 494M の ~30%） | §5.1 |
+| 条件付け | VLM の KV-cache に stop-gradient | VLM の KV-cache（past_key_values）に stop-gradient | §5.1 |
+| Trajectory Decoder 規模 | 2B（10B 版） / 不明（0.5B 版） | ~146M（LLM 494M の ~30%） | §5.1 |
 | Flow の優位性 | 精度・快適性・速度すべてで自己回帰に勝る | 同じ検証を実施 | §6.6 |
 | 離散トークン vs Flow | Flow が minADE6 で 15-20% 改善 | 比較評価を実施 | §6.6 Table 7 |
 | 勾配制御 | VLM KV-cache に stop-gradient | VLM 全体を frozen | §5.1 |
@@ -45,12 +45,12 @@ Stage 0/1 の学習済み重み（Vision Encoder + Adapter + LLM）が Stage 2 �
 
 ## 4. Trajectory Decoder の設計
 
-### 4.1 サイジング: ~150M params
+### 4.1 サイジング: ~146M params
 
-Alpamayo 10B 版は LLM 7B に対して Trajectory Decoder 2B（約 30%）。同比率を MiniPamayo に適用:
+Alpamayo の Expert/VLM 比率（~25%）に合わせたサイジング:
 
 - LLM (Qwen2.5-0.5B): 494M params
-- Trajectory Decoder: 494M × 0.30 = **~150M params**
+- Trajectory Decoder: **~146M params**（146M / 494M ≈ 30%）
 
 この規模であれば Stage 2 の VRAM 見積もり（後述 §8）に十分収まる。
 
@@ -58,18 +58,19 @@ Alpamayo 10B 版は LLM 7B に対して Trajectory Decoder 2B（約 30%）。同
 
 Trajectory Decoder は LLM と同系列の Transformer アーキテクチャを採用するが、hidden / MLP サイズを縮小する。
 
-#### 構成パラメータ（目安）
+#### 構成パラメータ
 
-| パラメータ | LLM (Qwen2.5-0.5B) | Trajectory Decoder | 備考 |
+| パラメータ | LLM (Qwen2.5-0.5B) | Trajectory Decoder (Expert) | 備考 |
 |---|---|---|---|
-| hidden_dim | 896 | 512 | 条件ベクトルの射影先 |
-| num_layers | 24 | 12 | 半分 |
-| num_attention_heads | 14 | 8 | |
-| num_kv_heads | 2 | 8（省略） | MiniPamayo では標準 MHA を使用（下記注参照） |
-| intermediate_size (MLP) | 4,864 | 2,048 | |
-| **推定パラメータ数** | **494M** | **~140-160M** | 目標 ~150M |
+| hidden_dim | 896 | **640** | Expert の Q heads 数で決定（heads × head_dim） |
+| num_layers | 24 | **24** | VLM と一致（レイヤーごとの KV-cache 対応） |
+| num_attention_heads | 14 | **10** | Expert の Q heads（自由に設定可能） |
+| num_kv_heads | 2 | **2** | VLM と一致（KV-cache 互換性制約） |
+| head_dim | 64 | **64** | VLM と一致（KV-cache 互換性制約） |
+| intermediate_size (MLP) | 4,864 | **2,560** | |
+| **推定パラメータ数** | **494M** | **~146M** | Expert/VLM ≈ 30% |
 
-> **GQA 省略の根拠**: Alpamayo 10B 版では KV-cache が巨大なため GQA（Grouped Query Attention）が必須だが、MiniPamayo の TrajectoryDecoder（~150M params）は入力シーケンス長=2（condition + action の 2 トークン）であり、KV-cache サイズがほぼ無視できる。128 次元のアクションを 2 トークンで処理するため GQA の恩恵はほぼゼロであり、標準の `nn.MultiheadAttention` で十分である。
+> **KV-cache 互換性制約**: Expert は VLM の `past_key_values` を直接消費するため、`num_kv_heads=2` と `head_dim=64` が VLM と一致する必要がある。`num_hidden_layers=24` も VLM と一致が必要（レイヤーごとの KV-cache 対応）。Expert の Q heads（`num_attention_heads`）は自由に設定可能で、`hidden_size = num_attention_heads × head_dim` の制約から有効な構成は 512/8, 640/10, 768/12, 896/14 heads。
 
 #### 入力構成
 
@@ -84,43 +85,47 @@ Decoder の各 Transformer ブロックへの入力は以下の要素から構�
 - **velocity field v_Θ(a_t, o)**: (batch, seq_len, action_dim) — Flow の速度場予測
 - 推論時: Euler 積分で a_t を更新し、連続的な制御入力列 (a, κ) を生成
 
-### 4.3 タイムステップ embedding
+### 4.3 入力エンコーディング（Fourier Feature V2 + MLP）
 
-拡散タイムステップ t ∈ [0, 1] を Transformer が扱える高次元ベクトルに変換する。
+アクション (a, κ) とタイムステップ t を Expert の hidden dim に射影する。Alpamayo §5.2 の ActionInProj に準拠。
 
 ```
-t (スカラー)
-  → Sinusoidal Positional Encoding (d_model)
-  → Linear(d_model, d_model * 4)
-  → SiLU
-  → Linear(d_model * 4, d_model)
-  → タイムステップ embedding (d_model)
+per-waypoint action (a_i, κ_i) + timestep t
+  → Fourier Feature V2（各次元を独立にエンコード）
+    - a_i → FourierEncoderV2(dim=20, max_freq=100) → (20,)
+    - κ_i → FourierEncoderV2(dim=20, max_freq=100) → (20,)
+    - t   → FourierEncoderV2(dim=20, max_freq=100) → (20,)
+  → Concat → (60,)
+  → MLPEncoder(RMSNorm + SiLU, 4 layers, hidden=1024)
+  → LayerNorm
+  → (hidden_size,) per waypoint = Expert の入力トークン列 (B, K, hidden_size)
 ```
 
-このタイムステップ embedding は各 Transformer ブロックの入力に adaptive layer norm（AdaLN）等で注入する。DiT (Diffusion Transformer) で確立された手法に倣う。
+タイムステップ t は AdaLN による各ブロックへの注入ではなく、各 waypoint の入力に直接 concat して Expert トークンに統合する方式。Alpamayo と同一。
 
 ### 4.4 条件付け方式
 
 VLM の内部表現を Trajectory Decoder に渡す方式として 2 つの選択肢がある。
 
-#### 採用方式: LLM hidden state sequence → cross-attention（Alpamayo §5.1 準拠）
+#### 採用方式: VLM KV-cache → past_key_values（Alpamayo §5.1 準拠）
 
 ```
-LLM 最終層出力 (batch, seq_len_llm, 896)
-  → Linear(896, d_decoder) → (batch, seq_len_llm, d_decoder)
-  → Decoder 各ブロックの cross-attention の key/value として使用
-  → Action token を query として cross-attend
+VLM forward (use_cache=True) → past_key_values (KV-cache)
+  → Expert に past_key_values として直接渡す
+  → Expert の attention が VLM の KV-cache を key/value として消費
 ```
 
-- トークンレベルの条件付けが可能（mean pooling による情報損失なし）
-- Alpamayo §5.1 の KV-cache 条件付けと同思想
-- 各 Transformer ブロックは self-attention + cross-attention + MLP の 3 段構成
-- AdaLN で timestep 条件付けを self-attn、cross-attn、MLP に適用（6 パラメータ）
+- **Alpamayo と同一方式**: VLM の `past_key_values` を Expert に直接渡す
+- Expert は Qwen2 Transformer（`AutoModel.from_config(Qwen2Config(...))`）で構築
+- Expert の `num_kv_heads=2`, `head_dim=64` が VLM と一致するため、KV-cache をネイティブに消費可能
+- Non-causal attention（`attention_mask` をゼロテンソルで bidirectional）
+- Position IDs は VLM シーケンス長の continuation（Expert トークンは VLM の続き）
+- 各 step_fn 後に Expert が追加したトークンの KV-cache を crop（Alpamayo パターン）
 
 Alpamayo 論文 §5.1:
 > "we apply a stop-gradient to the KV-cache produced by the VLM"
 
-MiniPamayo では VLM の hidden state sequence に `.detach()` を適用して同等の stop-gradient を実現。
+MiniPamayo では VLM を `@torch.no_grad()` で実行し、KV-cache に stop-gradient を適用して同等の勾配制御を実現。
 
 ---
 
@@ -206,20 +211,20 @@ Stage 2 では **Vision Encoder + Adapter + LLM は完全に frozen（stop-gradi
 | DINOv2 ViT-B/14 | 86M | **frozen** | 推論のみ |
 | Adapter | ~2M | **frozen** | 推論のみ |
 | Qwen2.5-0.5B (LLM) | 494M | **frozen** | KV-cache / hidden states を出力 |
-| Trajectory Decoder | ~150M | **trainable** | CFM loss で学習 |
+| Trajectory Decoder (Expert) | ~146M | **trainable** | CFM loss で学習 |
 
 ### 6.2 Alpamayo 論文との整合
 
 Alpamayo 論文 §5.1:
 > "we apply a stop-gradient to the KV-cache produced by the VLM to prevent gradients from the expert back-propagating into the VLM weights"
 
-MiniPamayo では VLM 全体を `torch.no_grad()` + `requires_grad_(False)` で frozen にすることで、これと同等の勾配制御を実現する。
+MiniPamayo では VLM 全体を `torch.no_grad()` + `requires_grad_(False)` で frozen にし、KV-cache を Expert に `past_key_values` として渡すことで同等の勾配制御を実現する。
 
 ### 6.3 実装上の注意
 
-- VLM の forward は `torch.no_grad()` で実行（メモリ節約 + 計算高速化）
-- VLM の出力（hidden states / KV-cache）を `.detach()` して Decoder に渡す
-- Decoder 内部の gradient checkpointing はオプションで適用（VRAM に余裕があるため不要な可能性が高い）
+- VLM の forward は `@torch.no_grad()` で実行（メモリ節約 + 計算高速化）
+- VLM の出力 KV-cache を Expert に `past_key_values` として渡す（stop-gradient が暗黙的に適用）
+- Expert 内部の gradient checkpointing はオプションで適用（VRAM に余裕があるため不要な可能性が高い）
 
 ---
 
@@ -230,18 +235,15 @@ minipamayo/
 ├── src/
 │   └── minipamayo/
 │       ├── models/
-│       │   ├── trajectory_decoder.py   # Flow Matching Transformer
-│       │   │   ├── TrajectoryDecoder       — メインモジュール
-│       │   │   ├── FlowTransformerBlock    — Transformer ブロック（AdaLN + cross-attn）
-│       │   │   └── TimestepEmbedding       — t → 高次元 embedding
-│       │   └── ...
-│       ├── training/
-│       │   ├── losses.py               # CFM loss の追加
+│       │   ├── trajectory_decoder.py   # Flow Matching Expert (Qwen2 Transformer)
+│       │   │   ├── TrajectoryDecoder       — メインモジュール (KV-cache 条件付け)
+│       │   │   ├── FourierEncoderV2        — Fourier Feature エンコーダ
+│       │   │   ├── ActionInProj            — per-waypoint Fourier + MLP 入力射影
 │       │   │   └── cfm_loss()              — Conditional Flow Matching loss
 │       │   └── ...
+│       ├── train_stage2.py             # Stage 2 学習ループ
+│       ├── eval_stage2.py              # Stage 2 評価 (ADE/FDE/多様性)
 │       └── ...
-└── configs/
-    └── stage2.yaml                     # Stage 2 用ハイパーパラメータ
 ```
 
 ---
@@ -253,7 +255,7 @@ minipamayo/
 | コンポーネント | パラメータ数 | 状態 | メモリ | 計算式 |
 |---|---|---|---|---|
 | VLM (Vision + Adapter + LLM) | 582M | frozen（推論のみ） | ~1.16 GB | 582M × 2 bytes (bf16) |
-| Trajectory Decoder | 150M | trainable | ~1.80 GB | 150M × 12 bytes (param + optim + grad) |
+| Trajectory Decoder (Expert) | 146M | trainable | ~1.75 GB | 146M × 12 bytes (param + optim + grad) |
 | Activation（Decoder 学習分） | — | — | ~3.00 GB | gradient checkpointing 込み |
 | **合計** | | | **~6 GB** | |
 
@@ -288,20 +290,20 @@ minipamayo/
 - [ ] CFM loss 関数の実装（MSE）
 - [ ] 単体テスト: 既知の分布（2D ガウシアン等）で Flow が学習できることを確認
 
-### Phase 2: Trajectory Decoder Transformer
+### Phase 2: Trajectory Decoder Expert（Qwen2 Transformer）
 
-- [ ] TimestepEmbedding モジュール（sinusoidal + MLP）
-- [ ] FlowTransformerBlock（self-attention + cross-attention + MLP + AdaLN×6）
-- [ ] TrajectoryDecoder 統合クラス
-- [ ] パラメータ数の確認: ~150M に収まること
+- [ ] FourierEncoderV2（per-dim Fourier feature encoding）
+- [ ] ActionInProj（per-waypoint Fourier + MLP 入力射影、Alpamayo §5.2 準拠）
+- [ ] TrajectoryDecoder 統合クラス（Qwen2Config ベースの Expert Transformer）
+- [ ] パラメータ数の確認: ~146M に収まること
 - [ ] 単体テスト: ランダム入力で forward / backward が通ること
 
-### Phase 3: 条件付けの実装
+### Phase 3: KV-cache 条件付けの実装
 
-- [ ] LLM hidden state sequence → Linear → cross-attention 条件付け（Alpamayo §5.1 準拠）
-- [ ] VLM forward（frozen）から hidden state sequence を取得するパイプライン
-- [ ] `.detach()` による stop-gradient の確認
-- [ ] cross-attention: action token を query、VLM hidden states を key/value
+- [ ] VLM forward（frozen, use_cache=True）から KV-cache を取得するパイプライン
+- [ ] KV-cache を Expert に `past_key_values` として渡す条件付け（Alpamayo §5.1 準拠）
+- [ ] `@torch.no_grad()` による stop-gradient の確認
+- [ ] Non-causal attention mask + position IDs の continuation
 
 ### Phase 4: 学習ループ
 
@@ -354,10 +356,10 @@ minipamayo/
 | 方式 | 処理内容 | 推論時間（想定） |
 |---|---|---|
 | Stage 0（回帰） | MLP 1 回 forward | 最速 |
-| Stage 1（離散） | 128 トークン自己回帰 | 最遅 |
+| Stage 1（離散） | 12 トークン自己回帰 | 最遅 |
 | **Stage 2（Flow）** | **10 step Euler 積分** | **中間** |
 
-Alpamayo 論文 §6.6 では Flow が 128 トークン自己回帰より高速であることが示されている。MiniPamayo でも同様の傾向を確認する。
+Alpamayo 論文 §6.6 では Flow が 12 トークン自己回帰より高速であることが示されている。MiniPamayo でも同様の傾向を確認する。
 
 ### 10.5 快適性指標
 
@@ -376,13 +378,13 @@ Alpamayo 論文 §6.6 Table 8 では、Flow が離散トークンよりジャー
 # Stage 2: Flow Matching
 # ─────────────────────────
 
-# Trajectory Decoder（本番設定 ~150M params）
-# fail-fast 設定: hidden=256, layers=4, heads=4 (~3M params)
-decoder_hidden_dim: 512
-decoder_num_layers: 12
-decoder_num_heads: 8
-# decoder_num_kv_heads: 標準 MHA を使用（GQA は省略、本文 §4.2 参照）
-decoder_intermediate_size: 2048
+# Trajectory Decoder Expert（~146M params）
+decoder_hidden_dim: 640
+decoder_num_layers: 24
+decoder_num_heads: 10
+decoder_num_kv_heads: 2         # VLM と一致（KV-cache 互換性制約）
+decoder_head_dim: 64            # VLM と一致
+decoder_intermediate_size: 2560
 decoder_dropout: 0.0
 
 # Flow Matching
@@ -394,8 +396,13 @@ beta_a: 2.0                  # Beta distribution alpha parameter
 beta_b: 5.0                  # Beta distribution beta parameter
 
 # 条件付け（Alpamayo §5.1 準拠）
-conditioning: "hidden_states_sequence"  # LLM hidden state sequence → cross-attention
-# mean pooling は使用しない（トークンレベルの情報を保持）
+conditioning: "kv_cache"  # VLM の past_key_values を Expert に直接渡す
+
+# 入力エンコーディング（Fourier Feature V2 + MLP, Alpamayo §5.2）
+num_fourier_feats: 20        # Fourier encoding 次元数
+fourier_max_freq: 100.0      # Fourier encoding 最大周波数
+mlp_hidden_size: 1024        # ActionInProj MLP hidden dim
+mlp_num_layers: 4            # ActionInProj MLP 層数
 
 # 学習
 optimizer: AdamW
@@ -403,18 +410,18 @@ learning_rate: 1.0e-4
 weight_decay: 0.01
 scheduler: cosine_with_warmup
 warmup_steps: 500
-max_steps: 50000             # データ量に応じて調整
+max_epochs: 30               # データ量に応じて調整
 micro_batch_size: 4          # VRAM に余裕があるため Stage 0/1 より大きく
 grad_accumulation_steps: 4
+max_grad_norm: 1.0
 precision: bf16
-gradient_checkpointing: false  # Decoder のみなので不要の可能性
 
 # VLM（frozen）
 vlm_checkpoint: "checkpoints/stage1/best.pt"  # Stage 0/1 の学習済み重み
 vlm_precision: bf16
 
 # アクション表現
-prediction_horizon: 64       # 64 waypoints @ 10Hz = 6.4s
+prediction_horizon: 6        # 6 waypoints @ dt=0.5s = 3s
 action_dim: 2                # (acceleration, curvature)
 
 # 評価
@@ -433,7 +440,7 @@ Stage 2 の完了判定基準:
 | **CFM loss 収束** | loss が安定して下がり、plateauに達する | 必須 |
 | **ADE/FDE が Stage 0 と同等以上** | 回帰版と比較して劣化しない | 必須 |
 | **多様性の確認** | 同一入力から複数の異なる妥当な軌道が生成される | 必須 |
-| **推論速度** | 128 トークン自己回帰より高速（or 同等） | 推奨 |
+| **推論速度** | 12 トークン自己回帰より高速（or 同等） | 推奨 |
 | **快適性** | ジャークが離散トークン版より改善 | 推奨 |
 | **OOM しない** | RTX 4090 (24 GB) 以内で学習・推論が完了 | 必須 |
 | **Flow steps の影響** | 10 steps で十分な精度が出ることを確認 | 推奨 |

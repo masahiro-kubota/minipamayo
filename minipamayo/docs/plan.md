@@ -28,38 +28,29 @@ minipamayo/
 │   └── minipamayo/
 │       ├── models/
 │       │   ├── vision_encoder.py    # DINOv2 ViT-B/14 ラッパー
-│       │   ├── adapter.py           # Vision→LLM Adapter
-│       │   ├── llm.py               # Qwen2.5-0.5B ラッパー
+│       │   ├── adapter.py           # Vision→LLM Adapter (MeanPool/PerToken/CrossAttn)
 │       │   ├── action_head.py       # MLP 回帰ヘッド (Stage 0)
 │       │   ├── discrete_head.py     # 離散トークン化 (Stage 1)
-│       │   ├── trajectory_decoder.py # Trajectory Decoder / Flow Matching (Stage 2)
-│       │   ├── dynamics.py          # ユニサイクルダイナミクス・制御表現
-│       │   └── minipamayo.py        # 統合モデル
+│       │   ├── trajectory_decoder.py # Expert Transformer / Flow Matching (Stage 2)
+│       │   ├── dynamics.py          # ユニサイクルダイナミクス (forward/inverse)
+│       │   └── minipamayo.py        # 統合モデル (勾配制御 set_stage0〜4)
 │       ├── data/
-│       │   ├── dataset.py           # データセットクラス
-│       │   ├── transforms.py        # 画像前処理
-│       │   ├── action_label.py      # GT 制御列の逆算 (ego pose → (a, κ))
-│       │   └── coc_labeling.py      # CoC auto-labeling パイプライン
-│       ├── training/
-│       │   ├── trainer.py           # 学習ループ
-│       │   ├── losses.py            # 損失関数
-│       │   ├── grpo.py              # GRPO (RL ポストトレーニング)
-│       │   └── rewards.py           # 報酬関数 (Stage 4)
-│       └── utils/
-│           └── config.py            # 設定管理
-├── configs/
-│   ├── domain_sft.yaml
-│   ├── stage0.yaml
-│   ├── stage1.yaml
-│   ├── stage2.yaml
-│   ├── stage3.yaml
-│   └── stage4.yaml
-├── scripts/
-│   ├── train.py
-│   ├── eval.py
-│   ├── visualize.py
-│   └── auto_label.py              # VLM auto-labeling スクリプト
-├── tests/
+│       │   ├── nuscenes_dataset.py           # nuScenes 画像データセット
+│       │   ├── nuscenes_trajectory_dataset.py # nuScenes 軌道データセット (inverse dynamics)
+│       │   ├── coc_dataset.py               # CoC (Chain of Causation) データセット
+│       │   └── coc_labeling.py              # CoC auto-labeling パイプライン
+│       ├── rewards.py              # 報酬関数 (Stage 4)
+│       ├── train_stage0.py         # Stage 0 学習 (回帰)
+│       ├── eval_stage0.py          # Stage 0 評価
+│       ├── train_stage1.py         # Stage 1 学習 (離散トークン)
+│       ├── eval_stage1.py          # Stage 1 評価
+│       ├── train_stage2.py         # Stage 2 学習 (Flow Matching Expert)
+│       ├── eval_stage2.py          # Stage 2 評価
+│       ├── train_stage3.py         # Stage 3 学習 (CoC SFT)
+│       ├── eval_stage3.py          # Stage 3 評価
+│       ├── train_stage4.py         # Stage 4 学習 (GRPO RL)
+│       ├── eval_stage4.py          # Stage 4 評価
+│       └── visualize.py            # 可視化ツール
 ├── pyproject.toml
 └── README.md
 ```
@@ -164,8 +155,8 @@ DINOv2 ViT-B/14 + Qwen2.5-0.5B から汎用 VLM を構築し、運転ドメイ�
 - [ ] ユニサイクルダイナミクス実装（§3.5）
   - 制御入力 (a, κ) → Euler 積分 → (x, y, θ, v) 軌道
   - 逆算: ego pose 軌道 → (a, κ) の GT 制御列
-- [ ] Action Head の出力を `[steer, throttle]` (2,) → `(a, κ)` (K, 2) に拡張
-  - K=64（6.4秒 @ 10Hz）— Alpamayo と同一
+- [ ] Action Head の出力を `[steer, throttle]` (2,) → `(a, κ)` (6, 2) に拡張
+  - K=6（3秒 @ dt=0.5s）
 - [ ] Loss: Huber loss on (a, κ) 制御入力列
 - [ ] 制御入力 → 軌道変換の可視化（予測 vs GT を画像上にプロット）
 
@@ -184,7 +175,7 @@ DINOv2 ViT-B/14 + Qwen2.5-0.5B から汎用 VLM を構築し、運転ドメイ�
 ### 4.4 評価スクリプト
 
 - [ ] `eval_stage0.py` を制御ベース表現に対応させる
-  - (a, κ) × 64 の予測 vs GT（サンプルごと）
+  - (a, κ) × 6 の予測 vs GT（サンプルごと）
   - ADE / FDE の計算
   - 予測分布の統計（GT の分散をどれだけカバーしているか）
   - forward_dynamics で軌道に変換して可視化
@@ -208,7 +199,7 @@ Alpamayo の Dual Representation 戦略の前半（§3.6 Stage B）。制御入�
 - [ ] 制御入力 (aᵢ, κᵢ) の均一量子化
   - 加速度 a: 所定範囲を N_bins で量子化
   - 曲率 κ: 所定範囲を N_bins で量子化
-- [ ] LLM の語彙に離散アクショントークンを追加（128 トークン = 64 × 2）
+- [ ] LLM の語彙に離散アクショントークンを追加（12 トークン = 6 × 2）
 - [ ] embedding layer と LM head の拡張
 
 ### 5.2 学習
