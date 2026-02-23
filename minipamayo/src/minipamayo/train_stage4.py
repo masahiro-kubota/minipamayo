@@ -57,7 +57,7 @@ def parse_args():
     parser.add_argument(
         "--n_flow_steps", type=int, default=10, help="Euler steps for Flow Matching"
     )
-    parser.add_argument("--K_traj", type=int, default=64, help="Trajectory waypoints")
+    parser.add_argument("--K_traj", type=int, default=6, help="Trajectory waypoints")
     parser.add_argument("--n_bins", type=int, default=256)
     parser.add_argument("--n_rollouts", type=int, default=4, help="Rollouts per sample")
     parser.add_argument("--grpo_beta", type=float, default=0.5, help="GRPO softmax temperature")

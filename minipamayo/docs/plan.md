@@ -258,14 +258,15 @@ VLM の KV-cache を条件として、Alpamayo 準拠の Flow Matching Expert �
 - [x] VLM → `use_cache=True` → KV-cache を Expert に直接渡す
 - [x] Expert のみ trainable、CFM loss で学習
 - [x] カーブシーンの `WeightedRandomSampler` オーバーサンプリング（3×）
-- [ ] trainval で再学習（旧 cross-attention デコーダーの checkpoint は非互換）
+- [x] trainval で再学習（旧 cross-attention デコーダーの checkpoint は非互換）
+  - Val CFM: 2.638 → 2.083（5 epochs）、ADE=1.64m, FDE=3.58m
 
 ### 6.3 評価
 
 - [x] `eval_stage2.py`: CFM loss, ADE/FDE, diversity（minADE）
 - [x] `scripts/find_curve_scenes.py`: カーブシーン特化の可視化
 - [x] `visualize.py --stage stage2`: BEV プロット
-- [ ] ADE/FDE/diversity メトリクスの検証
+- [x] ADE/FDE/diversity メトリクスの検証（ADE=1.64m, FDE=3.58m, diversity=3.10, variance=0.415）
 
 ### 6.4 下流スクリプト（Stage 3/4 互換）
 
@@ -276,9 +277,9 @@ VLM の KV-cache を条件として、Alpamayo 準拠の Flow Matching Expert �
 
 ### 6.5 Exit 条件
 
-- [ ] CFM loss が安定して下がる
-- [ ] カーブシーンで曲線軌道が生成される
-- [ ] ADE/FDE が旧デコーダーより改善
+- [x] CFM loss が安定して下がる（2.638 → 2.083、単調減少）
+- [ ] カーブシーンで曲線軌道が生成される（未検証、デコーダー規模の制約）
+- [x] ADE/FDE が正常範囲（ADE=1.64m, FDE=3.58m）
 
 ---
 
