@@ -1,16 +1,15 @@
-"""Stage 2: Flow Matching Expert training (Alpamayo-faithful).
+"""Stage 2: Flow Matching Expert training (Alpamayo §5.1).
 
-Freezes VLM (VisionEncoder + Adapter + LLM) and trains Expert Transformer
-with Conditional Flow Matching loss. Expert is conditioned on VLM KV-cache
-via past_key_values (Alpamayo §5.1-5.2).
+Freezes VLM and trains Expert Transformer with Conditional Flow Matching loss.
+Expert is conditioned on VLM KV-cache containing [o_image, Reason] via
+past_key_values. GT CoC reasoning text is teacher-forced through the VLM
+to build the KV-cache (Alpamayo §5.1 CFM loss formula).
 
 Usage:
     cd minipamayo && uv run python -m minipamayo.train_stage2 \
-        --phase4_checkpoint checkpoints/phase4/best.pt
-
-    # Full config (24 layers, 896 hidden, ~280M)
-    uv run python -m minipamayo.train_stage2 \
-        --hidden_size 896 --num_attention_heads 14
+        --nuscenes_version v1.0-trainval \
+        --coc_data data/coc_annotations_trainval.jsonl \
+        --max_epochs 30 --batch_size 1 --grad_accum 64
 """
 
 import argparse
@@ -21,8 +20,11 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, WeightedRandomSampler
+from transformers import AutoTokenizer
 
+from .data.coc_dataset import CoCDataset
 from .data.nuscenes_trajectory_dataset import NuScenesTrajectoryDataset
+from .models.discrete_head import DiscreteActionTokenizer
 from .models.minipamayo import MiniPamayo
 from .models.trajectory_decoder import TrajectoryDecoder, cfm_loss
 
@@ -31,6 +33,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="MiniPamayo Stage 2 Expert training")
     parser.add_argument("--nuscenes_root", type=str, default="/mnt/ssd/nuscenes")
     parser.add_argument("--nuscenes_version", type=str, default="v1.0-trainval")
+    parser.add_argument("--coc_data", type=str, default="data/coc_annotations_trainval.jsonl")
     parser.add_argument(
         "--phase4_checkpoint",
         type=str,
@@ -61,9 +64,10 @@ def parse_args():
     # Training
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=0.01)
-    parser.add_argument("--batch_size", type=int, default=4)
-    parser.add_argument("--grad_accum", type=int, default=4)
+    parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--grad_accum", type=int, default=64)
     parser.add_argument("--max_epochs", type=int, default=30)
+    parser.add_argument("--attention_dropout", type=float, default=0.0)
     parser.add_argument("--max_grad_norm", type=float, default=1.0)
     parser.add_argument("--log_every", type=int, default=1)
     parser.add_argument("--save_dir", type=str, default="checkpoints/stage2")
@@ -86,24 +90,62 @@ def parse_args():
 
 
 @torch.no_grad()
-def extract_kv_cache(vlm, pixel_values):
-    """Extract VLM KV-cache as condition for Expert decoder (Alpamayo §5.1).
+def extract_kv_cache(vlm, pixel_values, batch, device):
+    """Extract VLM KV-cache with teacher-forced GT reasoning (Alpamayo §5.1).
 
-    Runs VLM forward with use_cache=True to produce past_key_values,
-    which are passed directly to the Expert Transformer.
+    Builds the full prompt sequence [system][user][visual][question][asst][reasoning]
+    and runs VLM forward with use_cache=True. The resulting KV-cache contains
+    both visual and reasoning information for Expert conditioning.
 
     Args:
         vlm: frozen MiniPamayo model
-        pixel_values: (B, 3, 224, 224)
+        pixel_values: (1, 3, 224, 224)
+        batch: dict from CoCDataset with system_ids, reasoning_ids, etc.
+        device: torch device
 
     Returns:
         kv_cache: DynamicCache with VLM KV-cache
         prefill_seq_len: int, sequence length of the KV-cache
     """
+    # Visual tokens
     with torch.amp.autocast("cuda", dtype=torch.bfloat16):
         patch_features = vlm.vision_encoder(pixel_values)
         visual_tokens = vlm.adapter(patch_features)
-        outputs = vlm.llm(inputs_embeds=visual_tokens, use_cache=True)
+
+    # Text embeddings via LLM embedding layer
+    # When called from DataLoader (batch_size=1), tensors already have batch dim (1, N).
+    # When called directly (e.g. for seq_length check), tensors are 1D (N,) → need unsqueeze.
+    embed_layer = vlm.llm.get_input_embeddings()
+
+    def _embed(ids_key):
+        t = batch[ids_key].to(device)
+        if t.dim() == 1:
+            t = t.unsqueeze(0)
+        return embed_layer(t)
+
+    system_embeds = _embed("system_ids")
+    user_prefix_embeds = _embed("user_prefix_ids")
+    ego_question_embeds = _embed("ego_question_ids")
+    asst_prefix_embeds = _embed("asst_prefix_ids")
+    reasoning_embeds = _embed("reasoning_ids")
+
+    # Full sequence: [system][user_prefix][visual][ego_question][asst_prefix][reasoning]
+    target_dtype = system_embeds.dtype
+    inputs_embeds = torch.cat(
+        [
+            system_embeds,
+            user_prefix_embeds,
+            visual_tokens.to(target_dtype),
+            ego_question_embeds,
+            asst_prefix_embeds,
+            reasoning_embeds,
+        ],
+        dim=1,
+    )
+
+    with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+        outputs = vlm.llm(inputs_embeds=inputs_embeds, use_cache=True)
+
     kv_cache = outputs.past_key_values
     prefill_seq_len = kv_cache.get_seq_length()
     return kv_cache, prefill_seq_len
@@ -120,7 +162,7 @@ def evaluate(decoder, vlm, dataloader, device):
         pixel_values = batch["pixel_values"].to(device)
         gt_action = batch["action"].to(device)
 
-        kv_cache, prefill_seq_len = extract_kv_cache(vlm, pixel_values)
+        kv_cache, prefill_seq_len = extract_kv_cache(vlm, pixel_values, batch, device)
         with torch.amp.autocast("cuda", dtype=torch.bfloat16):
             loss = cfm_loss(decoder, gt_action, kv_cache, prefill_seq_len)
         total_loss += loss.item()
@@ -186,20 +228,46 @@ def main():
         f"Expert: hidden={args.hidden_size}, layers={args.num_hidden_layers}, heads={args.num_attention_heads}"
     )
 
-    # Dataset (scene-level split)
-    print("Loading dataset...")
+    # Tokenizers (needed for CoCDataset)
+    text_tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B")
+    action_tokenizer = DiscreteActionTokenizer(n_bins=256)
+
+    # Dataset (scene-level split via CoCDataset with image_path filtering)
+    print("Loading CoC dataset for Expert training...")
     use_split = args.nuscenes_version == "v1.0-trainval"
-    train_dataset = NuScenesTrajectoryDataset(
-        nuscenes_root=args.nuscenes_root,
-        version=args.nuscenes_version,
+    if use_split:
+        train_traj = NuScenesTrajectoryDataset(
+            nuscenes_root=args.nuscenes_root,
+            version=args.nuscenes_version,
+            K=args.K,
+            split="train",
+        )
+        val_traj = NuScenesTrajectoryDataset(
+            nuscenes_root=args.nuscenes_root,
+            version=args.nuscenes_version,
+            K=args.K,
+            split="val",
+        )
+        train_paths = {s["image_path"] for s in train_traj.samples}
+        val_paths = {s["image_path"] for s in val_traj.samples}
+        del train_traj, val_traj
+    else:
+        train_paths = None
+        val_paths = None
+
+    train_dataset = CoCDataset(
+        annotations_path=args.coc_data,
+        tokenizer=text_tokenizer,
+        action_tokenizer=action_tokenizer,
         K=args.K,
-        split="train" if use_split else None,
+        allowed_image_paths=train_paths,
     )
-    val_dataset = NuScenesTrajectoryDataset(
-        nuscenes_root=args.nuscenes_root,
-        version=args.nuscenes_version,
+    val_dataset = CoCDataset(
+        annotations_path=args.coc_data,
+        tokenizer=text_tokenizer,
+        action_tokenizer=action_tokenizer,
         K=args.K,
-        split="val" if use_split else None,
+        allowed_image_paths=val_paths,
     )
     print(f"Train: {len(train_dataset)}, Val: {len(val_dataset)}")
 
@@ -211,12 +279,13 @@ def main():
             train_dataset, args.curve_kappa_threshold, args.curve_oversample
         )
 
+    # batch_size=1 because reasoning_ids length varies per sample
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
         sampler=train_sampler,
         shuffle=(train_sampler is None),
-        num_workers=2,
+        num_workers=0,
         pin_memory=True,
         drop_last=True,
     )
@@ -224,11 +293,11 @@ def main():
         val_dataset,
         batch_size=args.batch_size,
         shuffle=False,
-        num_workers=2,
+        num_workers=0,
         pin_memory=True,
     )
 
-    # Frozen VLM (feature extractor)
+    # Frozen VLM (feature extractor + KV-cache generator)
     print("Building frozen VLM...")
     vlm = MiniPamayo(adapter_type="cross_attention", action_dim=action_dim)
 
@@ -267,6 +336,7 @@ def main():
         fourier_max_freq=args.fourier_max_freq,
         mlp_hidden_size=args.mlp_hidden_size,
         mlp_num_layers=args.mlp_num_layers,
+        attention_dropout=args.attention_dropout,
         **action_stats,
     )
     decoder = decoder.to(device)
@@ -274,6 +344,13 @@ def main():
     n_params = sum(p.numel() for p in decoder.parameters())
     n_trainable = sum(p.numel() for p in decoder.parameters() if p.requires_grad)
     print(f"Decoder: {n_params:,} total, {n_trainable:,} trainable")
+
+    # Log KV-cache seq_length for first sample
+    sample0 = train_dataset[0]
+    pv0 = sample0["pixel_values"].unsqueeze(0).to(device)
+    kv0, seq0 = extract_kv_cache(vlm, pv0, sample0, device)
+    print(f"KV-cache seq_length: {seq0} (was 16 with visual-only)")
+    del kv0, pv0
 
     # Optimizer + scheduler
     optimizer = torch.optim.AdamW(decoder.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -318,8 +395,8 @@ def main():
             pixel_values = batch["pixel_values"].to(device)
             gt_action = batch["action"].to(device)
 
-            # Extract KV-cache from frozen VLM
-            kv_cache, prefill_seq_len = extract_kv_cache(vlm, pixel_values)
+            # Extract KV-cache from frozen VLM (with GT reasoning teacher-forced)
+            kv_cache, prefill_seq_len = extract_kv_cache(vlm, pixel_values, batch, device)
 
             # CFM loss (bf16 for decoder)
             with torch.amp.autocast("cuda", dtype=torch.bfloat16):
@@ -389,7 +466,8 @@ def main():
                 "fourier_max_freq": args.fourier_max_freq,
                 "mlp_hidden_size": args.mlp_hidden_size,
                 "mlp_num_layers": args.mlp_num_layers,
-                "architecture": "expert_kv_cache",  # distinguish from old cross-attn decoder
+                "attention_dropout": args.attention_dropout,
+                "architecture": "expert_kv_cache",
             }
             torch.save(ckpt_data, save_dir / "best.pt")
 
@@ -408,6 +486,7 @@ def main():
         "fourier_max_freq": args.fourier_max_freq,
         "mlp_hidden_size": args.mlp_hidden_size,
         "mlp_num_layers": args.mlp_num_layers,
+        "attention_dropout": args.attention_dropout,
         "architecture": "expert_kv_cache",
     }
     torch.save(ckpt_data, save_dir / "final.pt")

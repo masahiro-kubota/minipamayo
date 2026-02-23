@@ -176,6 +176,7 @@ class TrajectoryDecoder(nn.Module):
         fourier_max_freq: float = 100.0,
         mlp_hidden_size: int = 1024,
         mlp_num_layers: int = 4,
+        attention_dropout: float = 0.0,
         accel_mean: float = 0.0,
         accel_std: float = 1.0,
         kappa_mean: float = 0.0,
@@ -222,6 +223,8 @@ class TrajectoryDecoder(nn.Module):
             max_position_embeddings=8192,
             use_cache=True,
             rms_norm_eps=1e-6,
+            rope_theta=1000000.0,  # Must match VLM (Qwen2.5-0.5B) for KV-cache compat
+            attention_dropout=attention_dropout,
         )
         self.expert = AutoModel.from_config(expert_config)
         del self.expert.embed_tokens  # we provide our own embeddings
@@ -407,6 +410,7 @@ def load_decoder_from_checkpoint(ckpt_path, device):
         fourier_max_freq=ckpt.get("fourier_max_freq", 100.0),
         mlp_hidden_size=ckpt.get("mlp_hidden_size", 1024),
         mlp_num_layers=ckpt.get("mlp_num_layers", 4),
+        attention_dropout=ckpt.get("attention_dropout", 0.0),
     )
     decoder.load_state_dict(ckpt["decoder_state_dict"])
     decoder = decoder.to(device).eval()
