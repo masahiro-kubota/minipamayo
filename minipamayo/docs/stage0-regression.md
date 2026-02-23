@@ -113,27 +113,32 @@ v_{i+1} = v_i + Δt * a_i
 2. 10Hz に補間（線形補間 + slerp for quaternion）
 3. 各フレームの (x, y, θ, v) を計算
 4. 既知の (x, y, θ, v) 軌道からユニサイクルダイナミクスの逆問題を解く
-5. 最小二乗法 + Tikhonov 正則化で (a, κ) 制御列を推定
-   - 正則化パラメータ λ で制御入力の滑らかさを調整
+5. 最小二乗法 + 2次 Tikhonov 正則化で (a, κ) 制御列を推定（Alpamayo §5.1 準拠）
+   - 2次差分行列 D₂ で jerk の smoothness を保証
+   - 加速度・曲率それぞれに λ（Tikhonov）と ridge の正則化パラメータ
 
 ```python
-def inverse_dynamics_np(positions, headings, dt=0.5, v_threshold=0.1, lambda_reg=1e-2):
-    """(x, y, θ) 軌道から (a, κ) 制御列をTikhonov正則化で逆算する。"""
+def inverse_dynamics_np(positions, headings, dt=0.5, v_threshold=0.1,
+                        a_lambda=1e-4, a_ridge=1e-4,
+                        kappa_lambda=1e-4, kappa_ridge=1e-4):
+    """(x, y, θ) 軌道から (a, κ) 制御列を2次Tikhonov正則化で逆算する。"""
     # 速度: 位置の差分
     speeds = np.linalg.norm(np.diff(positions, axis=0), axis=1) / dt
 
-    # Tikhonov 正則化による加速度推定
-    # 有限差分行列 D で微分を表現し、正則化項で平滑化
-    # a = (D^T D + λI)^{-1} D^T b
-    D = finite_difference_matrix(K, dt)
-    raw_a = D @ speeds
-    a = np.linalg.solve(D.T @ D + lambda_reg * np.eye(K+1), D.T @ raw_a)
-    a = D @ a  # 正則化された加速度
+    # heading 差分: atan2(sin, cos) で正規化
+    heading_diffs = np.arctan2(np.sin(np.diff(headings)), np.cos(np.diff(headings)))
 
-    # 曲率: heading 差分と速度から算出、Tikhonov 正則化で平滑化
-    # L は平滑化行列（隣接差分）
-    raw_kappa = np.diff(headings) / (speeds_clipped * dt)
-    kappa = np.linalg.solve(np.eye(K) + lambda_reg * L.T @ L, raw_kappa)
+    # 加速度: 2次 Tikhonov + ridge (Alpamayo w_smooth2)
+    raw_a = np.diff(speeds) / dt
+    D2 = second_order_diff_matrix(K)  # [-1, 2, -1] 差分行列
+    DTD = (a_lambda / dt**4) * D2.T @ D2
+    a = np.linalg.solve(np.eye(K) + DTD + a_ridge * np.eye(K), raw_a)
+
+    # 曲率: 運動学的分母 s = dt·v + dt²/2·a（加速度項含む）
+    s = dt * speeds[:K] + (dt**2) / 2.0 * a
+    S = np.diag(s)
+    DTD_k = (kappa_lambda / dt**4) * second_order_diff_matrix(K).T @ second_order_diff_matrix(K)
+    kappa = np.linalg.solve(S.T @ S + DTD_k + kappa_ridge * np.eye(K), S.T @ heading_diffs[:K])
 
     return a, kappa  # (K,), (K,)
 ```
@@ -407,7 +412,10 @@ prediction_hz: 10                           # 10Hz
 prediction_seconds: 6.4                     # 6.4秒
 
 # GT 逆算
-inverse_dynamics_lambda: 1.0e-3             # Tikhonov 正則化パラメータ
+a_lambda: 1.0e-4                             # 加速度 2次Tikhonov正則化
+a_ridge: 1.0e-4                              # 加速度 ridge正則化
+kappa_lambda: 1.0e-4                         # 曲率 2次Tikhonov正則化
+kappa_ridge: 1.0e-4                          # 曲率 ridge正則化
 
 # 学習
 nuscenes_version: v1.0-trainval             # 本番データ

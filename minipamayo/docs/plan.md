@@ -236,45 +236,49 @@ Alpamayo の Dual Representation 戦略の前半（§3.6 Stage B）。制御入�
 
 ---
 
-## Phase 6: Stage 2 — Flow Matching
+## Phase 6: Stage 2 — Flow Matching Expert
 
 ### 目的
 
-LLM 内部表現を条件として、Flow Matching で連続的かつ多様な軌道を生成する（§3.6 Stage C）。Dual Representation の推論側を完成させる。
+VLM の KV-cache を条件として、Alpamayo 準拠の Flow Matching Expert で連続的かつ多様な軌道を生成する（§3.6 Stage C）。
 
-### 6.1 Trajectory Decoder 実装（~150M params）
+### 6.1 Expert 実装（Alpamayo 準拠、~100-150M params）
 
-- [ ] Conditional Flow Matching (CFM) の基本実装
-  - Gaussian OT path: aₜ = t·a + (1-t)·ε
-  - Target field: u = a - ε
-  - Flow network: 小さな Transformer
-- [ ] 条件付け方式:
-  - **Option A（軽量）**: LLM 最終層 hidden states → 条件ベクトル
-  - **Option B（Alpamayo 寄り）**: LLM KV-cache → cross-attention
-- [ ] タイムステップ embedding の実装
+- [x] Qwen2 Transformer ベースの Expert（`AutoModel.from_config(Qwen2Config(...))`）
+- [x] KV-cache 互換性制約: `num_kv_heads=2`, `head_dim=64`, `num_hidden_layers=24`
+- [x] Fourier Feature V2 + MLP 入力エンコーディング（各 action 次元別）
+- [x] Non-causal attention, position_ids continuation, KV-cache crop
+- [x] CFM loss（Gaussian OT path, Beta time schedule）
+- [x] `cfm_sample`（Euler 積分、デフォルト 10 ステップ）
+- [x] `load_decoder_from_checkpoint` ヘルパー関数
 
 ### 6.2 学習
 
-- [ ] Stage 0/1 の学習済み重み（Vision + Adapter + LLM）を初期値として使用
-- [ ] **stop-gradient**: Vision Encoder + Adapter + LLM は frozen（§3.7）
-- [ ] Trajectory Decoder のみ trainable
-- [ ] CFM loss の実装
-- [ ] gradient checkpointing を Trajectory Decoder にも適用
+- [x] Phase 4 の学習済み VLM 重み（Vision + Adapter + LLM）を frozen で使用
+- [x] VLM → `use_cache=True` → KV-cache を Expert に直接渡す
+- [x] Expert のみ trainable、CFM loss で学習
+- [x] カーブシーンの `WeightedRandomSampler` オーバーサンプリング（3×）
+- [ ] trainval で再学習（旧 cross-attention デコーダーの checkpoint は非互換）
 
-### 6.3 評価スクリプト (`eval_stage2.py`)
+### 6.3 評価
 
-- [ ] チェックポイントロード → 全データで推論
-- [ ] CFM loss の計算
-- [ ] 同一入力から複数の軌道をサンプリング → 多様性の確認（軌道間分散）
-- [ ] ADE / FDE を回帰版・離散版と比較
-- [ ] Flow steps 数の影響を調査（10, 20, 50）
-- [ ] 生成軌道の可視化（BEV プロット）
+- [x] `eval_stage2.py`: CFM loss, ADE/FDE, diversity（minADE）
+- [x] `scripts/find_curve_scenes.py`: カーブシーン特化の可視化
+- [x] `visualize.py --stage stage2`: BEV プロット
+- [ ] ADE/FDE/diversity メトリクスの検証
 
-### 6.4 Exit 条件
+### 6.4 下流スクリプト（Stage 3/4 互換）
 
-- [ ] CFM loss が下がる
-- [ ] 回帰版より多様な軌道が出る（or ノイズ耐性が上がる）
-- [ ] 推論速度が離散トークン自己回帰より速い
+- [x] `train_stage4.py`: `extract_flow_trajectory` → KV-cache 方式に更新
+- [x] `eval_stage4.py`: 同上
+- [x] `visualize.py`: `_load_decoder`, `_flow_trajectory` → KV-cache 方式に更新
+- [x] チェックポイントキー名統一（`decoder_state_dict`）
+
+### 6.5 Exit 条件
+
+- [ ] CFM loss が安定して下がる
+- [ ] カーブシーンで曲線軌道が生成される
+- [ ] ADE/FDE が旧デコーダーより改善
 
 ---
 

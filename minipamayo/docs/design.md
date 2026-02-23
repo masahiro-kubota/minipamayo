@@ -182,22 +182,32 @@ Alpamayo の核心的設計の一つ。**学習時は離散トークン、推論
   3. 離散表現が車両ダイナミクスの強い教師信号となる
   4. Flow Matching による推論時デコードは 128 トークンの自己回帰生成より高速
 
-#### Stage C — Trajectory Decoder / Flow Matching ヘッド（Stage 2 で使用）
+#### Stage C — Flow Matching Expert（Stage 2 で使用）
 
-Alpamayo の「Trajectory Decoder」に相当。VLM の出力を条件として、Flow Matching で連続軌道を生成する。
+Alpamayo の「Expert」に相当。VLM の KV-cache を直接条件として受け取り、Flow Matching で連続軌道を生成する。
 
-- **サイジング**: ~150M params
-  - Alpamayo 10B 版は LLM 7B に対して Trajectory Decoder 2B（約30%）。同比率で LLM 494M の ~30% = **~150M**
-  - Stage 2 では VLM は frozen（推論のみ、~1.16 GB）のため、150M の Decoder 学習には ~1.8 GB（150M×12）+ activation ~3 GB = **~6 GB**。VRAM に十分な余裕あり
-- 条件付け: **LLM KV-cache（hidden state シーケンス）→ cross-attention**（Alpamayo §5.1 準拠）
-  - Decoder の各ブロックで、action token を query、VLM hidden state シーケンスを key/value として cross-attention
-  - AdaLN でタイムステップ条件付けを self-attention、cross-attention、MLP に適用
-- Flow network: 小さな Transformer（LLM と同じ attention head 数・次元、ただし hidden/MLP は小さい）
-- 入力: noisy action aₜ + VLM hidden state sequence（stop-gradient）
-- 出力: velocity field vΘ(aₜ, o) の予測 → Euler 積分で連続軌道を生成
+- **アーキテクチャ**: Qwen2 Transformer（`AutoModel.from_config(Qwen2Config(...))`）
+  - VLM の `text_config` をベースに Expert 専用の config を構築（Alpamayo パターン）
+  - `embed_tokens` は削除し、代わりに Fourier Feature V2 + MLP で action embeddings を生成
+- **サイジング**: デフォルト ~100M params（24 層, hidden=512, 8 heads）、フル ~150M params（24 層, hidden=896, 14 heads）
+  - Stage 2 では VLM は frozen（推論のみ、~1.16 GB）のため、150M の Expert 学習には ~1.8 GB（150M×12）+ activation ~3 GB = **~6 GB**。VRAM に十分な余裕あり
+- **条件付け**: VLM の **past_key_values（KV-cache）を Expert に直接渡す**（Alpamayo §5.1 準拠）
+  - Expert の `num_kv_heads`（2）と `head_dim`（64）が VLM（Qwen2.5-0.5B）と一致する必要がある
+  - Expert の `num_hidden_layers`（24）も VLM と一致が必要（レイヤーごとの KV-cache 対応）
+  - Expert の Q heads（`num_attention_heads`）は自由に設定可能
+- **入力エンコーディング**: Fourier Feature V2 + MLP（Alpamayo `action_in_proj` 準拠）
+  - 各 action 次元（a, κ）を別々の Fourier encoder で符号化
+  - timestep t も Fourier encoder で符号化
+  - concat → MLP（4 層, 1024 hidden, RMSNorm + SiLU）→ LayerNorm → (B, K, hidden_size)
+- **attention**: non-causal（`attention_mask` をゼロテンソルで bidirectional）
+- **position_ids**: VLM シーケンス長の continuation（Expert トークンは VLM の続き）
+- **KV-cache crop**: 各 step_fn 後に Expert が追加したトークンを crop（Alpamayo パターン）
+- 出力: velocity field vΘ(aₜ, t, c) → Linear(hidden_size → 2) で (a, κ) を予測
 - Loss: **CFM loss** — Gaussian OT path `aₜ = t·a + (1-t)·ε`, target `u = a - ε`, **t ~ Beta(α, β)**（shifted beta distribution、Alpamayo §5.2）
-- Flow steps: 推論時 10（δt = 0.1）
-- **勾配制御**: Trajectory Decoder 学習時、VLM（Vision Encoder + LLM）からの KV-cache / hidden states には **stop-gradient** を適用し、Decoder の勾配が VLM 側に逆伝播しないようにする（Alpamayo 論文 §5.1 と同様）
+- Flow steps: 推論時 10（δt = 0.1）、Euler 積分
+- **Action 正規化**: 学習データから a/κ の mean/std を計算し `register_buffer` で保持。CFM は正規化空間で学習し、推論時に逆正規化（Alpamayo §5.1 準拠）
+- **勾配制御**: Expert 学習時、VLM は frozen。KV-cache は stop-gradient で Expert に渡す
+- **カーブオーバーサンプリング**: `WeightedRandomSampler` で |κ| が閾値以上のシーンを 3× 重み付け
 
 ### 3.7 Stage ごとの勾配制御方針
 
@@ -217,7 +227,7 @@ Alpamayo 論文に倣い、学習 Stage ごとにモジュールの trainable / 
 - **Stage 1**: LLM の語彙に離散アクショントークンを追加し、cross-entropy loss で学習。全モジュール trainable。
 - **Stage 2**: Stage 0/1 で学習済みの Vision Encoder + Adapter + LLM の重みを初期値として使用し、これらには **stop-gradient を適用**。Flow Head のみを学習する。これにより前段で獲得した表現を壊さずに Flow の学習を安定させる。
   - Alpamayo 論文では Action Expert 学習時に VLM の KV-cache に stop-gradient を適用している（§5.1: "we apply a stop-gradient to the KV-cache produced by the VLM to prevent gradients from the expert back-propagating into the VLM weights"）。
-  - MiniPamayo では LLM hidden state sequence（`.detach()`）を Trajectory Decoder の cross-attention に渡す方式で同等の勾配制御を実現。
+  - MiniPamayo では VLM の KV-cache を Expert に `past_key_values` として渡す方式で Alpamayo と同等の勾配制御を実現（`@torch.no_grad()` で stop-gradient）。
 - **Stage 3**: CoC 推論データで SFT。推論トークン + 離散軌道トークンの joint 学習。
 - **Stage 4**: RL ポストトレーニング。LLM のみ trainable（他は frozen）。KL 正則化で SFT モデルからの逸脱を防ぐ。
 - **（発展）**: 各 Stage の fine-tune 後、全体を小さい学習率で end-to-end fine-tune することも検討可。
@@ -432,7 +442,7 @@ Alpamayo 0.5B は **80,000 時間**の内部データで学習している。Min
 | カメラ | マルチカメラ（7台）＋時系列 | **1 台** | 差分 |
 | アクション表現 | 制御ベース (a, κ) | 制御ベース (a, κ) | **同一** |
 | Dual Representation | 離散トークン（学習）+ Flow（推論） | 同一（同じ LLM vocab に離散トークン追加） | **同一** |
-| 条件付け | KV-cache（stop-gradient） | Hidden state sequence + cross-attention（stop-gradient） | **同思想** |
+| 条件付け | KV-cache（stop-gradient） | KV-cache（stop-gradient） | **同一** |
 | Reasoning | CoC（構造化推論） | CoC（簡略版サブセット） | 同思想 |
 | 学習戦略 | ドメインSFT → Action Injection → SFT → RL | ドメインSFT → 回帰 → 離散 → Flow → SFT → RL | 同思想 |
 | RL ポストトレーニング | GRPO（softmax-weighted） + マルチ報酬 | GRPO（softmax-weighted） + マルチ報酬 | **同一** |
