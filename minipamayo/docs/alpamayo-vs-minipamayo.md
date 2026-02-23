@@ -15,7 +15,7 @@
 | Vision Encoder | DINOv2 | DINOv2 ViT-B/14 (86M) | **同系列**（サイズは後述） |
 | LLM | Qwen2.5-0.5B | **Qwen2.5-0.5B** | **同一モデル** |
 | カメラ | マルチカメラ（7台）＋時系列 | **1台**（フロント） | **差分** |
-| Trajectory Decoder | Flow Matching Expert (~2B) | Flow Matching (~3M fail-fast) | **規模差 ~700倍**（後述 §6.1） |
+| Trajectory Decoder | Flow Matching Expert (~2B) | Flow Matching Expert (~95M) | **規模差 ~21倍**（後述 §6.1） |
 | 学習戦略 | Action Injection → SFT → RL | 回帰 → 離散 → Flow → SFT → RL | 同思想（MiniPamayo は fail-fast で段階的） |
 | 総パラメータ（VLM + Decoder） | ~0.5B + α | ~730M | 同オーダー |
 
@@ -126,8 +126,8 @@ VLM が「この画像を見たらどう動くべきか」を学習するには�
 |---|---|---|---|
 | 学習時 | 離散トークン（cross-entropy） | 同じ | **同一**（同一 LLM vocab） |
 | 推論時 | Flow Matching デコーダ | 同じ | **同一** |
-| Trajectory Decoder 規模 | ~2B（10B 版、ソースコード確認済み） | ~3M（fail-fast 構成） | **規模差 ~700倍**（§6.1 参照） |
-| Flow の条件付け | KV-cache（past_key_values） | cross-attention | **実装差あり**（§6.1 参照） |
+| Trajectory Decoder 規模 | ~2B（10B 版、ソースコード確認済み） | ~95M（24L, 512h, 8heads） | **規模差 ~21倍**（§6.1 参照） |
+| Flow の条件付け | KV-cache（past_key_values） | KV-cache（past_key_values） | **同一**（Alpamayo 準拠に移行済み） |
 | 学習方式 | **同時学習**（CE + CFM を同一ループで） | **順次学習**（Stage 1 → Stage 2） | **意図的な差分** |
 
 ### 6.1 Expert（Flow Matching デコーダ）アーキテクチャの実態
@@ -156,34 +156,35 @@ HuggingFace `nvidia/Alpamayo-R1-10B` の `config.json` から確認した具体�
 
 #### MiniPamayo との比較
 
-| | Alpamayo Expert (10B版) | MiniPamayo Decoder (fail-fast) |
+| | Alpamayo Expert (10B版) | MiniPamayo Expert (デフォルト) |
 |---|---|---|
-| **アーキテクチャ** | Qwen Transformer（VLM text_config コピー） | カスタム Transformer（AdaLN + cross-attn） |
-| **層数** | **36** | **4** |
-| **hidden_dim** | **2048** | **256** |
-| **attention heads** | **16** | **4** |
-| **intermediate_size** | **8256** | **1024**（mlp_ratio=4） |
-| **推定パラメータ** | **~2B** | **~3M** |
-| **倍率** | — | **~700倍小さい** |
+| **アーキテクチャ** | Qwen3 Transformer（VLM text_config コピー） | Qwen2 Transformer（同パターン） |
+| **層数** | **36** | **24**（VLM と一致） |
+| **hidden_dim** | **2048** | **512** |
+| **attention heads** | **16** | **8** |
+| **num_kv_heads** | 8 | **2**（VLM と一致） |
+| **intermediate_size** | **8256** | **2048** |
+| **推定パラメータ** | **~2B** | **~95M** |
+| **倍率** | — | **~21倍小さい** |
 
-#### 条件付け方式の差異
+#### 条件付け方式（Alpamayo 準拠に移行済み）
 
-| | Alpamayo Expert | MiniPamayo Decoder |
+| | Alpamayo Expert | MiniPamayo Expert |
 |---|---|---|
-| **方式** | `past_key_values`（VLM の KV-cache をそのまま渡す） | cross-attention（VLM hidden states を投影して KV に使用） |
-| **attention 種別** | **non-causal**（`is_causal=False`） | self-attn + cross-attn |
-| **入力エンコーディング** | Fourier Feature V2 + MLP (4層, 1024dim) | Linear projection |
+| **方式** | `past_key_values`（VLM の KV-cache をそのまま渡す） | `past_key_values`（同一方式） |
+| **attention 種別** | **non-causal**（`is_causal=False`） | **non-causal**（同一） |
+| **入力エンコーディング** | Fourier Feature V2 + MLP (4層, 1024dim) | Fourier Feature V2 + MLP (4層, 1024dim)（同一） |
+| **KV-cache crop** | 各ステップ後に Expert 追加分を crop | 同一パターン |
 
-Alpamayo は VLM の `past_key_values`（KV-cache）を Expert の `past_key_values` にそのまま渡す。Expert は VLM と同じ Transformer アーキテクチャなので、KV-cache をネイティブに消費できる。MiniPamayo のカスタム Transformer では KV-cache を直接受け取れないため、cross-attention で代替している。
+MiniPamayo の Expert は Alpamayo と同じく Qwen2 Transformer アーキテクチャを採用し、VLM の `past_key_values` をネイティブに消費する。`num_kv_heads=2`, `head_dim=64` を VLM と一致させることで KV-cache の直接受け渡しが可能。
 
-#### 影響と改善方針
+#### 残る規模差と改善方針
 
-この ~700倍の規模差と条件付け方式の違いは、**カーブシーンで Flow Matching が曲線軌跡を生成できない** 問題の主因と考えられる。改善策：
+~21倍の規模差は、**カーブシーンで Flow Matching が曲線軌跡を生成しにくい** 問題の一因と考えられる。改善策：
 
-1. **Classifier-Free Guidance (CFG)**: 訓練時に conditioning を確率的にドロップし、推論時にガイダンスで増幅。小さいデコーダでも conditioning の効きを最大化できる
-2. **デコーダ増量**: 4層256dim → 8-12層512dim（~50-200M）にスケールアップ
-3. **カーブシーンのオーバーサンプリング**: nuScenes はほとんどが直進シーン。曲線シーンの重み付けで対処
-4. **KV-cache 方式への変更**: Alpamayo と同じく past_key_values で条件付ける方式に切り替え（ただし Qwen2.5-0.5B と MiniPamayo Decoder の hidden_size が異なるため、投影レイヤーが必要）
+1. **Classifier-Free Guidance (CFG)**: 訓練時に conditioning を確率的にドロップし、推論時にガイダンスで増幅
+2. **Expert スケールアップ**: 512h → 896h（~280M、フル構成）
+3. **カーブシーンのオーバーサンプリング**: `WeightedRandomSampler` で実装済み（3× 重み付け）
 
 ### 意図的な差分: 順次学習（Stage 分割）
 
@@ -309,7 +310,7 @@ MiniPamayo は 1 カメラのため、マルチカメラ効率化は不要。た
 | LLM が異なる（SmolLM2-360M vs Qwen2.5-0.5B） | **同一モデル**（Qwen2.5-0.5B）を採用 |
 | DINOv2 サイズ（ViT-S vs ViT-B/L？） | **ViT-B/14** に変更。射影ギャップ 1.2倍 |
 | 予測ホライズン（3.2s vs 6.4s） | **6.4秒**に統一。128 離散トークン |
-| Trajectory Decoder の比率不明 | **~150M**（LLM の ~30%、Alpamayo 10B と同比率） |
+| Trajectory Decoder の方式不明 | Alpamayo 準拠 KV-cache Expert（~95M デフォルト） |
 
 ### 残る構造的な差
 | 差分 | 影響 | 対応方針 |
