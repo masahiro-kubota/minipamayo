@@ -1,11 +1,16 @@
-"""Stage 2: Flow Matching trajectory decoder training.
+"""Stage 2: Flow Matching Expert training (Alpamayo-faithful).
 
-Freezes VLM (VisionEncoder + Adapter + LLM) as feature extractor.
-Trains TrajectoryDecoder with Conditional Flow Matching loss.
+Freezes VLM (VisionEncoder + Adapter + LLM) and trains Expert Transformer
+with Conditional Flow Matching loss. Expert is conditioned on VLM KV-cache
+via past_key_values (Alpamayo §5.1-5.2).
 
 Usage:
     cd minipamayo && uv run python -m minipamayo.train_stage2 \
         --phase4_checkpoint checkpoints/phase4/best.pt
+
+    # Full VLM-match config (24 layers, 896 hidden, ~150M)
+    uv run python -m minipamayo.train_stage2 \
+        --hidden_size 896 --num_attention_heads 14
 """
 
 import argparse
@@ -13,8 +18,9 @@ import math
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from .data.nuscenes_trajectory_dataset import NuScenesTrajectoryDataset
 from .models.minipamayo import MiniPamayo
@@ -22,7 +28,7 @@ from .models.trajectory_decoder import TrajectoryDecoder, cfm_loss
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="MiniPamayo Stage 2 training")
+    parser = argparse.ArgumentParser(description="MiniPamayo Stage 2 Expert training")
     parser.add_argument("--nuscenes_root", type=str, default="/mnt/ssd/nuscenes")
     parser.add_argument("--nuscenes_version", type=str, default="v1.0-trainval")
     parser.add_argument(
@@ -37,11 +43,22 @@ def parse_args():
         default="../cosmos-reason-mini/checkpoints/rl-mini-merged/checkpoint-final.pt",
         help="Fallback VLM checkpoint if phase4 not found",
     )
-    parser.add_argument("--K", type=int, default=64)
-    parser.add_argument("--hidden_dim", type=int, default=512)
-    parser.add_argument("--num_layers", type=int, default=12)
-    parser.add_argument("--num_heads", type=int, default=8)
-    parser.add_argument("--condition_dim", type=int, default=896)
+    parser.add_argument("--K", type=int, default=6)
+    # Expert architecture (must satisfy: hidden_size = num_attention_heads * 64)
+    parser.add_argument(
+        "--hidden_size", type=int, default=512, help="Expert hidden dim (must be heads*64)"
+    )
+    parser.add_argument("--num_hidden_layers", type=int, default=24, help="Must match VLM (24)")
+    parser.add_argument("--num_attention_heads", type=int, default=8, help="Expert Q heads")
+    parser.add_argument(
+        "--intermediate_size", type=int, default=None, help="FFN dim (default: hidden*4)"
+    )
+    # Fourier encoding
+    parser.add_argument("--num_fourier_feats", type=int, default=20)
+    parser.add_argument("--fourier_max_freq", type=float, default=100.0)
+    parser.add_argument("--mlp_hidden_size", type=int, default=1024)
+    parser.add_argument("--mlp_num_layers", type=int, default=4)
+    # Training
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=0.01)
     parser.add_argument("--batch_size", type=int, default=4)
@@ -52,29 +69,44 @@ def parse_args():
     parser.add_argument("--save_dir", type=str, default="checkpoints/stage2")
     parser.add_argument("--use_wandb", action="store_true")
     parser.add_argument("--wandb_project", type=str, default="minipamayo")
+    # Data augmentation
+    parser.add_argument(
+        "--curve_oversample",
+        type=float,
+        default=3.0,
+        help="Weight multiplier for curve scenes (kappa > threshold)",
+    )
+    parser.add_argument(
+        "--curve_kappa_threshold",
+        type=float,
+        default=0.01,
+        help="Kappa threshold to identify curve scenes",
+    )
     return parser.parse_args()
 
 
 @torch.no_grad()
-def extract_conditions(vlm, pixel_values):
-    """Extract LLM hidden state sequence as condition for flow decoder.
+def extract_kv_cache(vlm, pixel_values):
+    """Extract VLM KV-cache as condition for Expert decoder (Alpamayo §5.1).
 
-    Alpamayo §5.2: Flow decoder conditions on full VLM hidden state sequence
-    (KV-cache) via cross-attention, not mean-pooled vector.
+    Runs VLM forward with use_cache=True to produce past_key_values,
+    which are passed directly to the Expert Transformer.
 
     Args:
         vlm: frozen MiniPamayo model
         pixel_values: (B, 3, 224, 224)
 
     Returns:
-        condition: (B, L, condition_dim) VLM hidden state sequence
+        kv_cache: DynamicCache with VLM KV-cache
+        prefill_seq_len: int, sequence length of the KV-cache
     """
     with torch.amp.autocast("cuda", dtype=torch.bfloat16):
         patch_features = vlm.vision_encoder(pixel_values)
         visual_tokens = vlm.adapter(patch_features)
-        outputs = vlm.llm(inputs_embeds=visual_tokens, output_hidden_states=True)
-    last_hidden = outputs.hidden_states[-1]  # (B, L, 896)
-    return last_hidden.float().detach()  # (B, L, 896) — stop-gradient (Alpamayo §5.1)
+        outputs = vlm.llm(inputs_embeds=visual_tokens, use_cache=True)
+    kv_cache = outputs.past_key_values
+    prefill_seq_len = kv_cache.get_seq_length()
+    return kv_cache, prefill_seq_len
 
 
 @torch.no_grad()
@@ -88,13 +120,59 @@ def evaluate(decoder, vlm, dataloader, device):
         pixel_values = batch["pixel_values"].to(device)
         gt_action = batch["action"].to(device)
 
-        condition = extract_conditions(vlm, pixel_values)
+        kv_cache, prefill_seq_len = extract_kv_cache(vlm, pixel_values)
         with torch.amp.autocast("cuda", dtype=torch.bfloat16):
-            loss = cfm_loss(decoder, gt_action, condition)
+            loss = cfm_loss(decoder, gt_action, kv_cache, prefill_seq_len)
         total_loss += loss.item()
         n += 1
 
     return {"val_cfm_loss": total_loss / max(n, 1)}
+
+
+def _compute_action_stats(dataset) -> dict[str, float]:
+    """Compute mean/std of acceleration and curvature from dataset.
+
+    Used to normalize actions for Flow Matching (Alpamayo §5.1).
+    """
+    all_accel = []
+    all_kappa = []
+    for i in range(len(dataset)):
+        action = dataset.samples[i]["action"]  # (K*2,) interleaved
+        all_accel.append(action[0::2])  # even indices = acceleration
+        all_kappa.append(action[1::2])  # odd indices = curvature
+    all_accel = np.concatenate(all_accel)
+    all_kappa = np.concatenate(all_kappa)
+    stats = {
+        "accel_mean": float(np.mean(all_accel)),
+        "accel_std": float(np.std(all_accel)),
+        "kappa_mean": float(np.mean(all_kappa)),
+        "kappa_std": float(np.std(all_kappa)),
+    }
+    print(
+        f"  Action stats: accel={stats['accel_mean']:.4f}±{stats['accel_std']:.4f}, "
+        f"kappa={stats['kappa_mean']:.6f}±{stats['kappa_std']:.6f}"
+    )
+    return stats
+
+
+def _build_curve_sampler(dataset, kappa_threshold: float, oversample: float):
+    """Build WeightedRandomSampler that oversamples curve scenes."""
+    weights = []
+    n_curve = 0
+    for i in range(len(dataset)):
+        action = dataset.samples[i]["action"]  # (K*2,) interleaved
+        kappas = action[1::2]  # every other element is kappa
+        max_kappa = float(np.max(np.abs(kappas)))
+        if max_kappa > kappa_threshold:
+            weights.append(oversample)
+            n_curve += 1
+        else:
+            weights.append(1.0)
+    print(
+        f"  Curve scenes (|kappa| > {kappa_threshold}): {n_curve}/{len(dataset)} "
+        f"({n_curve / len(dataset) * 100:.1f}%), weight={oversample}x"
+    )
+    return WeightedRandomSampler(weights, num_samples=len(dataset), replacement=True)
 
 
 def main():
@@ -104,6 +182,9 @@ def main():
     action_dim = args.K * 2
     print(f"Device: {device}")
     print(f"K={args.K}, action_dim={action_dim}")
+    print(
+        f"Expert: hidden={args.hidden_size}, layers={args.num_hidden_layers}, heads={args.num_attention_heads}"
+    )
 
     # Dataset (scene-level split)
     print("Loading dataset...")
@@ -122,10 +203,19 @@ def main():
     )
     print(f"Train: {len(train_dataset)}, Val: {len(val_dataset)}")
 
+    # Curve oversampling
+    train_sampler = None
+    if args.curve_oversample > 1.0:
+        print("Building curve oversampler...")
+        train_sampler = _build_curve_sampler(
+            train_dataset, args.curve_kappa_threshold, args.curve_oversample
+        )
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
-        shuffle=True,
+        sampler=train_sampler,
+        shuffle=(train_sampler is None),
         num_workers=2,
         pin_memory=True,
         drop_last=True,
@@ -161,14 +251,23 @@ def main():
     vlm.eval()
     vlm = vlm.to(device)
 
-    # Flow Matching Decoder (trainable)
-    print("Building TrajectoryDecoder...")
+    # Compute action normalization stats from training set (Alpamayo §5.1)
+    print("Computing action normalization stats...")
+    action_stats = _compute_action_stats(train_dataset)
+
+    # Flow Matching Expert (trainable)
+    print("Building Expert TrajectoryDecoder...")
     decoder = TrajectoryDecoder(
-        action_dim=action_dim,
-        hidden_dim=args.hidden_dim,
-        num_layers=args.num_layers,
-        num_heads=args.num_heads,
-        condition_dim=args.condition_dim,
+        K=args.K,
+        hidden_size=args.hidden_size,
+        num_hidden_layers=args.num_hidden_layers,
+        num_attention_heads=args.num_attention_heads,
+        intermediate_size=args.intermediate_size,
+        num_fourier_feats=args.num_fourier_feats,
+        fourier_max_freq=args.fourier_max_freq,
+        mlp_hidden_size=args.mlp_hidden_size,
+        mlp_num_layers=args.mlp_num_layers,
+        **action_stats,
     )
     decoder = decoder.to(device)
 
@@ -219,12 +318,12 @@ def main():
             pixel_values = batch["pixel_values"].to(device)
             gt_action = batch["action"].to(device)
 
-            # Extract condition from frozen VLM
-            condition = extract_conditions(vlm, pixel_values)
+            # Extract KV-cache from frozen VLM
+            kv_cache, prefill_seq_len = extract_kv_cache(vlm, pixel_values)
 
             # CFM loss (bf16 for decoder)
             with torch.amp.autocast("cuda", dtype=torch.bfloat16):
-                loss = cfm_loss(decoder, gt_action, condition)
+                loss = cfm_loss(decoder, gt_action, kv_cache, prefill_seq_len)
             loss = loss / args.grad_accum
             loss.backward()
 
@@ -275,37 +374,43 @@ def main():
 
         if metrics["val_cfm_loss"] < best_val_loss:
             best_val_loss = metrics["val_cfm_loss"]
-            torch.save(
-                {
-                    "epoch": epoch + 1,
-                    "global_step": global_step,
-                    "decoder_state_dict": decoder.state_dict(),
-                    "metrics": metrics,
-                    "K": args.K,
-                    "action_dim": action_dim,
-                    "hidden_dim": args.hidden_dim,
-                    "num_layers": args.num_layers,
-                    "num_heads": args.num_heads,
-                    "condition_dim": args.condition_dim,
-                },
-                save_dir / "best.pt",
-            )
+            ckpt_data = {
+                "epoch": epoch + 1,
+                "global_step": global_step,
+                "decoder_state_dict": decoder.state_dict(),
+                "metrics": metrics,
+                "K": args.K,
+                "action_dim": action_dim,
+                "hidden_size": args.hidden_size,
+                "num_hidden_layers": args.num_hidden_layers,
+                "num_attention_heads": args.num_attention_heads,
+                "intermediate_size": args.intermediate_size or args.hidden_size * 4,
+                "num_fourier_feats": args.num_fourier_feats,
+                "fourier_max_freq": args.fourier_max_freq,
+                "mlp_hidden_size": args.mlp_hidden_size,
+                "mlp_num_layers": args.mlp_num_layers,
+                "architecture": "expert_kv_cache",  # distinguish from old cross-attn decoder
+            }
+            torch.save(ckpt_data, save_dir / "best.pt")
 
-    torch.save(
-        {
-            "epoch": args.max_epochs,
-            "global_step": global_step,
-            "decoder_state_dict": decoder.state_dict(),
-            "metrics": metrics,
-            "K": args.K,
-            "action_dim": action_dim,
-            "hidden_dim": args.hidden_dim,
-            "num_layers": args.num_layers,
-            "num_heads": args.num_heads,
-            "condition_dim": args.condition_dim,
-        },
-        save_dir / "final.pt",
-    )
+    ckpt_data = {
+        "epoch": args.max_epochs,
+        "global_step": global_step,
+        "decoder_state_dict": decoder.state_dict(),
+        "metrics": metrics,
+        "K": args.K,
+        "action_dim": action_dim,
+        "hidden_size": args.hidden_size,
+        "num_hidden_layers": args.num_hidden_layers,
+        "num_attention_heads": args.num_attention_heads,
+        "intermediate_size": args.intermediate_size or args.hidden_size * 4,
+        "num_fourier_feats": args.num_fourier_feats,
+        "fourier_max_freq": args.fourier_max_freq,
+        "mlp_hidden_size": args.mlp_hidden_size,
+        "mlp_num_layers": args.mlp_num_layers,
+        "architecture": "expert_kv_cache",
+    }
+    torch.save(ckpt_data, save_dir / "final.pt")
 
     # Summary
     print("\n=== Summary ===")

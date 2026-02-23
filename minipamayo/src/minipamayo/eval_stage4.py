@@ -6,17 +6,22 @@ Compares Stage 3 (SFT) vs Stage 4 (RL) on:
   3. Trajectory metrics (ADE/FDE)
   4. Collision rate
 
+Flow Matching decoder (from Stage 2, frozen) generates continuous trajectories
+conditioned on full VLM hidden states for trajectory evaluation.
+
 Uses Qwen chat template matching Stage 3/4 training.
 
 Usage:
     cd minipamayo && uv run python -m minipamayo.eval_stage4 \
         --checkpoint checkpoints/stage4/best.pt \
         --ref_checkpoint checkpoints/stage3/best.pt \
+        --decoder_checkpoint checkpoints/stage2/best.pt \
         --coc_data data/coc_annotations_trainval.jsonl
 """
 
 import argparse
 import json
+from pathlib import Path
 
 import torch
 from transformers import AutoTokenizer
@@ -25,6 +30,7 @@ from .data.coc_dataset import CoCDataset, build_chat_token_ids
 from .models.discrete_head import DiscreteActionTokenizer
 from .models.dynamics import forward_dynamics_batch
 from .models.minipamayo import MiniPamayo
+from .models.trajectory_decoder import cfm_sample, load_decoder_from_checkpoint
 from .rewards import (
     composite_reward,
     consistency_reward,
@@ -41,7 +47,12 @@ def parse_args():
     parser.add_argument("--K", type=int, default=6)
     parser.add_argument("--n_bins", type=int, default=256)
     parser.add_argument("--max_text_len", type=int, default=2048)
+    parser.add_argument("--decoder_checkpoint", type=str, default="checkpoints/stage2/best.pt")
+    parser.add_argument("--n_flow_steps", type=int, default=10)
     parser.add_argument("--show_samples", type=int, default=5)
+    parser.add_argument(
+        "--max_samples", type=int, default=0, help="Max samples to evaluate (0=all)"
+    )
     return parser.parse_args()
 
 
@@ -100,6 +111,21 @@ def greedy_generate(model, prompt_embeds, max_tokens, device, vocab_offset, n_bi
         input_embeds = torch.cat([input_embeds, next_embed.to(input_embeds.dtype)], dim=1)
 
     return token_ids
+
+
+@torch.no_grad()
+def extract_flow_trajectory(model, decoder, prompt_embeds, token_ids, device, n_steps=10):
+    """Extract continuous trajectory using Flow Matching decoder (KV-cache)."""
+    embed_layer = model.llm.get_input_embeddings()
+    token_ids_t = torch.tensor(token_ids, dtype=torch.long, device=device)
+    token_embeds = embed_layer(token_ids_t.unsqueeze(0))
+    input_embeds = torch.cat([prompt_embeds, token_embeds], dim=1)
+    with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+        outputs = model.llm(inputs_embeds=input_embeds, use_cache=True)
+    kv_cache = outputs.past_key_values
+    prefill_seq_len = kv_cache.get_seq_length()
+    pred_action = cfm_sample(decoder, kv_cache, prefill_seq_len, n_steps=n_steps)
+    return pred_action.squeeze(0)
 
 
 def parse_from_tokens(token_ids, text_tokenizer, action_tokenizer, vocab_offset, n_bins, K):
@@ -167,6 +193,15 @@ def main():
     rl_model.eval()
     print(f"Loaded: {args.checkpoint}")
 
+    # Flow Matching decoder (Stage 2, frozen)
+    decoder = None
+    decoder_path = Path(args.decoder_checkpoint)
+    if decoder_path.exists():
+        decoder, _dec_K, _dec_ckpt = load_decoder_from_checkpoint(decoder_path, device)
+        print(f"Loaded Flow Matching Expert: {decoder_path}")
+    else:
+        print(f"WARNING: No decoder at {decoder_path}, using discrete tokens")
+
     # Reference SFT model
     ref_model = None
     ref_path = args.ref_checkpoint
@@ -200,8 +235,9 @@ def main():
         decision_correct = {"longitudinal": 0, "lateral": 0}
         decision_total = 0
 
+        n_eval = min(len(dataset), args.max_samples) if args.max_samples > 0 else len(dataset)
         with torch.no_grad():
-            for i in range(len(dataset)):
+            for i in range(n_eval):
                 sample = dataset[i]
                 pixel_values = sample["pixel_values"].unsqueeze(0).to(device)
                 v0 = sample["v0"]
@@ -222,8 +258,13 @@ def main():
                     token_ids, text_tokenizer, action_tokenizer, vocab_offset, args.n_bins, args.K
                 )
 
-                action_t = torch.tensor(action, dtype=torch.float32)
-                pred_kv = action_t.reshape(args.K, 2)
+                if decoder is not None:
+                    action_t = extract_flow_trajectory(
+                        model, decoder, prompt_embeds, token_ids, device, args.n_flow_steps
+                    )
+                else:
+                    action_t = torch.tensor(action, dtype=torch.float32)
+                pred_kv = action_t.cpu().reshape(args.K, 2)
                 pred_a = pred_kv[:, 0]
                 pred_kappa = pred_kv[:, 1]
 
@@ -249,7 +290,7 @@ def main():
                 all_r_consistency.append(r_c)
                 all_r_traj.append(r_t)
                 all_r_collision.append(r_col)
-                all_actions.append(action_t)
+                all_actions.append(action_t.cpu() if action_t.is_cuda else action_t)
                 all_v0.append(v0)
                 all_gt_wp.append(gt_waypoints)
 

@@ -85,25 +85,47 @@ def forward_dynamics_batch(
     return waypoints
 
 
+def _second_order_diff_matrix(N: int) -> np.ndarray:
+    """Build 2nd-order finite difference matrix (Alpamayo w_smooth2).
+
+    D2[i,i]=-1, D2[i,i+1]=2, D2[i,i+2]=-1
+    Penalizes changes in the 1st derivative (i.e., smoothness of the derivative).
+    """
+    rows = max(N - 2, 0)
+    D = np.zeros((rows, N))
+    for i in range(rows):
+        D[i, i] = -1.0
+        D[i, i + 1] = 2.0
+        D[i, i + 2] = -1.0
+    return D
+
+
 def inverse_dynamics_np(
     positions: np.ndarray,
     headings: np.ndarray,
     dt: float = 0.5,
     v_threshold: float = 0.1,
-    lambda_reg: float = 1e-2,
+    a_lambda: float = 1e-4,
+    a_ridge: float = 1e-4,
+    kappa_lambda: float = 1e-4,
+    kappa_ridge: float = 1e-4,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Inverse dynamics: K+2 ego poses → K (a, κ) control inputs.
 
-    Uses Tikhonov regularization (Alpamayo §5.1) for smooth GT extraction:
-      min ||Dx - b||² + λ||x||²
-      → x = (D^T D + λI)^{-1} D^T b
+    Uses 2nd-order Tikhonov regularization (Alpamayo §5.1) for smooth GT:
+      Acceleration: min ||a - Δv/dt||² + (λ/dt⁴)||D₂a||² + ridge||a||²
+      Curvature:    min ||s·κ - Δθ||²   + (λ/dt⁴)||D₂κ||² + ridge||κ||²
+        where s = dt·v + dt²/2·a (Alpamayo kinematic denominator)
 
     Args:
         positions: (K+2, 2) — consecutive [x, y] positions
         headings: (K+2,) — consecutive yaw angles (rad)
         dt: time step (s)
         v_threshold: min speed for curvature computation (m/s)
-        lambda_reg: Tikhonov regularization strength
+        a_lambda: Tikhonov smoothing weight for acceleration
+        a_ridge: Ridge regularization for acceleration
+        kappa_lambda: Tikhonov smoothing weight for curvature
+        kappa_ridge: Ridge regularization for curvature
 
     Returns:
         a: (K,) acceleration (m/s²)
@@ -116,32 +138,31 @@ def inverse_dynamics_np(
     displacements = np.diff(positions, axis=0)  # (K+1, 2)
     speeds = np.linalg.norm(displacements, axis=1) / dt  # (K+1,)
 
-    # K+1 heading differences, normalized to [-π, π]
+    # K+1 heading differences, normalized to [-π, π] (atan2 for stability, Alpamayo)
     heading_diffs = np.diff(headings)  # (K+1,)
-    heading_diffs = (heading_diffs + np.pi) % (2 * np.pi) - np.pi
+    heading_diffs = np.arctan2(np.sin(heading_diffs), np.cos(heading_diffs))
 
-    # Tikhonov-regularized acceleration: min ||a - raw_a||² + λ||L_a @ a||²
-    # raw_a: finite differences of speeds
-    # L_a: first-order difference matrix for smoothness
-    raw_a = np.diff(speeds) / dt  # (K,) — unregularized acceleration
-    L_a = np.zeros((K - 1, K)) if K > 1 else np.zeros((0, K))
-    for i in range(K - 1):
-        L_a[i, i] = -1.0
-        L_a[i, i + 1] = 1.0
-    a = np.linalg.solve(np.eye(K) + lambda_reg * L_a.T @ L_a, raw_a)  # (K,)
+    # --- Acceleration (2nd-order Tikhonov, Alpamayo _v_to_a) ---
+    raw_a = np.diff(speeds) / dt  # (K,)
+    D2_a = _second_order_diff_matrix(K)
+    DTD_a = (a_lambda / dt**4) * D2_a.T @ D2_a
+    a = np.linalg.solve(np.eye(K) + DTD_a + a_ridge * np.eye(K), raw_a)  # (K,)
 
-    # Tikhonov-regularized curvature: kappa = dθ/(dt·v), smoothed
+    # --- Curvature (2nd-order Tikhonov, Alpamayo _theta_v_a_to_kappa) ---
+    # Kinematic denominator: s = dt * v + dt²/2 * a (matches forward dynamics)
+    s = dt * speeds[:K] + (dt**2) / 2.0 * a  # (K,)
+
+    # Solve: min ||diag(s) @ kappa - dtheta||² + smooth + ridge
     raw_kappa = np.zeros(K)
     for i in range(K):
-        if speeds[i] > v_threshold:
-            raw_kappa[i] = heading_diffs[i] / (dt * speeds[i])
-    # Regularize: min ||x - raw_kappa||² + λ||Δx||²
-    # Smoothing matrix L: first-order difference on kappa
-    L = np.zeros((K - 1, K)) if K > 1 else np.zeros((0, K))
-    for i in range(K - 1):
-        L[i, i] = -1.0
-        L[i, i + 1] = 1.0
-    kappa = np.linalg.solve(np.eye(K) + lambda_reg * L.T @ L, raw_kappa)  # (K,)
+        if abs(s[i]) > v_threshold * dt:  # threshold on arc length, not speed
+            raw_kappa[i] = heading_diffs[i] / s[i]
+
+    S = np.diag(s)
+    STS = S.T @ S
+    D2_k = _second_order_diff_matrix(K)
+    DTD_k = (kappa_lambda / dt**4) * D2_k.T @ D2_k
+    kappa = np.linalg.solve(STS + DTD_k + kappa_ridge * np.eye(K), S.T @ heading_diffs[:K])
 
     return a, kappa
 

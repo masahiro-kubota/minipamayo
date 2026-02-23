@@ -2,6 +2,12 @@
 
 3-element reward: r_reason + r_consistency + r_traj (including r_collision).
 LLM only trainable, everything else frozen.
+Flow Matching decoder (from Stage 2, frozen) generates continuous trajectories
+conditioned on full VLM hidden states (KV-cache) for reward computation.
+
+Alpamayo §5.3: VLM generates CoC text → KV-cache saved →
+Expert (Flow Matching) generates trajectory from KV-cache →
+reward computed on continuous trajectory.
 
 Uses Qwen chat template matching Stage 3:
   <|im_start|>system\n{system_msg}<|im_end|>\n
@@ -11,6 +17,7 @@ Uses Qwen chat template matching Stage 3:
 Usage:
     cd minipamayo && uv run python -m minipamayo.train_stage4 \
         --stage3_checkpoint checkpoints/stage3/best.pt \
+        --decoder_checkpoint checkpoints/stage2/best.pt \
         --coc_data data/coc_annotations_trainval.jsonl
 """
 
@@ -27,6 +34,7 @@ from transformers import AutoTokenizer
 from .data.coc_dataset import CoCDataset, build_chat_token_ids, format_coc_text
 from .models.discrete_head import DiscreteActionTokenizer
 from .models.minipamayo import MiniPamayo
+from .models.trajectory_decoder import cfm_sample, load_decoder_from_checkpoint
 from .rewards import ReasonReward, composite_reward
 
 
@@ -39,6 +47,15 @@ def parse_args():
         "--stage3_checkpoint",
         type=str,
         default="checkpoints/stage3/best.pt",
+    )
+    parser.add_argument(
+        "--decoder_checkpoint",
+        type=str,
+        default="checkpoints/stage2/best.pt",
+        help="Stage 2 Flow Matching decoder checkpoint",
+    )
+    parser.add_argument(
+        "--n_flow_steps", type=int, default=10, help="Euler steps for Flow Matching"
     )
     parser.add_argument("--K_traj", type=int, default=64, help="Trajectory waypoints")
     parser.add_argument("--n_bins", type=int, default=256)
@@ -176,6 +193,51 @@ def compute_sequence_log_prob(model, prompt_embeds, token_ids, device):
     return sequence_log_probs  # (T,)
 
 
+@torch.no_grad()
+def extract_flow_trajectory(model, decoder, prompt_embeds, token_ids, device, n_steps=10):
+    """Extract continuous trajectory using Flow Matching decoder.
+
+    Alpamayo §5.3: Expert generates trajectory conditioned on full VLM
+    KV-cache (including generated CoC text).
+    Different rollouts → different text → different KV-cache →
+    different Flow Matching trajectories → per-rollout reward differentiation.
+
+    Args:
+        model: policy model (for LLM forward pass)
+        decoder: frozen TrajectoryDecoder from Stage 2
+        prompt_embeds: (1, L_prompt, 896) prompt embeddings
+        token_ids: list of generated token IDs
+        device: torch device
+        n_steps: Euler integration steps
+
+    Returns:
+        pred_action: (K*2,) continuous (a, kappa) trajectory
+    """
+    # Temporarily disable gradient checkpointing for use_cache=True
+    gc_enabled = getattr(model.llm, "is_gradient_checkpointing", False)
+    if gc_enabled:
+        model.llm.gradient_checkpointing_disable()
+
+    embed_layer = model.llm.get_input_embeddings()
+    token_ids_t = torch.tensor(token_ids, dtype=torch.long, device=device)
+    token_embeds = embed_layer(token_ids_t.unsqueeze(0))
+
+    input_embeds = torch.cat([prompt_embeds, token_embeds], dim=1)
+
+    with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+        outputs = model.llm(inputs_embeds=input_embeds, use_cache=True)
+
+    kv_cache = outputs.past_key_values
+    prefill_seq_len = kv_cache.get_seq_length()
+
+    pred_action = cfm_sample(decoder, kv_cache, prefill_seq_len, n_steps=n_steps)
+
+    if gc_enabled:
+        model.llm.gradient_checkpointing_enable()
+
+    return pred_action.squeeze(0)  # (K*2,)
+
+
 def parse_action_from_rollout(token_ids, vocab_offset, n_bins, K, action_tokenizer):
     """Extract action tokens from generated sequence."""
     action_ids = [t for t in token_ids if vocab_offset <= t < vocab_offset + n_bins]
@@ -282,6 +344,15 @@ def main():
     else:
         print(f"WARNING: Stage 3 checkpoint not found at {stage3_path}")
 
+    # Flow Matching decoder (Stage 2, frozen)
+    decoder = None
+    decoder_path = Path(args.decoder_checkpoint)
+    if decoder_path.exists():
+        decoder, _dec_K, _dec_ckpt = load_decoder_from_checkpoint(decoder_path, device)
+        print(f"Loaded Flow Matching Expert: {decoder_path}")
+    else:
+        print(f"WARNING: No decoder at {decoder_path}, falling back to discrete tokens")
+
     # Reference policy (frozen copy of SFT model)
     print("Creating reference policy...")
     ref_policy = copy.deepcopy(policy)
@@ -369,11 +440,23 @@ def main():
             # 2. Compute rewards
             rewards = []
             for ro in rollouts:
-                action = parse_action_from_rollout(
-                    ro["token_ids"], vocab_offset, args.n_bins, args.K_traj, action_tokenizer
-                )
-                action_t = torch.tensor(action, dtype=torch.float32)
-                pred_kv = action_t.reshape(args.K_traj, 2)
+                if decoder is not None:
+                    # Flow Matching: continuous trajectory from VLM KV-cache
+                    action_t = extract_flow_trajectory(
+                        policy,
+                        decoder,
+                        prompt_embeds,
+                        ro["token_ids"],
+                        device,
+                        n_steps=args.n_flow_steps,
+                    )
+                else:
+                    # Fallback: discrete token parsing
+                    action = parse_action_from_rollout(
+                        ro["token_ids"], vocab_offset, args.n_bins, args.K_traj, action_tokenizer
+                    )
+                    action_t = torch.tensor(action, dtype=torch.float32)
+                pred_kv = action_t.cpu().reshape(args.K_traj, 2)
                 pred_a = pred_kv[:, 0]
                 pred_kappa = pred_kv[:, 1]
 

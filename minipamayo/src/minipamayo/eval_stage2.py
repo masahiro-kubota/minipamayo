@@ -1,6 +1,7 @@
-"""Stage 2 evaluation: Flow Matching trajectory decoder.
+"""Stage 2 evaluation: Flow Matching Expert (Alpamayo-faithful).
 
 Evaluates CFM loss, samples trajectories, computes ADE/FDE and diversity.
+Uses KV-cache conditioning (past_key_values) for Expert decoder.
 
 Usage:
     cd minipamayo && uv run python -m minipamayo.eval_stage2 \
@@ -38,37 +39,67 @@ def parse_args():
     parser.add_argument("--n_steps", type=int, default=20, help="Euler integration steps")
     parser.add_argument("--n_samples", type=int, default=5, help="Samples per input for diversity")
     parser.add_argument("--show_samples", type=int, default=10)
+    parser.add_argument("--max_eval", type=int, default=0, help="Max samples to evaluate (0=all)")
     return parser.parse_args()
 
 
 @torch.no_grad()
-def extract_conditions(vlm, pixel_values):
-    """Extract LLM hidden states as condition for flow decoder."""
+def extract_kv_cache(vlm, pixel_values):
+    """Extract VLM KV-cache for Expert conditioning."""
     with torch.amp.autocast("cuda", dtype=torch.bfloat16):
         patch_features = vlm.vision_encoder(pixel_values)
         visual_tokens = vlm.adapter(patch_features)
-        outputs = vlm.llm(inputs_embeds=visual_tokens, output_hidden_states=True)
-    last_hidden = outputs.hidden_states[-1]
-    return last_hidden.float().detach()  # (B, L, 896) — full sequence, not mean-pooled
+        outputs = vlm.llm(inputs_embeds=visual_tokens, use_cache=True)
+    kv_cache = outputs.past_key_values
+    prefill_seq_len = kv_cache.get_seq_length()
+    return kv_cache, prefill_seq_len
+
+
+def load_decoder_from_checkpoint(ckpt_path, device):
+    """Load Expert decoder from checkpoint, handling both old and new formats."""
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+    K = ckpt.get("K", 6)
+    arch = ckpt.get("architecture", "unknown")
+
+    if arch == "expert_kv_cache":
+        # New Alpamayo-faithful format
+        decoder = TrajectoryDecoder(
+            K=K,
+            hidden_size=ckpt["hidden_size"],
+            num_hidden_layers=ckpt["num_hidden_layers"],
+            num_attention_heads=ckpt["num_attention_heads"],
+            intermediate_size=ckpt.get("intermediate_size"),
+            num_fourier_feats=ckpt.get("num_fourier_feats", 20),
+            fourier_max_freq=ckpt.get("fourier_max_freq", 100.0),
+            mlp_hidden_size=ckpt.get("mlp_hidden_size", 1024),
+            mlp_num_layers=ckpt.get("mlp_num_layers", 4),
+        )
+        print(
+            f"Expert config: hidden={ckpt['hidden_size']}, "
+            f"layers={ckpt['num_hidden_layers']}, heads={ckpt['num_attention_heads']}"
+        )
+    else:
+        raise ValueError(
+            f"Unknown architecture '{arch}' in checkpoint. "
+            "Old cross-attention checkpoints are not compatible with the new Expert decoder."
+        )
+
+    decoder.load_state_dict(ckpt["decoder_state_dict"])
+    decoder = decoder.to(device).eval()
+    return decoder, K, ckpt
 
 
 def main():
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Load decoder checkpoint
-    ckpt = torch.load(args.decoder_checkpoint, map_location="cpu", weights_only=True)
-    K = ckpt.get("K", 6)
-    action_dim = ckpt.get("action_dim", K * 2)
-    hidden_dim = ckpt.get("hidden_dim", 256)
-    num_layers = ckpt.get("num_layers", 4)
-    num_heads = ckpt.get("num_heads", 4)
-    condition_dim = ckpt.get("condition_dim", 896)
+    # Load decoder
+    print(f"Loading decoder: {args.decoder_checkpoint}")
+    decoder, K, ckpt = load_decoder_from_checkpoint(args.decoder_checkpoint, device)
+    action_dim = K * 2
 
-    print(
-        f"Decoder config: action_dim={action_dim}, hidden={hidden_dim}, "
-        f"layers={num_layers}, heads={num_heads}"
-    )
+    if "metrics" in ckpt:
+        print(f"  Saved metrics: {ckpt['metrics']}")
 
     # Dataset
     print("Loading dataset...")
@@ -96,23 +127,6 @@ def main():
     vlm.eval()
     vlm = vlm.to(device)
 
-    # Decoder
-    print("Building TrajectoryDecoder...")
-    decoder = TrajectoryDecoder(
-        action_dim=action_dim,
-        hidden_dim=hidden_dim,
-        num_layers=num_layers,
-        num_heads=num_heads,
-        condition_dim=condition_dim,
-    )
-    decoder.load_state_dict(ckpt["decoder_state_dict"])
-    decoder = decoder.to(device)
-    decoder.eval()
-
-    print(f"Loaded decoder: {args.decoder_checkpoint}")
-    if "metrics" in ckpt:
-        print(f"  Saved metrics: {ckpt['metrics']}")
-
     # Evaluate
     print(f"\n{'=' * 70}")
     print(f"Evaluation (n_steps={args.n_steps})")
@@ -125,19 +139,23 @@ def main():
     all_gt_waypoints = []
     n = 0
 
+    max_eval = args.max_eval if args.max_eval > 0 else len(dataset)
+
     with torch.no_grad():
         for i, batch in enumerate(loader):
+            if i >= max_eval:
+                break
             pixel_values = batch["pixel_values"].to(device)
             gt_action = batch["action"].to(device)
 
-            condition = extract_conditions(vlm, pixel_values)
+            kv_cache, prefill_seq_len = extract_kv_cache(vlm, pixel_values)
 
             # CFM loss
-            loss = cfm_loss(decoder, gt_action, condition)
+            loss = cfm_loss(decoder, gt_action, kv_cache, prefill_seq_len)
             all_cfm_loss += loss.item()
 
             # Sample trajectory
-            pred_action = cfm_sample(decoder, condition, action_dim, n_steps=args.n_steps)
+            pred_action = cfm_sample(decoder, kv_cache, prefill_seq_len, n_steps=args.n_steps)
             all_pred_actions.append(pred_action.cpu().squeeze(0))
             all_gt_actions.append(gt_action.cpu().squeeze(0))
             all_v0.append(batch["v0"].squeeze())
@@ -224,16 +242,15 @@ def main():
         for i in range(n_diversity):
             sample = dataset[i]
             pixel_values = sample["pixel_values"].unsqueeze(0).to(device)
-            gt_action = sample["action"].unsqueeze(0).to(device)
             v0 = sample["v0"].unsqueeze(0)
             gt_waypoint = sample["gt_waypoints"].unsqueeze(0)
 
-            condition = extract_conditions(vlm, pixel_values)
+            kv_cache, prefill_seq_len = extract_kv_cache(vlm, pixel_values)
 
             # Generate multiple samples
             samples = []
             for _ in range(args.n_samples):
-                s = cfm_sample(decoder, condition, action_dim, n_steps=args.n_steps)
+                s = cfm_sample(decoder, kv_cache, prefill_seq_len, n_steps=args.n_steps)
                 samples.append(s.cpu())
             samples = torch.stack(samples, dim=1).squeeze(0)  # (n_samples, K*2)
 
