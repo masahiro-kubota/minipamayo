@@ -1,7 +1,7 @@
 """Action prediction heads for MiniPamayo.
 
 Phase 3: MLPActionHead — simple MLP for [steer, throttle] regression
-Phase 4: MLPActionHead with expanded output for (a, kappa) x 64 waypoints
+Phase 4: MLPActionHead with expanded output for (a, kappa) x K waypoints
 """
 
 import torch
@@ -12,7 +12,7 @@ class MLPActionHead(nn.Module):
     """MLP regression head for action prediction.
 
     Phase 3: (896,) → (2,) [steer, throttle]
-    Phase 4: (896,) -> (128,) = (64, 2) [(a, kappa) x 64 waypoints]
+    Phase 4: (896,) -> (K*2,) = (K, 2) [(a, kappa) x K waypoints]
     """
 
     def __init__(self, input_dim: int = 896, output_dim: int = 2, hidden_dim: int = 256):

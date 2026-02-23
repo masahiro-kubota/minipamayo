@@ -37,7 +37,7 @@ def parse_args():
         default="../cosmos-reason-mini/checkpoints/rl-mini-merged/checkpoint-final.pt",
         help="Fallback VLM checkpoint if phase4 not found",
     )
-    parser.add_argument("--K", type=int, default=64)
+    parser.add_argument("--K", type=int, default=6)
     parser.add_argument("--n_bins", type=int, default=256)
     parser.add_argument("--lr", type=float, default=5e-5)
     parser.add_argument("--weight_decay", type=float, default=0.01)

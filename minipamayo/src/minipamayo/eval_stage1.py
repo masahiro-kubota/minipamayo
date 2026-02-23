@@ -51,7 +51,7 @@ def main():
 
     # Load checkpoint
     ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
-    K = ckpt.get("K", 64)
+    K = ckpt.get("K", 6)
     n_bins = ckpt.get("n_bins", 256)
     tok_cfg = ckpt.get("tokenizer_config", {})
 

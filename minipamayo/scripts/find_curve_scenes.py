@@ -122,7 +122,7 @@ def main():
                 visual_tokens = vlm.adapter(patch_features)
                 outputs = vlm.llm(inputs_embeds=visual_tokens, use_cache=True)
             kv_cache = outputs.past_key_values
-            prefill_seq_len = kv_cache.key_cache[0].shape[2]
+            prefill_seq_len = kv_cache.get_seq_length()
 
             # Multiple flow samples
             flow_wps = []
