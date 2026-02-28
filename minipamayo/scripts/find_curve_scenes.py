@@ -1,9 +1,11 @@
 """カーブシーンを特定し、Stage 2 Flow Matching デコーダで可視化する。
 
 Usage:
-    cd minipamayo && uv run python scripts/find_curve_scenes.py
+    cd minipamayo && uv run python scripts/find_curve_scenes.py \
+        --decoder_checkpoint checkpoints/stage2-simple/best.pt
 """
 
+import argparse
 from pathlib import Path
 
 import matplotlib
@@ -15,12 +17,66 @@ from PIL import Image
 matplotlib.use("Agg")
 
 
+@torch.no_grad()
+def vlm_mean_pool(vlm, pixel_values):
+    """Extract mean-pooled VLM hidden states (for SimpleDecoder)."""
+    with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+        patch_features = vlm.vision_encoder(pixel_values)
+        visual_tokens = vlm.adapter(patch_features)
+        outputs = vlm.llm(inputs_embeds=visual_tokens, output_hidden_states=True)
+    last_hidden = outputs.hidden_states[-1]  # (B, L, 896)
+    return last_hidden.mean(dim=1).float()  # (B, 896)
+
+
+@torch.no_grad()
+def vlm_hidden_states(vlm, pixel_values):
+    """Extract VLM hidden states from visual tokens only (no reasoning prompt)."""
+    with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+        patch_features = vlm.vision_encoder(pixel_values)
+        visual_tokens = vlm.adapter(patch_features)
+        outputs = vlm.llm(inputs_embeds=visual_tokens, output_hidden_states=True)
+    return outputs.hidden_states[-1]
+
+
+@torch.no_grad()
+def vlm_kv_cache(vlm, pixel_values):
+    """Extract VLM KV-cache from visual tokens only."""
+    with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+        patch_features = vlm.vision_encoder(pixel_values)
+        visual_tokens = vlm.adapter(patch_features)
+        outputs = vlm.llm(inputs_embeds=visual_tokens, use_cache=True)
+    return outputs.past_key_values, outputs.past_key_values.get_seq_length()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--decoder_checkpoint",
+        type=str,
+        default="checkpoints/stage2-simple/best.pt",
+    )
+    parser.add_argument(
+        "--vlm_checkpoint",
+        type=str,
+        default="checkpoints/stage1/best.pt",
+    )
+    parser.add_argument("--n_vis", type=int, default=10)
+    parser.add_argument("--n_flow_samples", type=int, default=10)
+    return parser.parse_args()
+
+
 def main():
     from minipamayo.data.nuscenes_trajectory_dataset import NuScenesTrajectoryDataset
     from minipamayo.models.dynamics import forward_dynamics_batch
     from minipamayo.models.minipamayo import MiniPamayo
-    from minipamayo.models.trajectory_decoder import cfm_sample, load_decoder_from_checkpoint
+    from minipamayo.models.trajectory_decoder import (
+        cfm_sample,
+        cfm_sample_cross_attn,
+        cfm_sample_simple,
+        load_decoder_from_checkpoint,
+    )
 
+    args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # --- Step 1: データセット読み込み & カーブシーン抽出 ---
@@ -82,26 +138,28 @@ def main():
 
     # VLM
     vlm = MiniPamayo(adapter_type="cross_attention", action_dim=action_dim)
-    vlm_ckpt = torch.load("checkpoints/phase4/best.pt", map_location="cpu", weights_only=True)
+    vlm_ckpt = torch.load(args.vlm_checkpoint, map_location="cpu", weights_only=True)
     vlm.load_state_dict(vlm_ckpt["model_state_dict"], strict=False)
     vlm = vlm.to(device).eval()
     vlm.requires_grad_(False)
-    print("Loaded VLM: checkpoints/phase4/best.pt")
+    print(f"Loaded VLM: {args.vlm_checkpoint}")
 
-    # Decoder
-    decoder, _, _ = load_decoder_from_checkpoint("checkpoints/stage2/best.pt", device)
-    print("Loaded Expert decoder: checkpoints/stage2/best.pt")
+    # Decoder (auto-detect architecture)
+    decoder, _, ckpt_info = load_decoder_from_checkpoint(args.decoder_checkpoint, device)
+    arch = ckpt_info.get("architecture", "expert_kv_cache")
+    print(f"Loaded decoder: {args.decoder_checkpoint} (arch={arch})")
 
     # --- Step 3: カーブシーンで推論 ---
     print("\n" + "=" * 70)
     print("Step 3: Inference on curve scenes")
     print("=" * 70)
 
-    n_vis = min(10, len(curve_scenes))
-    n_flow_samples = 10
+    n_vis = min(args.n_vis, len(curve_scenes))
+    n_flow_samples = args.n_flow_samples
     selected = curve_scenes[:n_vis]
 
-    print(f"Visualizing {n_vis} scenes, {n_flow_samples} flow samples each\n")
+    print(f"Visualizing {n_vis} scenes, {n_flow_samples} flow samples each")
+    print(f"Architecture: {arch}\n")
 
     fig, axes = plt.subplots(n_vis, 2, figsize=(14, 4 * n_vis))
     if n_vis == 1:
@@ -116,20 +174,25 @@ def main():
             v0 = sample["v0"]
             gt_wp = sample["gt_waypoints"].numpy()
 
-            # VLM → KV-cache
-            with torch.amp.autocast("cuda", dtype=torch.bfloat16):
-                patch_features = vlm.vision_encoder(pixel_values)
-                visual_tokens = vlm.adapter(patch_features)
-                outputs = vlm.llm(inputs_embeds=visual_tokens, use_cache=True)
-            kv_cache = outputs.past_key_values
-            prefill_seq_len = kv_cache.get_seq_length()
+            # VLM conditioning (architecture-dependent)
+            if arch == "simple":
+                condition = vlm_mean_pool(vlm, pixel_values)
+            elif arch == "cross_attention":
+                hidden_states = vlm_hidden_states(vlm, pixel_values)
+            else:
+                kv_cache, prefill_seq_len = vlm_kv_cache(vlm, pixel_values)
 
             # Multiple flow samples
             flow_wps = []
             ade_list = []
             raw_actions = []
             for _s in range(n_flow_samples):
-                pred_action = cfm_sample(decoder, kv_cache, prefill_seq_len, n_steps=20)
+                if arch == "simple":
+                    pred_action = cfm_sample_simple(decoder, condition, n_steps=20)
+                elif arch == "cross_attention":
+                    pred_action = cfm_sample_cross_attn(decoder, hidden_states, n_steps=20)
+                else:
+                    pred_action = cfm_sample(decoder, kv_cache, prefill_seq_len, n_steps=20)
                 raw_actions.append(pred_action.cpu().squeeze())
                 pred_kv = pred_action.cpu().squeeze().reshape(K, 2)
                 wp = (
@@ -209,10 +272,26 @@ def main():
                 fontsize=9,
             )
 
-    fig.suptitle("Stage 2: Flow Matching on CURVE Scenes", fontsize=14, fontweight="bold")
+    arch_labels = {
+        "simple": "Simple",
+        "cross_attention": "Cross-Attn",
+        "expert_kv_cache": "KV-Cache Expert",
+    }
+    arch_label = arch_labels.get(arch, arch)
+    fig.suptitle(
+        f"Stage 2: Flow Matching ({arch_label}) on CURVE Scenes",
+        fontsize=14,
+        fontweight="bold",
+    )
     fig.tight_layout()
 
-    out_path = "outputs/vis_stage2_curves.png"
+    suffix_map = {
+        "simple": "simple",
+        "cross_attention": "cross_attn",
+        "expert_kv_cache": "kv_cache",
+    }
+    suffix = suffix_map.get(arch, arch)
+    out_path = f"outputs/vis_stage2_curves_{suffix}.png"
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)

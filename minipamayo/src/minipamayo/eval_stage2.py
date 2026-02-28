@@ -6,7 +6,7 @@ Uses KV-cache conditioning (past_key_values) for Expert decoder.
 Usage:
     cd minipamayo && uv run python -m minipamayo.eval_stage2 \
         --decoder_checkpoint checkpoints/stage2/best.pt \
-        --phase4_checkpoint checkpoints/phase4/best.pt
+        --vlm_checkpoint checkpoints/stage1/best.pt
 """
 
 import argparse
@@ -25,14 +25,10 @@ def parse_args():
     parser = argparse.ArgumentParser(description="MiniPamayo Stage 2 evaluation")
     parser.add_argument("--decoder_checkpoint", type=str, required=True)
     parser.add_argument(
-        "--phase4_checkpoint",
-        type=str,
-        default="checkpoints/phase4/best.pt",
-    )
-    parser.add_argument(
         "--vlm_checkpoint",
         type=str,
-        default="../cosmos-reason-mini/checkpoints/rl-mini-merged/checkpoint-final.pt",
+        default="checkpoints/stage1/best.pt",
+        help="Stage 1 VLM checkpoint (frozen)",
     )
     parser.add_argument("--nuscenes_root", type=str, default="/mnt/ssd/nuscenes")
     parser.add_argument("--nuscenes_version", type=str, default="v1.0-trainval")
@@ -115,14 +111,13 @@ def main():
     print("Building frozen VLM...")
     vlm = MiniPamayo(adapter_type="cross_attention", action_dim=action_dim)
 
-    phase4_path = Path(args.phase4_checkpoint)
     vlm_path = Path(args.vlm_checkpoint)
-    if phase4_path.exists():
-        p4_ckpt = torch.load(phase4_path, map_location="cpu", weights_only=True)
-        vlm.load_state_dict(p4_ckpt["model_state_dict"], strict=False)
-        print(f"Loaded VLM from {phase4_path}")
-    elif vlm_path.exists():
-        vlm.load_vlm_checkpoint(vlm_path)
+    if vlm_path.exists():
+        vlm_ckpt = torch.load(vlm_path, map_location="cpu", weights_only=True)
+        vlm.load_state_dict(vlm_ckpt["model_state_dict"], strict=False)
+        print(f"Loaded VLM from {vlm_path}")
+    else:
+        raise FileNotFoundError(f"VLM checkpoint not found: {vlm_path}")
     vlm.requires_grad_(False)
     vlm.eval()
     vlm = vlm.to(device)

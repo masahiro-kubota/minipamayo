@@ -26,7 +26,14 @@ from .data.coc_dataset import CoCDataset
 from .data.nuscenes_trajectory_dataset import NuScenesTrajectoryDataset
 from .models.discrete_head import DiscreteActionTokenizer
 from .models.minipamayo import MiniPamayo
-from .models.trajectory_decoder import TrajectoryDecoder, cfm_loss
+from .models.trajectory_decoder import (
+    CrossAttentionDecoder,
+    SimpleDecoder,
+    TrajectoryDecoder,
+    cfm_loss,
+    cfm_loss_cross_attn,
+    cfm_loss_simple,
+)
 
 
 def parse_args():
@@ -35,19 +42,34 @@ def parse_args():
     parser.add_argument("--nuscenes_version", type=str, default="v1.0-trainval")
     parser.add_argument("--coc_data", type=str, default="data/coc_annotations_trainval.jsonl")
     parser.add_argument(
-        "--phase4_checkpoint",
-        type=str,
-        default="checkpoints/phase4/best.pt",
-        help="Phase 4 checkpoint for frozen VLM",
-    )
-    parser.add_argument(
         "--vlm_checkpoint",
         type=str,
-        default="../cosmos-reason-mini/checkpoints/rl-mini-merged/checkpoint-final.pt",
-        help="Fallback VLM checkpoint if phase4 not found",
+        default="checkpoints/stage1/best.pt",
+        help="Stage 1 VLM checkpoint (frozen)",
     )
     parser.add_argument("--K", type=int, default=6)
-    # Expert architecture (must satisfy: hidden_size = num_attention_heads * 64)
+    # Decoder type
+    parser.add_argument(
+        "--decoder_type",
+        type=str,
+        default="simple",
+        choices=["simple", "kv_cache", "cross_attention"],
+        help="Decoder: simple (旧実装 ~3M) / kv_cache (145M) / cross_attention (~6M)",
+    )
+    # Cross-attention decoder params
+    parser.add_argument("--ca_hidden_dim", type=int, default=256)
+    parser.add_argument("--ca_num_layers", type=int, default=4)
+    parser.add_argument("--ca_num_heads", type=int, default=4)
+    parser.add_argument("--ca_mlp_ratio", type=int, default=4)
+    parser.add_argument("--ca_dropout", type=float, default=0.0)
+    # Simple decoder ablation flags
+    parser.add_argument(
+        "--use_action_norm",
+        action="store_true",
+        default=False,
+        help="Enable action normalization for SimpleDecoder (ablation)",
+    )
+    # KV-cache Expert architecture (must satisfy: hidden_size = num_attention_heads * 64)
     parser.add_argument(
         "--hidden_size", type=int, default=640, help="Expert hidden dim (must be heads*64)"
     )
@@ -71,7 +93,8 @@ def parse_args():
     parser.add_argument("--max_grad_norm", type=float, default=1.0)
     parser.add_argument("--log_every", type=int, default=1)
     parser.add_argument("--save_dir", type=str, default="checkpoints/stage2")
-    parser.add_argument("--use_wandb", action="store_true")
+    parser.add_argument("--use_wandb", action="store_true", default=True)
+    parser.add_argument("--no_wandb", dest="use_wandb", action="store_false")
     parser.add_argument("--wandb_project", type=str, default="minipamayo")
     # Data augmentation
     parser.add_argument(
@@ -90,31 +113,40 @@ def parse_args():
 
 
 @torch.no_grad()
+def extract_conditions(vlm, pixel_values):
+    """旧実装: visual tokens → LLM → mean-pool hidden states → (B, 896)."""
+    with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+        patch_features = vlm.vision_encoder(pixel_values)
+        visual_tokens = vlm.adapter(patch_features)
+        outputs = vlm.llm(inputs_embeds=visual_tokens, output_hidden_states=True)
+    last_hidden = outputs.hidden_states[-1]  # (B, L, 896)
+    condition = last_hidden.mean(dim=1).float()  # (B, 896)
+    return condition
+
+
+@torch.no_grad()
 def extract_kv_cache(vlm, pixel_values, batch, device):
     """Extract VLM KV-cache with teacher-forced GT reasoning (Alpamayo §5.1).
 
     Builds the full prompt sequence [system][user][visual][question][asst][reasoning]
-    and runs VLM forward with use_cache=True. The resulting KV-cache contains
-    both visual and reasoning information for Expert conditioning.
-
-    Args:
-        vlm: frozen MiniPamayo model
-        pixel_values: (1, 3, 224, 224)
-        batch: dict from CoCDataset with system_ids, reasoning_ids, etc.
-        device: torch device
-
-    Returns:
-        kv_cache: DynamicCache with VLM KV-cache
-        prefill_seq_len: int, sequence length of the KV-cache
+    and runs VLM forward with use_cache=True.
     """
-    # Visual tokens
+    inputs_embeds = _build_prompt_embeds(vlm, pixel_values, batch, device)
+    with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+        outputs = vlm.llm(inputs_embeds=inputs_embeds, use_cache=True)
+
+    kv_cache = outputs.past_key_values
+    prefill_seq_len = kv_cache.get_seq_length()
+    return kv_cache, prefill_seq_len
+
+
+@torch.no_grad()
+def _build_prompt_embeds(vlm, pixel_values, batch, device):
+    """Build full prompt embeddings (shared by extract_kv_cache and extract_hidden_states)."""
     with torch.amp.autocast("cuda", dtype=torch.bfloat16):
         patch_features = vlm.vision_encoder(pixel_values)
         visual_tokens = vlm.adapter(patch_features)
 
-    # Text embeddings via LLM embedding layer
-    # When called from DataLoader (batch_size=1), tensors already have batch dim (1, N).
-    # When called directly (e.g. for seq_length check), tensors are 1D (N,) → need unsqueeze.
     embed_layer = vlm.llm.get_input_embeddings()
 
     def _embed(ids_key):
@@ -129,9 +161,8 @@ def extract_kv_cache(vlm, pixel_values, batch, device):
     asst_prefix_embeds = _embed("asst_prefix_ids")
     reasoning_embeds = _embed("reasoning_ids")
 
-    # Full sequence: [system][user_prefix][visual][ego_question][asst_prefix][reasoning]
     target_dtype = system_embeds.dtype
-    inputs_embeds = torch.cat(
+    return torch.cat(
         [
             system_embeds,
             user_prefix_embeds,
@@ -143,16 +174,22 @@ def extract_kv_cache(vlm, pixel_values, batch, device):
         dim=1,
     )
 
-    with torch.amp.autocast("cuda", dtype=torch.bfloat16):
-        outputs = vlm.llm(inputs_embeds=inputs_embeds, use_cache=True)
 
-    kv_cache = outputs.past_key_values
-    prefill_seq_len = kv_cache.get_seq_length()
-    return kv_cache, prefill_seq_len
+@torch.no_grad()
+def extract_hidden_states(vlm, pixel_values, batch, device):
+    """Extract VLM hidden states for CrossAttentionDecoder conditioning.
+
+    Same prompt as extract_kv_cache, but returns last_hidden_state instead
+    of KV-cache. No KV-head bottleneck — full 896-dim hidden states.
+    """
+    inputs_embeds = _build_prompt_embeds(vlm, pixel_values, batch, device)
+    with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+        outputs = vlm.llm(inputs_embeds=inputs_embeds, output_hidden_states=True)
+    return outputs.hidden_states[-1]  # (B, L, 896)
 
 
 @torch.no_grad()
-def evaluate(decoder, vlm, dataloader, device):
+def evaluate(decoder, vlm, dataloader, device, decoder_type="kv_cache"):
     """Evaluate CFM loss on validation set."""
     decoder.eval()
     total_loss = 0.0
@@ -162,9 +199,16 @@ def evaluate(decoder, vlm, dataloader, device):
         pixel_values = batch["pixel_values"].to(device)
         gt_action = batch["action"].to(device)
 
-        kv_cache, prefill_seq_len = extract_kv_cache(vlm, pixel_values, batch, device)
         with torch.amp.autocast("cuda", dtype=torch.bfloat16):
-            loss = cfm_loss(decoder, gt_action, kv_cache, prefill_seq_len)
+            if decoder_type == "simple":
+                condition = extract_conditions(vlm, pixel_values)
+                loss = cfm_loss_simple(decoder, gt_action, condition)
+            elif decoder_type == "cross_attention":
+                hidden_states = extract_hidden_states(vlm, pixel_values, batch, device)
+                loss = cfm_loss_cross_attn(decoder, gt_action, hidden_states)
+            else:
+                kv_cache, prefill_seq_len = extract_kv_cache(vlm, pixel_values, batch, device)
+                loss = cfm_loss(decoder, gt_action, kv_cache, prefill_seq_len)
         total_loss += loss.item()
         n += 1
 
@@ -217,16 +261,91 @@ def _build_curve_sampler(dataset, kappa_threshold: float, oversample: float):
     return WeightedRandomSampler(weights, num_samples=len(dataset), replacement=True)
 
 
+def _build_checkpoint(args, decoder, metrics, epoch, global_step):
+    """Build checkpoint dict for saving."""
+    action_dim = args.K * 2
+    ckpt = {
+        "epoch": epoch,
+        "global_step": global_step,
+        "decoder_state_dict": decoder.state_dict(),
+        "metrics": metrics,
+        "K": args.K,
+        "action_dim": action_dim,
+        "num_fourier_feats": args.num_fourier_feats,
+        "fourier_max_freq": args.fourier_max_freq,
+    }
+    if args.decoder_type == "simple":
+        ckpt.update(
+            {
+                "architecture": "simple",
+                "hidden_dim": args.ca_hidden_dim,
+                "num_layers": args.ca_num_layers,
+                "num_heads": args.ca_num_heads,
+                "condition_dim": 896,
+                "use_action_norm": args.use_action_norm,
+            }
+        )
+        if args.use_action_norm:
+            ckpt.update(
+                {
+                    "accel_mean": decoder.accel_mean.item(),
+                    "accel_std": decoder.accel_std.item(),
+                    "kappa_mean": decoder.kappa_mean.item(),
+                    "kappa_std": decoder.kappa_std.item(),
+                }
+            )
+    elif args.decoder_type == "cross_attention":
+        ckpt.update(
+            {
+                "architecture": "cross_attention",
+                "hidden_dim": args.ca_hidden_dim,
+                "num_layers": args.ca_num_layers,
+                "num_heads": args.ca_num_heads,
+                "mlp_ratio": args.ca_mlp_ratio,
+                "condition_dim": 896,
+                "action_mlp_hidden": args.ca_hidden_dim,
+                "action_mlp_layers": 2,
+                "dropout": args.ca_dropout,
+            }
+        )
+    else:
+        ckpt.update(
+            {
+                "architecture": "expert_kv_cache",
+                "hidden_size": args.hidden_size,
+                "num_hidden_layers": args.num_hidden_layers,
+                "num_attention_heads": args.num_attention_heads,
+                "intermediate_size": args.intermediate_size or args.hidden_size * 4,
+                "mlp_hidden_size": args.mlp_hidden_size,
+                "mlp_num_layers": args.mlp_num_layers,
+                "attention_dropout": args.attention_dropout,
+            }
+        )
+    return ckpt
+
+
 def main():
     t_start = time.time()
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     action_dim = args.K * 2
     print(f"Device: {device}")
-    print(f"K={args.K}, action_dim={action_dim}")
-    print(
-        f"Expert: hidden={args.hidden_size}, layers={args.num_hidden_layers}, heads={args.num_attention_heads}"
-    )
+    print(f"K={args.K}, action_dim={action_dim}, decoder_type={args.decoder_type}")
+    if args.decoder_type == "kv_cache":
+        print(
+            f"Expert: hidden={args.hidden_size}, layers={args.num_hidden_layers}, "
+            f"heads={args.num_attention_heads}"
+        )
+    elif args.decoder_type == "simple":
+        print(
+            f"Simple: hidden={args.ca_hidden_dim}, layers={args.ca_num_layers}, "
+            f"heads={args.ca_num_heads}"
+        )
+    else:
+        print(
+            f"CrossAttn: hidden={args.ca_hidden_dim}, layers={args.ca_num_layers}, "
+            f"heads={args.ca_num_heads}"
+        )
 
     # Tokenizers (needed for CoCDataset)
     text_tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B")
@@ -301,20 +420,15 @@ def main():
     print("Building frozen VLM...")
     vlm = MiniPamayo(adapter_type="cross_attention", action_dim=action_dim)
 
-    phase4_path = Path(args.phase4_checkpoint)
     vlm_path = Path(args.vlm_checkpoint)
-
-    if phase4_path.exists():
-        print(f"Loading Phase 4 checkpoint: {phase4_path}")
-        ckpt = torch.load(phase4_path, map_location="cpu", weights_only=True)
+    if vlm_path.exists():
+        print(f"Loading VLM checkpoint: {vlm_path}")
+        ckpt = torch.load(vlm_path, map_location="cpu", weights_only=True)
         state_dict = ckpt["model_state_dict"]
         missing, unexpected = vlm.load_state_dict(state_dict, strict=False)
         print(f"  Missing: {len(missing)} keys, Unexpected: {len(unexpected)} keys")
-    elif vlm_path.exists():
-        print(f"Phase 4 not found, loading VLM checkpoint: {vlm_path}")
-        vlm.load_vlm_checkpoint(vlm_path)
     else:
-        print("WARNING: No checkpoint found, using random VLM weights")
+        raise FileNotFoundError(f"VLM checkpoint not found: {vlm_path}")
 
     vlm.requires_grad_(False)
     vlm.eval()
@@ -324,33 +438,72 @@ def main():
     print("Computing action normalization stats...")
     action_stats = _compute_action_stats(train_dataset)
 
-    # Flow Matching Expert (trainable)
-    print("Building Expert TrajectoryDecoder...")
-    decoder = TrajectoryDecoder(
-        K=args.K,
-        hidden_size=args.hidden_size,
-        num_hidden_layers=args.num_hidden_layers,
-        num_attention_heads=args.num_attention_heads,
-        intermediate_size=args.intermediate_size,
-        num_fourier_feats=args.num_fourier_feats,
-        fourier_max_freq=args.fourier_max_freq,
-        mlp_hidden_size=args.mlp_hidden_size,
-        mlp_num_layers=args.mlp_num_layers,
-        attention_dropout=args.attention_dropout,
-        **action_stats,
-    )
+    # Flow Matching Decoder (trainable)
+    if args.decoder_type == "simple":
+        norm_label = "with action_norm" if args.use_action_norm else "no action_norm"
+        print(f"Building SimpleDecoder (旧実装, {norm_label})...")
+        decoder = SimpleDecoder(
+            action_dim=action_dim,
+            hidden_dim=args.ca_hidden_dim,
+            num_layers=args.ca_num_layers,
+            num_heads=args.ca_num_heads,
+            condition_dim=896,
+            use_action_norm=args.use_action_norm,
+            **(action_stats if args.use_action_norm else {}),
+        )
+    elif args.decoder_type == "cross_attention":
+        print("Building CrossAttentionDecoder...")
+        decoder = CrossAttentionDecoder(
+            K=args.K,
+            hidden_dim=args.ca_hidden_dim,
+            num_layers=args.ca_num_layers,
+            num_heads=args.ca_num_heads,
+            mlp_ratio=args.ca_mlp_ratio,
+            condition_dim=896,
+            num_fourier_feats=args.num_fourier_feats,
+            fourier_max_freq=args.fourier_max_freq,
+            action_mlp_hidden=args.ca_hidden_dim,
+            action_mlp_layers=2,
+            dropout=args.ca_dropout,
+            **action_stats,
+        )
+    else:
+        print("Building Expert TrajectoryDecoder (KV-cache)...")
+        decoder = TrajectoryDecoder(
+            K=args.K,
+            hidden_size=args.hidden_size,
+            num_hidden_layers=args.num_hidden_layers,
+            num_attention_heads=args.num_attention_heads,
+            intermediate_size=args.intermediate_size,
+            num_fourier_feats=args.num_fourier_feats,
+            fourier_max_freq=args.fourier_max_freq,
+            mlp_hidden_size=args.mlp_hidden_size,
+            mlp_num_layers=args.mlp_num_layers,
+            attention_dropout=args.attention_dropout,
+            **action_stats,
+        )
     decoder = decoder.to(device)
 
     n_params = sum(p.numel() for p in decoder.parameters())
     n_trainable = sum(p.numel() for p in decoder.parameters() if p.requires_grad)
     print(f"Decoder: {n_params:,} total, {n_trainable:,} trainable")
 
-    # Log KV-cache seq_length for first sample
+    # Log prompt seq_length for first sample
     sample0 = train_dataset[0]
     pv0 = sample0["pixel_values"].unsqueeze(0).to(device)
-    kv0, seq0 = extract_kv_cache(vlm, pv0, sample0, device)
-    print(f"KV-cache seq_length: {seq0} (was 16 with visual-only)")
-    del kv0, pv0
+    if args.decoder_type == "simple":
+        cond0 = extract_conditions(vlm, pv0)
+        print(f"Condition shape: {list(cond0.shape)} (mean-pooled)")
+        del cond0
+    elif args.decoder_type == "cross_attention":
+        hs0 = extract_hidden_states(vlm, pv0, sample0, device)
+        print(f"Hidden states shape: {list(hs0.shape)} (seq_len={hs0.shape[1]})")
+        del hs0
+    else:
+        kv0, seq0 = extract_kv_cache(vlm, pv0, sample0, device)
+        print(f"KV-cache seq_length: {seq0} (was 16 with visual-only)")
+        del kv0
+    del pv0
 
     # Optimizer + scheduler
     optimizer = torch.optim.AdamW(decoder.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -368,11 +521,14 @@ def main():
     if args.use_wandb:
         import wandb
 
-        wandb.init(project=args.wandb_project, name="stage2-flow", config=vars(args))
+        run_name = f"stage2-{args.decoder_type}"
+        if args.decoder_type == "simple" and args.use_action_norm:
+            run_name += "-norm"
+        wandb.init(project=args.wandb_project, name=run_name, config=vars(args))
 
     # Initial evaluation
     print("\n=== Initial Evaluation ===")
-    init_metrics = evaluate(decoder, vlm, val_loader, device)
+    init_metrics = evaluate(decoder, vlm, val_loader, device, args.decoder_type)
     for k, v in init_metrics.items():
         print(f"  {k}: {v:.6f}")
 
@@ -395,12 +551,17 @@ def main():
             pixel_values = batch["pixel_values"].to(device)
             gt_action = batch["action"].to(device)
 
-            # Extract KV-cache from frozen VLM (with GT reasoning teacher-forced)
-            kv_cache, prefill_seq_len = extract_kv_cache(vlm, pixel_values, batch, device)
-
-            # CFM loss (bf16 for decoder)
+            # Extract condition from frozen VLM → CFM loss
             with torch.amp.autocast("cuda", dtype=torch.bfloat16):
-                loss = cfm_loss(decoder, gt_action, kv_cache, prefill_seq_len)
+                if args.decoder_type == "simple":
+                    condition = extract_conditions(vlm, pixel_values)
+                    loss = cfm_loss_simple(decoder, gt_action, condition)
+                elif args.decoder_type == "cross_attention":
+                    hidden_states = extract_hidden_states(vlm, pixel_values, batch, device)
+                    loss = cfm_loss_cross_attn(decoder, gt_action, hidden_states)
+                else:
+                    kv_cache, prefill_seq_len = extract_kv_cache(vlm, pixel_values, batch, device)
+                    loss = cfm_loss(decoder, gt_action, kv_cache, prefill_seq_len)
             loss = loss / args.grad_accum
             loss.backward()
 
@@ -429,7 +590,7 @@ def main():
                 optimizer.zero_grad()
 
         # Epoch evaluation
-        metrics = evaluate(decoder, vlm, val_loader, device)
+        metrics = evaluate(decoder, vlm, val_loader, device, args.decoder_type)
         avg_train_loss = epoch_loss / max(epoch_samples, 1)
 
         epoch_time = time.time() - t_epoch
@@ -451,49 +612,19 @@ def main():
 
         if metrics["val_cfm_loss"] < best_val_loss:
             best_val_loss = metrics["val_cfm_loss"]
-            ckpt_data = {
-                "epoch": epoch + 1,
-                "global_step": global_step,
-                "decoder_state_dict": decoder.state_dict(),
-                "metrics": metrics,
-                "K": args.K,
-                "action_dim": action_dim,
-                "hidden_size": args.hidden_size,
-                "num_hidden_layers": args.num_hidden_layers,
-                "num_attention_heads": args.num_attention_heads,
-                "intermediate_size": args.intermediate_size or args.hidden_size * 4,
-                "num_fourier_feats": args.num_fourier_feats,
-                "fourier_max_freq": args.fourier_max_freq,
-                "mlp_hidden_size": args.mlp_hidden_size,
-                "mlp_num_layers": args.mlp_num_layers,
-                "attention_dropout": args.attention_dropout,
-                "architecture": "expert_kv_cache",
-            }
-            torch.save(ckpt_data, save_dir / "best.pt")
+            torch.save(
+                _build_checkpoint(args, decoder, metrics, epoch + 1, global_step),
+                save_dir / "best.pt",
+            )
 
-    ckpt_data = {
-        "epoch": args.max_epochs,
-        "global_step": global_step,
-        "decoder_state_dict": decoder.state_dict(),
-        "metrics": metrics,
-        "K": args.K,
-        "action_dim": action_dim,
-        "hidden_size": args.hidden_size,
-        "num_hidden_layers": args.num_hidden_layers,
-        "num_attention_heads": args.num_attention_heads,
-        "intermediate_size": args.intermediate_size or args.hidden_size * 4,
-        "num_fourier_feats": args.num_fourier_feats,
-        "fourier_max_freq": args.fourier_max_freq,
-        "mlp_hidden_size": args.mlp_hidden_size,
-        "mlp_num_layers": args.mlp_num_layers,
-        "attention_dropout": args.attention_dropout,
-        "architecture": "expert_kv_cache",
-    }
-    torch.save(ckpt_data, save_dir / "final.pt")
+    torch.save(
+        _build_checkpoint(args, decoder, metrics, args.max_epochs, global_step),
+        save_dir / "final.pt",
+    )
 
     # Summary
     print("\n=== Summary ===")
-    final_metrics = evaluate(decoder, vlm, val_loader, device)
+    final_metrics = evaluate(decoder, vlm, val_loader, device, args.decoder_type)
     print(f"  Val CFM: {init_metrics['val_cfm_loss']:.4f} -> {final_metrics['val_cfm_loss']:.4f}")
     print(f"  Decoder params: {n_trainable:,}")
 

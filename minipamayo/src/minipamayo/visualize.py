@@ -73,6 +73,12 @@ def parse_args():
     parser.add_argument("--n_vis", type=int, default=N_VIS, help="Number of samples to visualize")
     parser.add_argument("--output", type=str, default=None)
     parser.add_argument("--K", type=int, default=K_DEFAULT)
+    parser.add_argument(
+        "--curves", action="store_true", help="Select curve scenes (|lateral| > 3m)"
+    )
+    parser.add_argument(
+        "--curve_offset", type=int, default=0, help="Skip first N diverse curve scenes"
+    )
     return parser.parse_args()
 
 
@@ -907,7 +913,34 @@ def vis_stage3_rollouts(args, device):
     if args.n_vis == 1:
         axes = axes.reshape(1, -1)
 
-    indices = _select_indices(len(dataset), args.n_vis)
+    if getattr(args, "curves", False):
+        curve_indices = []
+        for i in range(len(dataset)):
+            wp = dataset[i]["gt_waypoints"].numpy()
+            if abs(float(wp[-1, 1])) > 3.0:
+                curve_indices.append((i, abs(float(wp[-1, 1]))))
+        curve_indices.sort(key=lambda x: -x[1])
+        # Spread across different scenes (skip consecutive indices)
+        selected = []
+        last_idx = -100
+        offset = getattr(args, "curve_offset", 0)
+        skipped = 0
+        for ci in curve_indices:
+            if abs(ci[0] - last_idx) > 50:
+                if skipped < offset:
+                    skipped += 1
+                    last_idx = ci[0]
+                    continue
+                selected.append(ci)
+                last_idx = ci[0]
+            if len(selected) >= args.n_vis:
+                break
+        indices = [ci[0] for ci in selected]
+        print(f"Selected {len(indices)} curve scenes (|lateral| > 3m, diverse)")
+        for ci in selected:
+            print(f"  idx={ci[0]:5d} |lat|={ci[1]:.2f}m")
+    else:
+        indices = _select_indices(len(dataset), args.n_vis)
 
     traj_mode = "Flow" if decoder is not None else "Discrete"
     print(

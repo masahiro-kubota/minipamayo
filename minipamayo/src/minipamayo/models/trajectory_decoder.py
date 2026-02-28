@@ -1,16 +1,16 @@
-"""Alpamayo-style Flow Matching Expert for trajectory generation.
+"""Flow Matching Expert for trajectory generation.
 
-Uses a Qwen2 Transformer as the denoising network, conditioned on VLM KV-cache
-via past_key_values (Alpamayo §5.1-5.2). Action inputs are encoded with
-Fourier Feature V2 + MLP (Alpamayo action_in_proj).
+Two decoder architectures:
 
-KV-cache compatibility constraint:
-  Expert must have same num_kv_heads (2) and head_dim (64) as Qwen2.5-0.5B
-  so VLM's past_key_values can be consumed directly by Expert.
+1. TrajectoryDecoder (KV-cache Expert, Alpamayo §5.1):
+   Qwen2 Transformer conditioned on VLM KV-cache via past_key_values.
+   Requires KV-cache compatibility: same num_kv_heads (2), head_dim (64).
+   Default: 24 layers, 640 hidden, 10 heads (~146M params).
 
-Default config: 24 layers, 640 hidden, 10 heads (~146M params).
-  Matches Alpamayo's Expert/VLM ratio (~25%): 146M / 494M ≈ 30%.
-Full config: 24 layers, 896 hidden, 14 heads (~280M params).
+2. CrossAttentionDecoder (cross-attention to VLM hidden states):
+   Custom Transformer with AdaLN + cross-attention to VLM hidden states.
+   No KV-cache constraint — directly attends to full 896-dim hidden states.
+   Default: 4 layers, 256 hidden, 4 heads (~6M params).
 """
 
 import math
@@ -394,24 +394,49 @@ def load_decoder_from_checkpoint(ckpt_path, device):
     K = ckpt.get("K", 6)
     arch = ckpt.get("architecture", "unknown")
 
-    if arch != "expert_kv_cache":
-        raise ValueError(
-            f"Unknown architecture '{arch}' in checkpoint. "
-            "Old cross-attention checkpoints are not compatible."
+    if arch == "expert_kv_cache":
+        decoder = TrajectoryDecoder(
+            K=K,
+            hidden_size=ckpt["hidden_size"],
+            num_hidden_layers=ckpt["num_hidden_layers"],
+            num_attention_heads=ckpt["num_attention_heads"],
+            intermediate_size=ckpt.get("intermediate_size"),
+            num_fourier_feats=ckpt.get("num_fourier_feats", 20),
+            fourier_max_freq=ckpt.get("fourier_max_freq", 100.0),
+            mlp_hidden_size=ckpt.get("mlp_hidden_size", 1024),
+            mlp_num_layers=ckpt.get("mlp_num_layers", 4),
+            attention_dropout=ckpt.get("attention_dropout", 0.0),
         )
+    elif arch == "simple":
+        decoder = SimpleDecoder(
+            action_dim=ckpt.get("action_dim", K * 2),
+            hidden_dim=ckpt.get("hidden_dim", 256),
+            num_layers=ckpt.get("num_layers", 4),
+            num_heads=ckpt.get("num_heads", 4),
+            condition_dim=ckpt.get("condition_dim", 896),
+            accel_mean=ckpt.get("accel_mean", 0.0),
+            accel_std=ckpt.get("accel_std", 1.0),
+            kappa_mean=ckpt.get("kappa_mean", 0.0),
+            kappa_std=ckpt.get("kappa_std", 1.0),
+            use_action_norm=ckpt.get("use_action_norm", False),
+        )
+    elif arch == "cross_attention":
+        decoder = CrossAttentionDecoder(
+            K=K,
+            hidden_dim=ckpt["hidden_dim"],
+            num_layers=ckpt["num_layers"],
+            num_heads=ckpt["num_heads"],
+            mlp_ratio=ckpt.get("mlp_ratio", 4),
+            condition_dim=ckpt.get("condition_dim", 896),
+            num_fourier_feats=ckpt.get("num_fourier_feats", 20),
+            fourier_max_freq=ckpt.get("fourier_max_freq", 100.0),
+            action_mlp_hidden=ckpt.get("action_mlp_hidden", 256),
+            action_mlp_layers=ckpt.get("action_mlp_layers", 2),
+            dropout=ckpt.get("dropout", 0.0),
+        )
+    else:
+        raise ValueError(f"Unknown architecture '{arch}' in checkpoint.")
 
-    decoder = TrajectoryDecoder(
-        K=K,
-        hidden_size=ckpt["hidden_size"],
-        num_hidden_layers=ckpt["num_hidden_layers"],
-        num_attention_heads=ckpt["num_attention_heads"],
-        intermediate_size=ckpt.get("intermediate_size"),
-        num_fourier_feats=ckpt.get("num_fourier_feats", 20),
-        fourier_max_freq=ckpt.get("fourier_max_freq", 100.0),
-        mlp_hidden_size=ckpt.get("mlp_hidden_size", 1024),
-        mlp_num_layers=ckpt.get("mlp_num_layers", 4),
-        attention_dropout=ckpt.get("attention_dropout", 0.0),
-    )
     decoder.load_state_dict(ckpt["decoder_state_dict"])
     decoder = decoder.to(device).eval()
     decoder.requires_grad_(False)
@@ -452,4 +477,417 @@ def cfm_sample(
         a_t = a_t + dt * v
 
     # Denormalize back to physical units
+    return model.denormalize(a_t)
+
+
+# ============================================================
+# Simple Decoder (旧実装: mean-pool + self-attn only)
+# ============================================================
+
+
+class SelfAttnFlowBlock(nn.Module):
+    """Self-attention-only Transformer block with AdaLN (旧実装)."""
+
+    def __init__(self, dim: int, num_heads: int, mlp_ratio: int = 4):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(dim, elementwise_affine=False)
+        self.norm2 = nn.LayerNorm(dim, elementwise_affine=False)
+        self.attn = nn.MultiheadAttention(dim, num_heads, batch_first=True)
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, dim * mlp_ratio),
+            nn.GELU(),
+            nn.Linear(dim * mlp_ratio, dim),
+        )
+        # AdaLN: 4 params (scale1, shift1, scale2, shift2)
+        self.adaLN = nn.Linear(dim, dim * 4)
+
+    def forward(self, x: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+        params = self.adaLN(t_emb).unsqueeze(1)  # (B, 1, dim*4)
+        s1, b1, s2, b2 = params.chunk(4, dim=-1)
+
+        h = self.norm1(x) * (1 + s1) + b1
+        h, _ = self.attn(h, h, h)
+        x = x + h
+
+        h = self.norm2(x) * (1 + s2) + b2
+        h = self.mlp(h)
+        x = x + h
+        return x
+
+
+class SimpleDecoder(nn.Module):
+    """旧実装の Flow Matching decoder (pre-54346b5).
+
+    - Mean-pooled VLM hidden states → 1 condition vector
+    - 2-token sequence [condition, action] で self-attention only
+    - action は Linear projection (Fourier なし)
+    - action 正規化なし
+    """
+
+    def __init__(
+        self,
+        action_dim: int = 12,
+        hidden_dim: int = 256,
+        num_layers: int = 4,
+        num_heads: int = 4,
+        condition_dim: int = 896,
+        accel_mean: float = 0.0,
+        accel_std: float = 1.0,
+        kappa_mean: float = 0.0,
+        kappa_std: float = 1.0,
+        use_action_norm: bool = False,
+    ):
+        super().__init__()
+        self.action_dim = action_dim
+        self.hidden_dim = hidden_dim
+        self.K = action_dim // 2
+        self.use_action_norm = use_action_norm
+
+        self.register_buffer("accel_mean", torch.tensor(accel_mean))
+        self.register_buffer("accel_std", torch.tensor(accel_std))
+        self.register_buffer("kappa_mean", torch.tensor(kappa_mean))
+        self.register_buffer("kappa_std", torch.tensor(kappa_std))
+
+        self.action_proj = nn.Linear(action_dim, hidden_dim)
+        self.cond_proj = nn.Linear(condition_dim, hidden_dim)
+        self.time_emb = SinusoidalTimeEmbedding(hidden_dim)
+
+        self.blocks = nn.ModuleList(
+            [SelfAttnFlowBlock(hidden_dim, num_heads) for _ in range(num_layers)]
+        )
+
+        self.norm_out = nn.LayerNorm(hidden_dim)
+        self.out_proj = nn.Linear(hidden_dim, action_dim)
+
+    def normalize(self, action: torch.Tensor) -> torch.Tensor:
+        out = action.clone()
+        out[:, 0::2] = (out[:, 0::2] - self.accel_mean) / self.accel_std
+        out[:, 1::2] = (out[:, 1::2] - self.kappa_mean) / self.kappa_std
+        return out
+
+    def denormalize(self, action: torch.Tensor) -> torch.Tensor:
+        out = action.clone()
+        out[:, 0::2] = out[:, 0::2] * self.accel_std + self.accel_mean
+        out[:, 1::2] = out[:, 1::2] * self.kappa_std + self.kappa_mean
+        return out
+
+    def forward(
+        self,
+        a_t: torch.Tensor,
+        t: torch.Tensor,
+        condition: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Args:
+            a_t: (B, action_dim) noisy action
+            t: (B,) timestep
+            condition: (B, condition_dim) mean-pooled VLM hidden states
+        Returns:
+            v_theta: (B, action_dim) predicted velocity
+        """
+        h_action = self.action_proj(a_t).unsqueeze(1)  # (B, 1, hidden)
+        h_cond = self.cond_proj(condition).unsqueeze(1)  # (B, 1, hidden)
+        t_emb = self.time_emb(t)  # (B, hidden)
+
+        x = torch.cat([h_cond, h_action], dim=1)  # (B, 2, hidden)
+
+        for block in self.blocks:
+            x = block(x, t_emb)
+
+        x = self.norm_out(x[:, 1, :])  # action position
+        return self.out_proj(x)  # (B, action_dim)
+
+
+def cfm_loss_simple(
+    model: SimpleDecoder,
+    action_gt: torch.Tensor,
+    condition: torch.Tensor,
+) -> torch.Tensor:
+    """SimpleDecoder CFM loss. 正規化は use_action_norm フラグで制御."""
+    B = action_gt.shape[0]
+    device = action_gt.device
+
+    if model.use_action_norm:
+        action_gt = model.normalize(action_gt)
+
+    t = torch.rand(B, device=device)
+    epsilon = torch.randn_like(action_gt)
+
+    a_t = t.unsqueeze(1) * action_gt + (1 - t.unsqueeze(1)) * epsilon
+    u_target = action_gt - epsilon
+
+    v_pred = model(a_t, t, condition)
+    return (v_pred - u_target).pow(2).mean()
+
+
+@torch.no_grad()
+def cfm_sample_simple(
+    model: SimpleDecoder,
+    condition: torch.Tensor,
+    n_steps: int = 10,
+) -> torch.Tensor:
+    """SimpleDecoder CFM sampling. 正規化ありの場合は denormalize して返す."""
+    B = condition.shape[0]
+    device = condition.device
+
+    dt = 1.0 / n_steps
+    a_t = torch.randn(B, model.action_dim, device=device)
+
+    for i in range(n_steps):
+        t = torch.full((B,), i / n_steps, device=device)
+        v = model(a_t, t, condition)
+        a_t = a_t + dt * v
+
+    if model.use_action_norm:
+        return model.denormalize(a_t)
+    return a_t
+
+
+# ============================================================
+# Cross-Attention Decoder
+# ============================================================
+
+
+class SinusoidalTimeEmbedding(nn.Module):
+    """Sinusoidal timestep embedding with MLP projection."""
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.dim = dim
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, dim * 4),
+            nn.SiLU(),
+            nn.Linear(dim * 4, dim),
+        )
+
+    def forward(self, t: torch.Tensor) -> torch.Tensor:
+        """t: (B,) → (B, dim)"""
+        half_dim = self.dim // 2
+        freqs = torch.exp(
+            -math.log(10000.0) * torch.arange(half_dim, device=t.device, dtype=t.dtype) / half_dim
+        )
+        args = t.unsqueeze(1) * freqs.unsqueeze(0)
+        emb = torch.cat([args.sin(), args.cos()], dim=-1)
+        return self.mlp(emb)
+
+
+class FlowTransformerBlock(nn.Module):
+    """Transformer block with AdaLN + self-attention + cross-attention + FFN."""
+
+    def __init__(self, dim: int, num_heads: int, mlp_ratio: int = 4, dropout: float = 0.0):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(dim, elementwise_affine=False)
+        self.attn = nn.MultiheadAttention(dim, num_heads, batch_first=True, dropout=dropout)
+        self.norm_cross = nn.LayerNorm(dim, elementwise_affine=False)
+        self.cross_attn = nn.MultiheadAttention(dim, num_heads, batch_first=True, dropout=dropout)
+        self.norm2 = nn.LayerNorm(dim, elementwise_affine=False)
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, dim * mlp_ratio),
+            nn.GELU(),
+            nn.Linear(dim * mlp_ratio, dim),
+        )
+        # AdaLN: time_emb → 6 scale/shift params (2 per sub-layer)
+        self.adaln = nn.Linear(dim, dim * 6)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        t_emb: torch.Tensor,
+        condition: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Args:
+            x: (B, K, dim) action tokens
+            t_emb: (B, dim) timestep embedding
+            condition: (B, L, dim) projected VLM hidden states
+        """
+        params = self.adaln(t_emb).unsqueeze(1)  # (B, 1, dim*6)
+        s1, b1, sc, bc, s2, b2 = params.chunk(6, dim=-1)
+
+        # Self-attention with AdaLN
+        h = self.norm1(x) * (1 + s1) + b1
+        h, _ = self.attn(h, h, h)
+        x = x + h
+
+        # Cross-attention: Q=action tokens, K/V=condition (VLM hidden states)
+        h = self.norm_cross(x) * (1 + sc) + bc
+        h, _ = self.cross_attn(h, condition, condition)
+        x = x + h
+
+        # FFN with AdaLN
+        h = self.norm2(x) * (1 + s2) + b2
+        h = self.mlp(h)
+        x = x + h
+
+        return x
+
+
+class CrossAttentionDecoder(nn.Module):
+    """Cross-Attention Flow Matching decoder.
+
+    Uses direct cross-attention to VLM hidden states (896 dim) instead of
+    KV-cache, avoiding the KV-head bottleneck of the Qwen2.5-0.5B-based Expert.
+    Default config: ~6M params (vs 146M for KV-cache Expert).
+    """
+
+    def __init__(
+        self,
+        K: int = 6,
+        hidden_dim: int = 256,
+        num_layers: int = 4,
+        num_heads: int = 4,
+        mlp_ratio: int = 4,
+        condition_dim: int = 896,
+        num_fourier_feats: int = 20,
+        fourier_max_freq: float = 100.0,
+        action_mlp_hidden: int = 256,
+        action_mlp_layers: int = 2,
+        dropout: float = 0.0,
+        accel_mean: float = 0.0,
+        accel_std: float = 1.0,
+        kappa_mean: float = 0.0,
+        kappa_std: float = 1.0,
+    ):
+        super().__init__()
+        self.K = K
+        self.hidden_dim = hidden_dim
+
+        # Action normalization (same as TrajectoryDecoder)
+        self.register_buffer("accel_mean", torch.tensor(accel_mean))
+        self.register_buffer("accel_std", torch.tensor(accel_std))
+        self.register_buffer("kappa_mean", torch.tensor(kappa_mean))
+        self.register_buffer("kappa_std", torch.tensor(kappa_std))
+
+        # Condition projection: VLM hidden states → decoder dim
+        self.cond_proj = nn.Sequential(
+            nn.Linear(condition_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+        )
+
+        # Action input projection (reuse Fourier V2 + MLP)
+        self.action_in_proj = ActionInProj(
+            K=K,
+            out_dim=hidden_dim,
+            num_fourier_feats=num_fourier_feats,
+            max_freq=fourier_max_freq,
+            mlp_hidden_size=action_mlp_hidden,
+            mlp_num_layers=action_mlp_layers,
+        )
+
+        # Timestep embedding
+        self.time_emb = SinusoidalTimeEmbedding(hidden_dim)
+
+        # Transformer blocks
+        self.blocks = nn.ModuleList(
+            [
+                FlowTransformerBlock(hidden_dim, num_heads, mlp_ratio, dropout)
+                for _ in range(num_layers)
+            ]
+        )
+
+        # Output projection
+        self.norm_out = nn.LayerNorm(hidden_dim)
+        self.out_proj = nn.Linear(hidden_dim, 2)  # per-waypoint (a, kappa)
+
+    def normalize(self, action: torch.Tensor) -> torch.Tensor:
+        """Normalize raw action to zero-mean unit-variance."""
+        out = action.clone()
+        out[:, 0::2] = (out[:, 0::2] - self.accel_mean) / self.accel_std
+        out[:, 1::2] = (out[:, 1::2] - self.kappa_mean) / self.kappa_std
+        return out
+
+    def denormalize(self, action: torch.Tensor) -> torch.Tensor:
+        """Denormalize action back to physical units."""
+        out = action.clone()
+        out[:, 0::2] = out[:, 0::2] * self.accel_std + self.accel_mean
+        out[:, 1::2] = out[:, 1::2] * self.kappa_std + self.kappa_mean
+        return out
+
+    def forward(
+        self,
+        a_t: torch.Tensor,
+        t: torch.Tensor,
+        hidden_states: torch.Tensor,
+    ) -> torch.Tensor:
+        """Predict velocity field.
+
+        Args:
+            a_t: (B, K*2) flat noisy action at time t
+            t: (B,) timestep in [0, 1]
+            hidden_states: (B, L, condition_dim) VLM hidden states
+
+        Returns:
+            v_theta: (B, K*2) predicted velocity field
+        """
+        B = a_t.shape[0]
+
+        # Project condition
+        condition = self.cond_proj(hidden_states)  # (B, L, hidden_dim)
+
+        # Action embedding: (B, K*2) → (B, K, 2) → (B, K, hidden_dim)
+        x = self.action_in_proj(a_t.view(B, self.K, 2), t)
+
+        # Timestep embedding
+        t_emb = self.time_emb(t)  # (B, hidden_dim)
+
+        # Transformer blocks
+        for block in self.blocks:
+            x = block(x, t_emb, condition)
+
+        # Output: (B, K, hidden_dim) → (B, K, 2) → (B, K*2)
+        x = self.norm_out(x)
+        pred = self.out_proj(x)
+        return pred.reshape(B, self.K * 2)
+
+
+# ============================================================
+# Cross-Attention CFM Loss and Sampling
+# ============================================================
+
+
+def cfm_loss_cross_attn(
+    model: CrossAttentionDecoder,
+    action_gt: torch.Tensor,
+    hidden_states: torch.Tensor,
+    beta_a: float = 2.0,
+    beta_b: float = 5.0,
+) -> torch.Tensor:
+    """CFM loss for CrossAttentionDecoder.
+
+    Same Gaussian OT path as cfm_loss, but conditioned on VLM hidden states
+    instead of KV-cache.
+    """
+    B = action_gt.shape[0]
+    device = action_gt.device
+
+    action_norm = model.normalize(action_gt)
+    t = torch.distributions.Beta(beta_a, beta_b).sample((B,)).to(device)
+    epsilon = torch.randn_like(action_norm)
+
+    a_t = t.unsqueeze(1) * action_norm + (1 - t.unsqueeze(1)) * epsilon
+    u_target = action_norm - epsilon
+
+    v_pred = model(a_t, t, hidden_states)
+    return (v_pred - u_target).pow(2).mean()
+
+
+@torch.no_grad()
+def cfm_sample_cross_attn(
+    model: CrossAttentionDecoder,
+    hidden_states: torch.Tensor,
+    n_steps: int = 10,
+) -> torch.Tensor:
+    """Sample trajectory for CrossAttentionDecoder via Euler integration."""
+    B = hidden_states.shape[0]
+    device = hidden_states.device
+    action_dim = model.K * 2
+
+    dt = 1.0 / n_steps
+    a_t = torch.randn(B, action_dim, device=device)
+
+    for i in range(n_steps):
+        t = torch.full((B,), i / n_steps, device=device)
+        v = model(a_t, t, hidden_states)
+        a_t = a_t + dt * v
+
     return model.denormalize(a_t)
