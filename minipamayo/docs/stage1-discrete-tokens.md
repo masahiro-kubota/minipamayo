@@ -110,6 +110,42 @@ model.resize_token_embeddings(VOCAB_SIZE_ORIGINAL + N_BINS)
 # 新規トークンの出力バイアスはゼロ初期化
 ```
 
+### 実装上の補足: `tokenizer.add_tokens()` は使わない
+
+本 repo の実装では、Hugging Face tokenizer に文字列として action token を追加していない。
+代わりに `DiscreteActionTokenizer` が **bin index から数値 token ID を直接生成**し、
+LLM 側だけ `resize_token_embeddings()` でその ID に対応する埋め込み行を増やす。
+
+```python
+token_id = vocab_offset + bin_index
+model.llm.resize_token_embeddings(vocab_offset + n_bins)
+```
+
+これは以下の条件を満たす限り問題ない:
+
+1. action token は自然言語として decode しない
+2. 学習時・推論時ともに action token を `DiscreteActionTokenizer` が管理する
+3. LLM への入力は `input_ids` ではなく `inputs_embeds` ベースで組み立てられる
+4. 後段で `token_id < vocab_offset` を text、`vocab_offset <= token_id < vocab_offset + n_bins` を action として明示的に分離する
+
+つまり、これは「text tokenizer を拡張する」方式ではなく、
+**Qwen の語彙末尾に action 用の ID 範囲を予約し、その席に embedding / lm_head を増設する方式**である。
+
+#### この方式のメリット
+
+- 実装が単純で、12 個の action token をそのまま cross-entropy 学習に載せやすい
+- text tokenizer の chat template や既存特殊トークンを壊さずに済む
+- Stage 3/4 でも text token と action token を ID 範囲で簡単に分離できる
+
+#### 注意点
+
+- Hugging Face の標準的な「語彙拡張」とはやや異なるため、外部ツールとの相互運用性は低い
+- `vocab_offset` を固定値で持つと、将来バックボーンや embedding shape を変えたときに破綻しうる
+- より堅牢にするなら `vocab_offset = model.llm.get_input_embeddings().weight.shape[0]` のように動的決定する
+
+したがって、この方式は **MiniPamayo の閉じたパイプライン内では妥当**だが、
+将来のモデル差し替えや汎用化を考えるなら `vocab_offset` の動的化を行うのが望ましい。
+
 ---
 
 ## プロジェクト構成（Stage 1 で追加・変更するファイル）
