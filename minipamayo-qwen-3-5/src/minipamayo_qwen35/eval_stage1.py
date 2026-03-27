@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from mcap.well_known import MessageEncoding, SchemaEncoding
-from mcap.writer import Writer
+from mcap.writer import CompressionType, Writer
 from PIL import Image
 from torch.utils.data import DataLoader
 from transformers import AutoModelForImageTextToText, AutoProcessor
@@ -521,7 +521,7 @@ def init_mcap_writer(output_mcap: str, episode_metadata: dict[str, str], camera_
     output_path = Path(output_mcap)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     stream = output_path.open("wb")
-    writer = Writer(stream)
+    writer = Writer(stream, compression=CompressionType.ZSTD, use_chunking=True)
     writer.start(profile="carla_alpamayo.route_loop", library="minipamayo_qwen35")
     writer.add_metadata("episode", episode_metadata)
 
@@ -597,6 +597,34 @@ def init_mcap_writer(output_mcap: str, episode_metadata: dict[str, str], camera_
         sample_channel_id,
         summary_channel_id,
     )
+
+
+def write_single_segment_index(
+    output_mcap: str,
+    episode_metadata: dict[str, str],
+    start_elapsed_seconds: float,
+    end_elapsed_seconds: float,
+    frame_count: int,
+) -> None:
+    output_path = Path(output_mcap)
+    index_payload = {
+        "episode_id": episode_metadata["episode_id"],
+        "route_name": episode_metadata["route_name"],
+        "town": episode_metadata["town"],
+        "weather": episode_metadata["weather"],
+        "segment_seconds": 0.0,
+        "segments": [
+            {
+                "segment_index": 0,
+                "path": output_path.name,
+                "start_elapsed_seconds": start_elapsed_seconds,
+                "end_elapsed_seconds": end_elapsed_seconds,
+                "frame_count": frame_count,
+            }
+        ],
+    }
+    with (output_path.parent / "index.json").open("w", encoding="utf-8") as f:
+        json.dump(index_payload, f, indent=2, ensure_ascii=False)
 
 
 def write_json_message(writer: Writer, channel_id: int, payload: dict, log_time_ns: int, sequence: int) -> None:
@@ -683,6 +711,13 @@ def main() -> None:
     k_steps = int(stage1_metadata.get("k", action_dim // 2))
     dt = float(stage1_metadata.get("dt", 0.5))
     episode_id = infer_episode_id(dataset_jsonl, extract_summary)
+    episode_metadata = {
+        "episode_id": episode_id,
+        "route_name": "stage1_eval",
+        "town": "",
+        "weather": "",
+        "compression": "zstd_chunked",
+    }
 
     torch.cuda.reset_peak_memory_stats(device)
 
@@ -697,13 +732,6 @@ def main() -> None:
     if args.output_mcap:
         with Image.open(dataset[0]["image_path"]) as first_image:
             width, height = first_image.size
-        episode_metadata = {
-            "episode_id": episode_id,
-            "route_name": "stage1_eval",
-            "town": "",
-            "weather": "",
-            "compression": "zstd_chunked",
-        }
         camera_metadata = {
             "frame_id": "ego/front_camera",
             "camera_width": str(width),
@@ -750,6 +778,8 @@ def main() -> None:
     generated_bins: list[int] = []
     record_cursor = 0
     last_log_time_ns = 0
+    first_elapsed_s: float | None = None
+    last_elapsed_s: float | None = None
 
     try:
         with torch.no_grad():
@@ -837,6 +867,10 @@ def main() -> None:
                     if mcap_writer is not None:
                         log_time_ns = record_time_ns(record, extract_summary, sample_index, dt)
                         last_log_time_ns = max(last_log_time_ns, log_time_ns)
+                        sample_elapsed_s = elapsed_seconds(record, extract_summary, sample_index, dt)
+                        if first_elapsed_s is None:
+                            first_elapsed_s = sample_elapsed_s
+                        last_elapsed_s = sample_elapsed_s
 
                         image_payload = {
                             "timestamp": ns_to_timestamp(log_time_ns),
@@ -856,7 +890,7 @@ def main() -> None:
                             "timestamp": ns_to_timestamp(log_time_ns),
                             "episode_id": episode_id,
                             "frame_id": int(record.get("source_frame_id", sample_index)),
-                            "elapsed_seconds": elapsed_seconds(record, extract_summary, sample_index, dt),
+                            "elapsed_seconds": sample_elapsed_s,
                             "speed_mps": float(v0_tensor.item()),
                             "route_completion_ratio": None,
                             "distance_to_goal_m": None,
@@ -881,7 +915,7 @@ def main() -> None:
                             "timestamp": ns_to_timestamp(log_time_ns),
                             "episode_id": episode_id,
                             "frame_id": int(record.get("source_frame_id", sample_index)),
-                            "elapsed_seconds": elapsed_seconds(record, extract_summary, sample_index, dt),
+                            "elapsed_seconds": sample_elapsed_s,
                             "behavior": str(record.get("command", batch["command"][row_idx])),
                             "planner_state": str(record.get("planner_state", "unknown")),
                             "traffic_light_state": None,
@@ -1030,6 +1064,13 @@ def main() -> None:
                 payload=summary,
                 log_time_ns=last_log_time_ns + 1,
                 sequence=len(pred_actions_list),
+            )
+            write_single_segment_index(
+                output_mcap=args.output_mcap,
+                episode_metadata=episode_metadata,
+                start_elapsed_seconds=0.0 if first_elapsed_s is None else first_elapsed_s,
+                end_elapsed_seconds=0.0 if last_elapsed_s is None else last_elapsed_s,
+                frame_count=len(pred_actions_list),
             )
     finally:
         if mcap_writer is not None:
