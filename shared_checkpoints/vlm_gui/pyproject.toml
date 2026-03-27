@@ -1,0 +1,20 @@
+[project]
+name = "vlm-gui"
+version = "0.1.0"
+description = "UV-managed Streamlit app for probing local VLM checkpoints"
+requires-python = ">=3.10"
+dependencies = [
+    "streamlit>=1.44.0",
+    "torch==2.10.0",
+    "torchvision==0.25.0",
+    "pillow>=10.0.0",
+    "accelerate>=0.30.0",
+    "safetensors>=0.4.0",
+    "huggingface-hub>=0.34.0",
+    "flash-linear-attention==0.4.2",
+    "causal-conv1d @ https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.6.1.post4/causal_conv1d-1.6.1%2Bcu12torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl",
+    "transformers @ git+https://github.com/huggingface/transformers.git@main",
+]
+
+[tool.uv]
+package = false

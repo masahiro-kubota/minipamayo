@@ -62,3 +62,13 @@ docs/qwen3-vl/
 docs/cosmos-reason1/
 docs/cosmos-reason2/
 docs/alpamayo/
+
+# Shared checkpoint artifacts: keep tooling/docs, ignore model payloads
+shared_checkpoints/*
+!shared_checkpoints/README.md
+!shared_checkpoints/VLM_GUI.md
+!shared_checkpoints/vlm_gui_app.py
+!shared_checkpoints/vlm_gui/
+!shared_checkpoints/vlm_gui/**
+shared_checkpoints/__pycache__/
+shared_checkpoints/vlm_gui/__pycache__/
