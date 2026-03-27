@@ -1,0 +1,27 @@
+{
+  "model_path": "/home/masa/minipamayo/shared_checkpoints/hf_models/Qwen3.5-0.8B",
+  "dataset_jsonl": "minipamayo-qwen-3-5/data/processed/town01_loop_stage1/samples.jsonl",
+  "num_samples_seen": 1,
+  "dataset_size": 1,
+  "device": "cuda",
+  "dtype": "bfloat16",
+  "full_fine_tune": true,
+  "gradient_checkpointing": true,
+  "lr": 1e-05,
+  "weight_decay": 0.01,
+  "warmup_steps": 0,
+  "measure_steps": 1,
+  "added_action_tokens": 256,
+  "total_vocab_size": 248333,
+  "warmup_step_times_s": [],
+  "measured_step_times_s": [
+    26.867116232024273
+  ],
+  "mean_measured_step_time_s": 26.867116232024273,
+  "peak_allocated_gib_max": 8.52,
+  "peak_reserved_gib_max": 8.779,
+  "losses": [
+    8.071455955505371
+  ],
+  "total_elapsed_s": 26.917
+}

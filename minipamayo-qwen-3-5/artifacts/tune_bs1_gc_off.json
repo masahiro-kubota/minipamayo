@@ -1,0 +1,44 @@
+{
+  "model_path": "/home/masa/minipamayo/shared_checkpoints/hf_models/Qwen3.5-0.8B",
+  "dataset_jsonl": "minipamayo-qwen-3-5/data/processed/town01_loop_stage1/samples.jsonl",
+  "num_optimizer_steps": 4,
+  "num_samples_seen": 4,
+  "dataset_size": 16,
+  "device": "cuda",
+  "dtype": "bf16",
+  "full_fine_tune": true,
+  "gradient_checkpointing": false,
+  "batch_size": 1,
+  "lr": 1e-05,
+  "weight_decay": 0.01,
+  "warmup_steps": 1,
+  "measure_steps": 3,
+  "added_action_tokens": 256,
+  "total_vocab_size": 248333,
+  "warmup_step_times_s": [
+    3.336770476977108
+  ],
+  "measured_step_times_s": [
+    0.14763058300013654,
+    0.1482550450018607,
+    0.14577519599697553
+  ],
+  "mean_measured_step_time_s": 0.14722027466632426,
+  "measured_samples_per_second": [
+    6.773664234592063,
+    6.7451330238876475,
+    6.859877588645105
+  ],
+  "mean_measured_samples_per_second": 6.792891615708272,
+  "peak_allocated_gib_max": 11.17,
+  "peak_reserved_gib_max": 11.912,
+  "losses": [
+    8.071455955505371,
+    6.182740688323975,
+    5.429037094116211,
+    4.88259744644165
+  ],
+  "model_load_elapsed_s": 5.239,
+  "train_loop_elapsed_s": 3.894,
+  "total_wall_time_s": 9.156
+}
