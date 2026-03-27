@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+src/*.egg-info/
+src/**/*.egg-info/
+checkpoints/
+wandb/
+data/processed/
+20260327_211943_town01_all_intersections_loop_expert_eval_4f7638a26db5/
