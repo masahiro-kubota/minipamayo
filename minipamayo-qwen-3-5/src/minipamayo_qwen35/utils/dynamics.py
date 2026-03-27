@@ -3,6 +3,63 @@
 from __future__ import annotations
 
 import numpy as np
+import torch
+
+
+def forward_dynamics_np(
+    a: np.ndarray,
+    kappa: np.ndarray,
+    v0: float,
+    dt: float = 0.5,
+) -> np.ndarray:
+    """Forward unicycle dynamics for a single control sequence."""
+
+    k_steps = len(a)
+    x, y, theta, v = 0.0, 0.0, 0.0, float(v0)
+    waypoints = np.zeros((k_steps, 2), dtype=np.float32)
+
+    for i in range(k_steps):
+        v_new = v + dt * float(a[i])
+        theta_new = theta + dt * float(kappa[i]) * v + (dt**2 / 2.0) * float(kappa[i]) * float(a[i])
+        x_new = x + (dt / 2.0) * (v * np.cos(theta) + v_new * np.cos(theta_new))
+        y_new = y + (dt / 2.0) * (v * np.sin(theta) + v_new * np.sin(theta_new))
+
+        waypoints[i] = [x_new, y_new]
+        x, y, theta, v = x_new, y_new, theta_new, v_new
+
+    return waypoints
+
+
+def forward_dynamics_batch(
+    a: torch.Tensor,
+    kappa: torch.Tensor,
+    v0: torch.Tensor,
+    dt: float = 0.5,
+) -> torch.Tensor:
+    """Forward unicycle dynamics for a batch of control sequences."""
+
+    batch_size, k_steps = a.shape
+    device = a.device
+    dtype = torch.float32
+
+    x = torch.zeros(batch_size, device=device, dtype=dtype)
+    y = torch.zeros(batch_size, device=device, dtype=dtype)
+    theta = torch.zeros(batch_size, device=device, dtype=dtype)
+    v = v0.to(dtype)
+
+    waypoints = torch.zeros(batch_size, k_steps, 2, device=device, dtype=dtype)
+
+    for i in range(k_steps):
+        v_new = v + dt * a[:, i]
+        theta_new = theta + dt * kappa[:, i] * v + (dt**2 / 2.0) * kappa[:, i] * a[:, i]
+        x_new = x + (dt / 2.0) * (v * theta.cos() + v_new * theta_new.cos())
+        y_new = y + (dt / 2.0) * (v * theta.sin() + v_new * theta_new.sin())
+
+        waypoints[:, i, 0] = x_new
+        waypoints[:, i, 1] = y_new
+        x, y, theta, v = x_new, y_new, theta_new, v_new
+
+    return waypoints
 
 
 def _second_order_diff_matrix(length: int) -> np.ndarray:
