@@ -1,4 +1,4 @@
-"""Tokenizer-visible action token registry for the Qwen3.5 Stage 1 path."""
+"""Tokenizer-visible Stage 1 target token registry for the Qwen3.5 path."""
 
 from __future__ import annotations
 
@@ -6,12 +6,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .action_quantizer import ActionQuantizer
-
-
 @dataclass
 class Stage1TokenRegistry:
-    """Owns the extra Stage 1 action tokens added to the tokenizer."""
+    """Owns the extra Stage 1 target tokens added to the tokenizer."""
 
     n_bins: int = 256
     token_prefix: str = "act"
@@ -30,28 +27,31 @@ class Stage1TokenRegistry:
         self.id_to_bin = {token_id: i for i, token_id in enumerate(self.token_ids)}
         return added
 
-    def encode_action_token_ids(
-        self,
-        action: np.ndarray,
-        quantizer: ActionQuantizer,
-    ) -> list[int]:
+    def encode_bin_token_ids(self, bin_ids: list[int]) -> list[int]:
         if not self.token_ids:
             raise RuntimeError("Token registry is not attached to a tokenizer yet.")
-        return [self.token_ids[bin_idx] for bin_idx in quantizer.encode_bin_ids(action)]
+        return [self.token_ids[int(bin_idx)] for bin_idx in bin_ids]
+
+    def decode_token_ids_to_bin_ids(self, token_ids: list[int]) -> list[int]:
+        return [self.id_to_bin[int(token_id)] for token_id in token_ids]
+
+    def encode_target_token_ids(self, target: np.ndarray, quantizer) -> list[int]:
+        return self.encode_bin_token_ids(quantizer.encode_bin_ids(target))
+
+    def decode_target_token_ids(self, token_ids: list[int], quantizer) -> np.ndarray:
+        return quantizer.decode_bin_ids(self.decode_token_ids_to_bin_ids(token_ids))
+
+    def encode_action_token_ids(self, action: np.ndarray, quantizer) -> list[int]:
+        return self.encode_target_token_ids(action, quantizer)
 
     def encode_action_text(
         self,
         action: np.ndarray,
-        quantizer: ActionQuantizer,
+        quantizer,
     ) -> str:
         token_ids = self.encode_action_token_ids(action, quantizer)
         tokens = [self.token_strings[self.id_to_bin[token_id]] for token_id in token_ids]
         return " ".join(tokens)
 
-    def decode_action_token_ids(
-        self,
-        token_ids: list[int],
-        quantizer: ActionQuantizer,
-    ) -> np.ndarray:
-        bin_ids = [self.id_to_bin[token_id] for token_id in token_ids]
-        return quantizer.decode_bin_ids(bin_ids)
+    def decode_action_token_ids(self, token_ids: list[int], quantizer) -> np.ndarray:
+        return self.decode_target_token_ids(token_ids, quantizer)

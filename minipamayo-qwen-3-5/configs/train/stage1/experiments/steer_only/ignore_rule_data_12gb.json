@@ -1,0 +1,31 @@
+{
+  "path_base": "project_root",
+  "args": {
+    "train_jsonl": [
+      "datasets/processed/stage1/ignore_rule_data/20260327_231917_town01_intersection_weave_ccw_expert_eval_0025824a9fa8/samples.jsonl",
+      "datasets/processed/stage1/ignore_rule_data/20260327_231917_town01_intersection_weave_cw_expert_eval_0025824a9fa8/samples.jsonl",
+      "datasets/processed/stage1/ignore_rule_data/20260327_231917_town01_perimeter_cw_expert_eval_0025824a9fa8/samples.jsonl"
+    ],
+    "save_dir": "checkpoints/stage1/experiments/steer_only/ignore_rule_data_12gb",
+    "batch_size": 1,
+    "grad_accum_steps": 1,
+    "max_epochs": 5,
+    "lr": 1e-05,
+    "weight_decay": 0.01,
+    "warmup_ratio": 0.05,
+    "max_grad_norm": 1.0,
+    "early_stopping_patience": 2,
+    "early_stopping_min_delta": 0.0,
+    "val_fraction": 0.2,
+    "num_workers": 2,
+    "log_every": 10,
+    "resume_from_checkpoint": "",
+    "save_every_epochs": 0,
+    "dtype": "bf16",
+    "image_min_pixels": 0,
+    "image_max_pixels": 0,
+    "gradient_checkpointing": true,
+    "wandb_project": "minipamayo-qwen35",
+    "wandb_run_name": "stage1-steer-only-ignore-rule-12gb"
+  }
+}

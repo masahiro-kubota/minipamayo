@@ -5,7 +5,7 @@ This is the long-running trainer:
 - best/final checkpoint saving
 - epoch-based loop for real Stage 1 runs
 
-For quick VRAM and throughput probes, use `minipamayo_qwen35.train.profile_stage1`.
+For quick VRAM and throughput probes, use `minipamayo_qwen35.train.stage1.profile`.
 """
 
 from __future__ import annotations
@@ -18,31 +18,33 @@ import random
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader, Subset, random_split
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
-from ..data.stage1_dataset import Stage1JsonlDataset
-from ..tokens.action_quantizer import ActionQuantizer
-from ..tokens.token_registry import Stage1TokenRegistry
-from ..utils.json_config import (
+from ...data.stage1_dataset import Stage1JsonlDataset
+from ...stage1 import CanonicalStage1Spec, Stage1TaskSpec
+from ...tokens.token_registry import Stage1TokenRegistry
+from ...utils.json_config import (
     load_json_payload,
     normalize_arg_config,
     normalize_optional_string_list,
     normalize_required_string_list,
     resolve_path_base,
 )
-from ..utils.preflight import collect_gpu_preflight_snapshot, enforce_training_prerequisites
-from ..utils.run_metadata import (
+from ...utils.preflight import collect_gpu_preflight_snapshot, enforce_training_prerequisites
+from ...utils.run_metadata import (
     collect_dataset_view_fingerprint,
     collect_git_metadata,
     collect_gpu_info,
     collect_processor_settings,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_PATH_KEYS = {
     "train_jsonl",
     "val_jsonl",
@@ -356,7 +358,8 @@ def build_stage1_metadata(
     dataset,
     args: argparse.Namespace,
     registry: Stage1TokenRegistry,
-    quantizer: ActionQuantizer,
+    quantizer,
+    task_spec: Stage1TaskSpec,
 ) -> dict:
     record = first_record_from_dataset(dataset)
     if "gt_waypoints" not in record or "action" not in record or "dt" not in record:
@@ -364,20 +367,20 @@ def build_stage1_metadata(
             "Training record is missing canonical Stage 1 fields: `gt_waypoints`, `action`, or `dt`."
         )
     gt_waypoints = record["gt_waypoints"]
-    action = record["action"]
+    full_action = np.asarray(record["action"], dtype=np.float32)
+    target = task_spec.target_from_action_array(full_action)
     return {
         "train_jsonl": list(args.train_jsonl),
         "val_jsonl": list(args.val_jsonl) if args.val_jsonl is not None else None,
         "sample_format": "jsonl+images",
-        "k": len(gt_waypoints) if gt_waypoints else len(action) // 2,
-        "action_dim": len(action),
+        "k": len(gt_waypoints) if gt_waypoints else len(full_action) // 2,
+        "target_dim": int(target.shape[0]),
+        "full_action_dim": int(full_action.shape[0]),
         "dt": record["dt"],
-        "n_bins": quantizer.n_bins,
-        "a_range": list(quantizer.a_range),
-        "kappa_range": list(quantizer.kappa_range),
         "action_token_scheme": "add_tokens",
         "token_prefix": registry.token_prefix,
         "question": args.question,
+        **task_spec.metadata(quantizer),
     }
 
 
@@ -385,16 +388,17 @@ def prepare_batch(
     batch: dict,
     processor,
     registry: Stage1TokenRegistry,
-    quantizer: ActionQuantizer,
+    quantizer,
+    task_spec: Stage1TaskSpec,
     prompt_text: str,
     device: torch.device,
 ) -> tuple[dict, torch.Tensor]:
     images = [Image.open(path).convert("RGB") for path in batch["image_path"]]
     try:
-        action_token_id_rows = [
-            registry.encode_action_token_ids(action.cpu().numpy(), quantizer)
-            for action in batch["action"]
-        ]
+        target_token_id_rows = []
+        for action in batch["action"]:
+            target = task_spec.target_from_action_tensor(action).cpu().numpy()
+            target_token_id_rows.append(registry.encode_target_token_ids(target, quantizer))
 
         prompt_inputs = processor(
             text=[prompt_text] * len(images),
@@ -402,23 +406,23 @@ def prepare_batch(
             return_tensors="pt",
             padding=True,
         )
-        action_token_ids = torch.tensor(action_token_id_rows, dtype=torch.long)
+        target_token_ids = torch.tensor(target_token_id_rows, dtype=torch.long)
 
         prompt_input_ids = prompt_inputs["input_ids"]
         prompt_attention_mask = prompt_inputs["attention_mask"]
         batch_size = prompt_input_ids.shape[0]
-        action_len = action_token_ids.shape[1]
+        target_len = target_token_ids.shape[1]
 
-        input_ids = torch.cat([prompt_input_ids, action_token_ids], dim=1)
+        input_ids = torch.cat([prompt_input_ids, target_token_ids], dim=1)
         attention_mask = torch.cat(
             [
                 prompt_attention_mask,
-                torch.ones((batch_size, action_len), dtype=prompt_attention_mask.dtype),
+                torch.ones((batch_size, target_len), dtype=prompt_attention_mask.dtype),
             ],
             dim=1,
         )
         labels = torch.full_like(input_ids, -100)
-        labels[:, -action_len:] = action_token_ids
+        labels[:, -target_len:] = target_token_ids
 
         full_inputs = {
             key: value
@@ -432,7 +436,7 @@ def prepare_batch(
                 [
                     full_inputs["mm_token_type_ids"],
                     torch.zeros(
-                        (batch_size, action_len), dtype=full_inputs["mm_token_type_ids"].dtype
+                        (batch_size, target_len), dtype=full_inputs["mm_token_type_ids"].dtype
                     ),
                 ],
                 dim=1,
@@ -460,7 +464,8 @@ def evaluate(
     dataloader: DataLoader,
     processor,
     registry: Stage1TokenRegistry,
-    quantizer: ActionQuantizer,
+    quantizer,
+    task_spec: Stage1TaskSpec,
     prompt_text: str,
     device: torch.device,
     model_dtype: torch.dtype,
@@ -473,7 +478,7 @@ def evaluate(
 
     for batch in dataloader:
         full_inputs, labels = prepare_batch(
-            batch, processor, registry, quantizer, prompt_text, device
+            batch, processor, registry, quantizer, task_spec, prompt_text, device
         )
         with torch.autocast("cuda", dtype=model_dtype):
             outputs = model(**full_inputs, labels=labels)
@@ -583,7 +588,8 @@ def checkpoint_payload(
     model,
     args: argparse.Namespace,
     registry: Stage1TokenRegistry,
-    quantizer: ActionQuantizer,
+    quantizer,
+    task_spec: Stage1TaskSpec,
     stage1_metadata: dict,
     initial_eval: dict | None,
     epoch: int,
@@ -605,11 +611,7 @@ def checkpoint_payload(
             "token_prefix": registry.token_prefix,
             "token_strings": registry.token_strings,
         },
-        "quantizer": {
-            "n_bins": quantizer.n_bins,
-            "a_range": list(quantizer.a_range),
-            "kappa_range": list(quantizer.kappa_range),
-        },
+        "quantizer": task_spec.quantizer_metadata(quantizer),
         "stage1_metadata": stage1_metadata,
         "initial_eval": initial_eval,
         "run_metadata": run_metadata,
@@ -622,7 +624,8 @@ def full_checkpoint_payload(
     scheduler,
     args: argparse.Namespace,
     registry: Stage1TokenRegistry,
-    quantizer: ActionQuantizer,
+    quantizer,
+    task_spec: Stage1TaskSpec,
     stage1_metadata: dict,
     initial_eval: dict | None,
     epoch: int,
@@ -636,6 +639,7 @@ def full_checkpoint_payload(
         args=args,
         registry=registry,
         quantizer=quantizer,
+        task_spec=task_spec,
         stage1_metadata=stage1_metadata,
         initial_eval=initial_eval,
         epoch=epoch,
@@ -652,7 +656,8 @@ def model_only_checkpoint_payload(
     model,
     args: argparse.Namespace,
     registry: Stage1TokenRegistry,
-    quantizer: ActionQuantizer,
+    quantizer,
+    task_spec: Stage1TaskSpec,
     stage1_metadata: dict,
     initial_eval: dict | None,
     epoch: int,
@@ -666,6 +671,7 @@ def model_only_checkpoint_payload(
         args=args,
         registry=registry,
         quantizer=quantizer,
+        task_spec=task_spec,
         stage1_metadata=stage1_metadata,
         initial_eval=initial_eval,
         epoch=epoch,
@@ -694,8 +700,9 @@ def maybe_wandb_finish(run) -> None:
     run.finish()
 
 
-def main() -> None:
+def main(task_spec: Stage1TaskSpec | None = None) -> None:
     wandb_run = None
+    task_spec = task_spec or CanonicalStage1Spec()
     args = parse_args()
     wandb_run = enforce_training_prerequisites(
         project=args.wandb_project,
@@ -743,6 +750,11 @@ def main() -> None:
                 )
             resume_checkpoint = load_checkpoint(resume_checkpoint_path)
             validate_resume_args(args, resume_checkpoint)
+            if "stage1_metadata" not in resume_checkpoint or not isinstance(
+                resume_checkpoint["stage1_metadata"], dict
+            ):
+                raise RuntimeError("Resume checkpoint is missing canonical `stage1_metadata`.")
+            task_spec.validate_checkpoint(resume_checkpoint["stage1_metadata"])
             saved_processor_dir = resume_checkpoint_path.parent / "processor"
             if not saved_processor_dir.exists():
                 raise RuntimeError(
@@ -763,10 +775,16 @@ def main() -> None:
             trust_remote_code=True,
         )
 
-        quantizer = ActionQuantizer()
+        quantizer = task_spec.build_quantizer(train_loader.dataset)
         registry = Stage1TokenRegistry(n_bins=quantizer.n_bins)
         added = registry.add_to_tokenizer(processor.tokenizer)
-        stage1_metadata = build_stage1_metadata(train_loader.dataset, args, registry, quantizer)
+        stage1_metadata = build_stage1_metadata(
+            train_loader.dataset,
+            args,
+            registry,
+            quantizer,
+            task_spec,
+        )
         processor_settings = collect_processor_settings(
             processor,
             requested_min_pixels=args.image_min_pixels or None,
@@ -850,6 +868,7 @@ def main() -> None:
                 processor=processor,
                 registry=registry,
                 quantizer=quantizer,
+                task_spec=task_spec,
                 prompt_text=prompt_text,
                 device=device,
                 model_dtype=model_dtype,
@@ -891,6 +910,7 @@ def main() -> None:
             "added_action_tokens": added,
             "model_load_elapsed_s": round(load_elapsed, 3),
             "stage1_metadata": stage1_metadata,
+            "task_spec": task_spec.name,
         }
         print(json.dumps(setup_payload, ensure_ascii=False))
         print(
@@ -918,6 +938,8 @@ def main() -> None:
             "setup/k": stage1_metadata["k"],
             "setup/dt": stage1_metadata["dt"],
             "setup/n_bins": stage1_metadata["n_bins"],
+            "setup/target_dim": stage1_metadata["target_dim"],
+            "setup/full_action_dim": stage1_metadata["full_action_dim"],
             "setup/image_min_pixels": args.image_min_pixels,
             "setup/image_max_pixels": args.image_max_pixels,
             "setup/resumed": resume_checkpoint is not None,
@@ -950,7 +972,7 @@ def main() -> None:
             optimizer.zero_grad(set_to_none=True)
             for batch_idx, batch in enumerate(train_loader, start=1):
                 full_inputs, labels = prepare_batch(
-                    batch, processor, registry, quantizer, prompt_text, device
+                    batch, processor, registry, quantizer, task_spec, prompt_text, device
                 )
 
                 with torch.autocast("cuda", dtype=model_dtype):
@@ -1005,6 +1027,7 @@ def main() -> None:
                     processor=processor,
                     registry=registry,
                     quantizer=quantizer,
+                    task_spec=task_spec,
                     prompt_text=prompt_text,
                     device=device,
                     model_dtype=model_dtype,
@@ -1068,6 +1091,7 @@ def main() -> None:
                         args=args,
                         registry=registry,
                         quantizer=quantizer,
+                        task_spec=task_spec,
                         stage1_metadata=stage1_metadata,
                         initial_eval=initial_eval,
                         epoch=epoch,
@@ -1087,6 +1111,7 @@ def main() -> None:
                         args=args,
                         registry=registry,
                         quantizer=quantizer,
+                        task_spec=task_spec,
                         stage1_metadata=stage1_metadata,
                         initial_eval=initial_eval,
                         epoch=epoch,
@@ -1105,6 +1130,7 @@ def main() -> None:
                     args=args,
                     registry=registry,
                     quantizer=quantizer,
+                    task_spec=task_spec,
                     stage1_metadata=stage1_metadata,
                     initial_eval=initial_eval,
                     epoch=epoch,
@@ -1152,6 +1178,7 @@ def main() -> None:
                 args=args,
                 registry=registry,
                 quantizer=quantizer,
+                task_spec=task_spec,
                 stage1_metadata=stage1_metadata,
                 initial_eval=initial_eval,
                 epoch=completed_epochs,

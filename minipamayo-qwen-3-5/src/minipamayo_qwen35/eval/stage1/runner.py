@@ -14,6 +14,7 @@ import base64
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -23,10 +24,10 @@ from PIL import Image
 from torch.utils.data import DataLoader
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
-from ..data.stage1_dataset import Stage1JsonlDataset
-from ..tokens.action_quantizer import ActionQuantizer
-from ..tokens.token_registry import Stage1TokenRegistry
-from ..train.stage1 import (
+from ...data.stage1_dataset import Stage1JsonlDataset
+from ...stage1 import CanonicalStage1Spec, Stage1TaskSpec
+from ...tokens.token_registry import Stage1TokenRegistry
+from ...train.stage1 import (
     CHECKPOINT_KIND_FULL,
     CHECKPOINT_KIND_MODEL_ONLY,
     build_processor_kwargs,
@@ -38,16 +39,16 @@ from ..train.stage1 import (
     prepare_batch,
     stage1_collate,
 )
-from ..utils.dynamics import forward_dynamics_batch
-from ..utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
-from ..utils.run_metadata import (
+from ...utils.dynamics import forward_dynamics_batch
+from ...utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
+from ...utils.run_metadata import (
     collect_dataset_view_fingerprint,
     collect_git_metadata,
     collect_gpu_info,
     collect_processor_settings,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_PATH_KEYS = {
     "checkpoint",
     "test_jsonl",
@@ -162,10 +163,17 @@ def resolve_dtype(dtype_name: str) -> torch.dtype:
     return torch.bfloat16
 
 
-def load_components(args: argparse.Namespace) -> tuple[dict, object, object, Stage1TokenRegistry, ActionQuantizer, torch.dtype]:
+def load_components(
+    args: argparse.Namespace,
+    task_spec: Stage1TaskSpec | None = None,
+) -> tuple[dict, object, object, Stage1TokenRegistry, Any, torch.dtype]:
+    task_spec = task_spec or CanonicalStage1Spec()
     checkpoint_path = Path(args.checkpoint)
     checkpoint = load_checkpoint(checkpoint_path)
     checkpoint_args = resolve_checkpoint_args(checkpoint)
+    if "stage1_metadata" not in checkpoint or not isinstance(checkpoint["stage1_metadata"], dict):
+        raise RuntimeError("Checkpoint is missing canonical `stage1_metadata`.")
+    task_spec.validate_checkpoint(checkpoint["stage1_metadata"])
     model_path = str(checkpoint_args["model_path"])
     processor_path = resolve_processor_path(checkpoint_path)
     model_dtype = resolve_dtype(str(checkpoint_args["dtype"]))
@@ -179,12 +187,9 @@ def load_components(args: argparse.Namespace) -> tuple[dict, object, object, Sta
     )
     registry.add_to_tokenizer(processor.tokenizer)
 
-    quant_cfg = checkpoint["quantizer"]
-    quantizer = ActionQuantizer(
-        n_bins=quant_cfg["n_bins"],
-        a_range=tuple(quant_cfg["a_range"]),
-        kappa_range=tuple(quant_cfg["kappa_range"]),
-    )
+    if "quantizer" not in checkpoint or not isinstance(checkpoint["quantizer"], dict):
+        raise RuntimeError("Checkpoint is missing canonical `quantizer` metadata.")
+    quantizer = task_spec.quantizer_from_checkpoint(checkpoint["quantizer"])
 
     model = AutoModelForImageTextToText.from_pretrained(
         model_path,
@@ -783,7 +788,8 @@ def greedy_generate_action_tokens(
     return torch.stack(generated, dim=1)
 
 
-def main() -> None:
+def main(task_spec: Stage1TaskSpec | None = None) -> None:
+    task_spec = task_spec or CanonicalStage1Spec()
     args = parse_args()
     device = torch.device(args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
     if device.type != "cuda":
@@ -791,7 +797,7 @@ def main() -> None:
     git_metadata = collect_git_metadata(Path(__file__).resolve().parent)
     gpu_info = collect_gpu_info(device)
 
-    checkpoint, model, processor, registry, quantizer, model_dtype = load_components(args)
+    checkpoint, model, processor, registry, quantizer, model_dtype = load_components(args, task_spec)
     checkpoint_run_metadata = require_checkpoint_run_metadata(checkpoint)
     model.to(device)
     processor_settings = collect_processor_settings(
@@ -819,7 +825,16 @@ def main() -> None:
     stage1_metadata = checkpoint["stage1_metadata"]
     if not isinstance(stage1_metadata, dict):
         raise RuntimeError("Checkpoint is missing canonical `stage1_metadata`.")
-    required_stage1_keys = ["question", "action_dim", "k", "dt"]
+    task_spec.validate_checkpoint(stage1_metadata)
+    required_stage1_keys = [
+        "question",
+        "target_dim",
+        "full_action_dim",
+        "k",
+        "dt",
+        "action_representation",
+        "rollout_accel_source",
+    ]
     missing_stage1_keys = [key for key in required_stage1_keys if key not in stage1_metadata]
     if missing_stage1_keys:
         raise RuntimeError(
@@ -827,7 +842,8 @@ def main() -> None:
         )
     question = stage1_metadata["question"]
     prompt_text = build_prompt_text(processor, question)
-    action_dim = int(stage1_metadata["action_dim"])
+    target_dim = int(stage1_metadata["target_dim"])
+    full_action_dim = int(stage1_metadata["full_action_dim"])
     k_steps = int(stage1_metadata["k"])
     dt = float(stage1_metadata["dt"])
     episode_id = infer_episode_id(extract_summary)
@@ -876,13 +892,16 @@ def main() -> None:
             "test_jsonl": test_jsonl,
             "num_samples": len(dataset),
             "batch_size": args.batch_size,
-            "action_dim": action_dim,
+            "target_dim": target_dim,
+            "full_action_dim": full_action_dim,
             "k": k_steps,
             "dt": dt,
             "dtype": "bf16" if model_dtype == torch.bfloat16 else "fp16",
             "image_min_pixels": args.image_min_pixels or None,
             "image_max_pixels": args.image_max_pixels or None,
             "processor_settings": processor_settings,
+            "action_representation": stage1_metadata["action_representation"],
+            "rollout_accel_source": stage1_metadata["rollout_accel_source"],
         },
         ensure_ascii=False,
     ))
@@ -908,7 +927,15 @@ def main() -> None:
         with torch.no_grad():
             sample_index = 0
             for batch in loader:
-                full_inputs, labels = prepare_batch(batch, processor, registry, quantizer, prompt_text, device)
+                full_inputs, labels = prepare_batch(
+                    batch,
+                    processor,
+                    registry,
+                    quantizer,
+                    task_spec,
+                    prompt_text,
+                    device,
+                )
                 with torch.autocast("cuda", dtype=model_dtype):
                     outputs = model(**full_inputs, labels=labels)
 
@@ -929,15 +956,15 @@ def main() -> None:
                     model=model,
                     prompt_inputs=prompt_inputs,
                     registry=registry,
-                    action_len=action_dim,
+                    action_len=target_dim,
                     model_dtype=model_dtype,
                 )
 
-                gt_token_ids = torch.tensor(
-                    [registry.encode_action_token_ids(action.cpu().numpy(), quantizer) for action in batch["action"]],
-                    device=device,
-                    dtype=torch.long,
-                )
+                gt_token_rows = []
+                for action in batch["action"]:
+                    target = task_spec.target_from_action_tensor(action).cpu().numpy()
+                    gt_token_rows.append(registry.encode_target_token_ids(target, quantizer))
+                gt_token_ids = torch.tensor(gt_token_rows, device=device, dtype=torch.long)
                 ar_matches = generated_token_ids == gt_token_ids
                 ar_correct += int(ar_matches.sum().item())
                 ar_total_tokens += int(gt_token_ids.numel())
@@ -952,11 +979,15 @@ def main() -> None:
                     ego_pose = require_ego_pose(record)
                     pred_token_ids = generated_token_ids[row_idx].detach().cpu().tolist()
                     gt_row = gt_token_ids[row_idx].detach().cpu().tolist()
-                    pred_bins = [registry.id_to_bin[token_id] for token_id in pred_token_ids]
-                    gt_bins = [registry.id_to_bin[token_id] for token_id in gt_row]
-                    pred_action = registry.decode_action_token_ids(pred_token_ids, quantizer)
-                    pred_action_tensor = torch.tensor(pred_action, dtype=torch.float32)
+                    pred_bins = registry.decode_token_ids_to_bin_ids(pred_token_ids)
+                    gt_bins = registry.decode_token_ids_to_bin_ids(gt_row)
+                    pred_target = registry.decode_target_token_ids(pred_token_ids, quantizer)
+                    pred_target_tensor = torch.tensor(pred_target, dtype=torch.float32)
                     gt_action_tensor = batch["action"][row_idx].detach().cpu()
+                    pred_action_tensor = task_spec.full_action_from_target_tensor(
+                        pred_target_tensor,
+                        gt_action_tensor=gt_action_tensor,
+                    )
                     gt_waypoint_tensor = batch["gt_waypoints"][row_idx].detach().cpu()
                     v0_tensor = batch["v0"][row_idx].detach().cpu()
 
@@ -985,7 +1016,7 @@ def main() -> None:
                                     "sample_index": sample_index,
                                     "sample_id": sample_id,
                                     "match_tokens": ar_match_count,
-                                    "action_dim": action_dim,
+                                    "target_dim": target_dim,
                                     "ade_m": float(displacement.mean().item()),
                                     "fde_m": float(displacement[-1].item()),
                                 },
@@ -1101,6 +1132,7 @@ def main() -> None:
                             "planner_state": planner_state,
                             "image_topic": "/camera/front/compressed",
                             "coordinate_frame": "ego_xy_meters",
+                            "action_representation": stage1_metadata["action_representation"],
                             "ego_pose": {
                                 "x": float(ego_pose["x"]),
                                 "y": float(ego_pose["y"]),
@@ -1122,7 +1154,7 @@ def main() -> None:
                                 "teacher_forced_match_count": tf_match_count,
                                 "teacher_forced_token_accuracy": tf_match_count / max(tf_token_count, 1),
                                 "autoregressive_match_count": ar_match_count,
-                                "autoregressive_token_accuracy": ar_match_count / max(action_dim, 1),
+                                "autoregressive_token_accuracy": ar_match_count / max(target_dim, 1),
                                 "action_mae_accel": float(
                                     (pred_action_tensor.view(k_steps, 2)[:, 0] - gt_action_tensor.view(k_steps, 2)[:, 0]).abs().mean().item()
                                 ),
@@ -1177,6 +1209,10 @@ def main() -> None:
             "unique_bins_used": len(set(generated_bins)),
             "min_bin_used": min(generated_bins),
             "max_bin_used": max(generated_bins),
+            "action_representation": stage1_metadata["action_representation"],
+            "rollout_accel_source": stage1_metadata["rollout_accel_source"],
+            "target_dim": target_dim,
+            "full_action_dim": full_action_dim,
             "k": k_steps,
             "dt": dt,
             "generation_mode": "greedy_action_vocab_only",

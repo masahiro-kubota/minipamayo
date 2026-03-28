@@ -17,14 +17,15 @@ import torch
 from PIL import Image
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
-from ..data.stage1_dataset import Stage1JsonlDataset
-from ..tokens.action_quantizer import ActionQuantizer
-from ..tokens.token_registry import Stage1TokenRegistry
-from ..utils.json_config import normalize_required_string_list
+from ...data.stage1_dataset import Stage1JsonlDataset
+from ...tokens.action_quantizer import ActionQuantizer
+from ...tokens.token_registry import Stage1TokenRegistry
+from ...utils.json_config import normalize_required_string_list
 
 DEFAULT_QUESTION = (
     "Predict the future ego trajectory as action tokens. Output only the action tokens in order."
 )
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
 
 # Measured Stage 1 presets on the CARLA-derived smoke dataset in this repo:
 # - 12 GB class GPU: keep `--batch-size 1 --gradient-checkpointing`
@@ -58,7 +59,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-json",
         type=str,
-        default="/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1_trial_summary.json",
+        default=str(PROJECT_ROOT / "artifacts/stage1_trial_summary.json"),
     )
     gc_group = parser.add_mutually_exclusive_group()
     gc_group.add_argument(
