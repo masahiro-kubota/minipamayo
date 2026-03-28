@@ -1,6 +1,6 @@
 """Steer-only Stage 1 eval entrypoint."""
 
-from ....stage1 import KappaOnlyStage1Spec
+from ... import KappaOnlyStage1Spec
 from ..runner import main as run_stage1_eval
 
 

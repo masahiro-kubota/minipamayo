@@ -1,6 +1,6 @@
 """Steer-only Stage 1 train entrypoint."""
 
-from ....stage1 import KappaOnlyStage1Spec
+from ... import KappaOnlyStage1Spec
 from ..runner import main as run_stage1_training
 
 

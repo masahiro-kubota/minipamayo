@@ -21,10 +21,10 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader, random_split
 
-from ...eval.stage1 import load_components
+from ...stage1.eval import load_components
 from ...models.trajectory_decoder import TrajectoryDecoder, cfm_loss
 from ...sequence.stage3_builder import build_stage2_prompt_text
-from ..stage1 import (
+from ...stage1.train import (
     first_record_from_dataset,
     format_gib,
     log_gpu_preflight,

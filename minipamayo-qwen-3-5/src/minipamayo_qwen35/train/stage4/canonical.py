@@ -21,11 +21,11 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader
 
-from ...eval.stage1 import load_components
+from ...stage1.eval import load_components
 from ...models.trajectory_decoder import cfm_sample, load_decoder_from_checkpoint
 from ...sequence.rollout_parser import parse_generated_sequence
 from ...sequence.stage3_builder import build_stage3_prompt_text, build_reasoning_text
-from ..stage1 import (
+from ...stage1.train import (
     format_gib,
     log_gpu_preflight,
     maybe_wandb_finish,
@@ -479,6 +479,10 @@ def main() -> None:
             weight_decay=args.weight_decay,
         )
 
+        stage2_checkpoint = None
+        if args.stage2_checkpoint:
+            stage2_checkpoint = args.stage2_checkpoint
+
         run_metadata = {
             "git": git_metadata,
             "gpu": gpu_info,
@@ -487,14 +491,14 @@ def main() -> None:
                 "train": dataset_fingerprint,
             },
             "base_stage3_metadata": stage3_checkpoint.get("stage3_metadata"),
-            "stage2_checkpoint": args.stage2_checkpoint or None,
+            "stage2_checkpoint": stage2_checkpoint,
             "trainable_params": trainable_params,
         }
         write_run_config(save_dir, args, run_metadata)
 
         stage4_metadata = {
             "stage3_checkpoint": args.stage3_checkpoint,
-            "stage2_checkpoint": args.stage2_checkpoint or None,
+            "stage2_checkpoint": stage2_checkpoint,
             "sample_format": "jsonl+images",
             "reward_source": "local_reason_consistency_traj",
             "num_rollouts": args.num_rollouts,

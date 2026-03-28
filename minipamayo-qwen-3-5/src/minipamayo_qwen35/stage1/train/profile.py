@@ -17,9 +17,9 @@ import torch
 from PIL import Image
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
-from ...data.stage1_dataset import Stage1JsonlDataset
-from ...tokens.action_quantizer import ActionQuantizer
-from ...tokens.token_registry import Stage1TokenRegistry
+from ..data.dataset import Stage1JsonlDataset
+from ..tokenization.quantizer import ActionQuantizer
+from ..tokenization.registry import Stage1TokenRegistry
 from ...utils.json_config import normalize_required_string_list
 
 DEFAULT_QUESTION = (

@@ -5,7 +5,7 @@ This is the long-running trainer:
 - best/final checkpoint saving
 - epoch-based loop for real Stage 1 runs
 
-For quick VRAM and throughput probes, use `minipamayo_qwen35.train.stage1.profile`.
+For quick VRAM and throughput probes, use `minipamayo_qwen35.stage1.train.profile`.
 """
 
 from __future__ import annotations
@@ -26,9 +26,9 @@ from PIL import Image
 from torch.utils.data import DataLoader, Subset, random_split
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
-from ...data.stage1_dataset import Stage1JsonlDataset
-from ...stage1 import CanonicalStage1Spec, Stage1TaskSpec
-from ...tokens.token_registry import Stage1TokenRegistry
+from .. import CanonicalStage1Spec, Stage1TaskSpec
+from ..data.dataset import Stage1JsonlDataset
+from ..tokenization.registry import Stage1TokenRegistry
 from ...utils.json_config import (
     load_json_payload,
     normalize_arg_config,

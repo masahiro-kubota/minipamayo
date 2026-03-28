@@ -24,10 +24,10 @@ from PIL import Image
 from torch.utils.data import DataLoader
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
-from ...data.stage1_dataset import Stage1JsonlDataset
-from ...stage1 import CanonicalStage1Spec, Stage1TaskSpec
-from ...tokens.token_registry import Stage1TokenRegistry
-from ...train.stage1 import (
+from .. import CanonicalStage1Spec, Stage1TaskSpec
+from ..data.dataset import Stage1JsonlDataset
+from ..tokenization.registry import Stage1TokenRegistry
+from ..train import (
     CHECKPOINT_KIND_FULL,
     CHECKPOINT_KIND_MODEL_ONLY,
     build_processor_kwargs,

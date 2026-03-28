@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import Dataset
 
 from ..sequence.stage3_builder import build_reasoning_text, infer_driving_decision
-from ..data.stage1_dataset import read_jsonl
+from ..stage1.data.dataset import read_jsonl
 
 
 class Stage34JsonlDataset(Dataset):
