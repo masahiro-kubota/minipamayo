@@ -21,11 +21,11 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader
 
-from ..eval.stage1 import load_components
-from ..models.trajectory_decoder import cfm_sample, load_decoder_from_checkpoint
-from ..sequence.rollout_parser import parse_generated_sequence
-from ..sequence.stage3_builder import build_stage3_prompt_text, build_reasoning_text
-from ..train.stage1 import (
+from ...eval.stage1 import load_components
+from ...models.trajectory_decoder import cfm_sample, load_decoder_from_checkpoint
+from ...sequence.rollout_parser import parse_generated_sequence
+from ...sequence.stage3_builder import build_stage3_prompt_text, build_reasoning_text
+from ..stage1 import (
     format_gib,
     log_gpu_preflight,
     maybe_wandb_finish,
@@ -34,13 +34,13 @@ from ..train.stage1 import (
     set_seed,
     write_run_config,
 )
-from ..utils.dynamics import forward_dynamics_batch
-from ..utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
-from ..utils.preflight import enforce_training_prerequisites
-from ..utils.run_metadata import collect_dataset_view_fingerprint, collect_git_metadata, collect_gpu_info
-from ..utils.stage34_dataset import Stage34JsonlDataset, stage34_collate
+from ...utils.dynamics import forward_dynamics_batch
+from ...utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
+from ...utils.preflight import enforce_training_prerequisites
+from ...utils.run_metadata import collect_dataset_view_fingerprint, collect_git_metadata, collect_gpu_info
+from ...utils.stage34_dataset import Stage34JsonlDataset, stage34_collate
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_PATH_KEYS = {
     "stage3_checkpoint",
     "stage2_checkpoint",
