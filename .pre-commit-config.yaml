@@ -20,3 +20,25 @@ repos:
       - id: ruff
         args: ["--fix"]
       - id: ruff-format
+
+  # MiniPamayo Qwen3.5 custom checks
+  - repo: local
+    hooks:
+      - id: minipamayo-qwen35-py-compile
+        name: minipamayo-qwen35 py_compile
+        entry: python -m py_compile
+        language: system
+        files: ^minipamayo-qwen-3-5/src/minipamayo_qwen35/.*\.py$
+        types: [python]
+      - id: minipamayo-qwen35-no-silent-fallbacks
+        name: minipamayo-qwen35 no silent fallbacks
+        entry: python scripts/check_minipamayo_qwen35_no_silent_fallbacks.py
+        language: system
+        files: ^minipamayo-qwen-3-5/src/minipamayo_qwen35/(data|train|eval|utils)/.*\.py$
+        types: [python]
+      - id: conventional-commit-message
+        name: conventional commit message
+        entry: python scripts/check_conventional_commit_msg.py
+        language: system
+        pass_filenames: true
+        stages: [commit-msg]
