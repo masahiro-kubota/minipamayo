@@ -40,7 +40,7 @@ DEFAULT_QUESTION = (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a short Qwen3.5 Stage 1 training trial.")
-    parser.add_argument("--dataset-jsonl", type=str, required=True)
+    parser.add_argument("--train-jsonl", type=str, required=True)
     parser.add_argument(
         "--model-path",
         type=str,
@@ -130,7 +130,7 @@ def build_stage1_metadata(
     gt_waypoints = record.get("gt_waypoints", [])
     action = record.get("action", [])
     return {
-        "dataset_jsonl": str(dataset.jsonl_path),
+        "train_jsonl": str(dataset.jsonl_path),
         "sample_format": "jsonl+images",
         "k": len(gt_waypoints) if gt_waypoints else len(action) // 2,
         "action_dim": len(action),
@@ -153,7 +153,7 @@ def main() -> None:
     if device.type != "cuda":
         raise RuntimeError("This Stage 1 probe is intended to be run on CUDA to measure VRAM.")
 
-    dataset = Stage1JsonlDataset(args.dataset_jsonl, max_samples=args.max_samples)
+    dataset = Stage1JsonlDataset(args.train_jsonl, max_samples=args.max_samples)
     if len(dataset) == 0:
         raise RuntimeError("Dataset is empty.")
 
@@ -283,7 +283,7 @@ def main() -> None:
     total_elapsed = time.perf_counter() - wall_start
     summary = {
         "model_path": args.model_path,
-        "dataset_jsonl": args.dataset_jsonl,
+        "train_jsonl": args.train_jsonl,
         "num_optimizer_steps": total_steps,
         "num_samples_seen": total_steps * args.batch_size,
         "dataset_size": len(dataset),

@@ -48,7 +48,7 @@ from ..utils.run_metadata import (
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG_PATH_KEYS = {
     "checkpoint",
-    "dataset_jsonl",
+    "test_jsonl",
     "processor_dir",
     "model_path",
     "output_json",
@@ -60,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Evaluate Qwen3.5 Stage 1 checkpoints.")
     parser.add_argument("--config-json", type=str, default="")
     parser.add_argument("--checkpoint", type=str, default="")
-    parser.add_argument("--dataset-jsonl", type=str, default="")
+    parser.add_argument("--test-jsonl", type=str, default="")
     parser.add_argument("--processor-dir", type=str, default="")
     parser.add_argument("--model-path", type=str, default="")
     parser.add_argument("--device", type=str, default="cuda")
@@ -120,21 +120,13 @@ def parse_args() -> argparse.Namespace:
     args.config_args = config_args
     if not args.checkpoint:
         raise RuntimeError("`checkpoint` must be defined in the config JSON.")
+    if not args.test_jsonl:
+        raise RuntimeError("`test_jsonl` must be defined in the config JSON.")
     if args.image_min_pixels < 0 or args.image_max_pixels < 0:
         raise RuntimeError("`image_min_pixels` and `image_max_pixels` must be >= 0.")
     if args.image_min_pixels > 0 and args.image_max_pixels > 0 and args.image_min_pixels > args.image_max_pixels:
         raise RuntimeError("`image_min_pixels` must be <= `image_max_pixels` when both are set.")
     return args
-
-
-def resolve_dataset_jsonl(args: argparse.Namespace, checkpoint: dict) -> str:
-    if args.dataset_jsonl:
-        return args.dataset_jsonl
-    stage1_metadata = checkpoint.get("stage1_metadata", {})
-    dataset_jsonl = stage1_metadata.get("dataset_jsonl")
-    if not dataset_jsonl:
-        raise RuntimeError("Dataset path is not in the checkpoint. Pass --dataset-jsonl explicitly.")
-    return dataset_jsonl
 
 
 def resolve_model_path(args: argparse.Namespace, checkpoint: dict) -> str:
@@ -235,20 +227,20 @@ def ns_to_timestamp(ns: int) -> dict:
     }
 
 
-def load_extract_summary(dataset_jsonl: str) -> dict | None:
-    summary_path = Path(dataset_jsonl).parent / "extract_summary.json"
+def load_extract_summary(test_jsonl: str) -> dict | None:
+    summary_path = Path(test_jsonl).parent / "extract_summary.json"
     if not summary_path.exists():
         return None
     with summary_path.open("r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def infer_episode_id(dataset_jsonl: str, extract_summary: dict | None) -> str:
+def infer_episode_id(test_jsonl: str, extract_summary: dict | None) -> str:
     if extract_summary is not None:
         episode_dir = extract_summary.get("episode_dir")
         if episode_dir:
             return Path(str(episode_dir)).name
-    return Path(dataset_jsonl).stem
+    return Path(test_jsonl).stem
 
 
 def elapsed_seconds(record: dict, extract_summary: dict | None, fallback_index: int, dt: float) -> float:
@@ -548,7 +540,7 @@ def stage1_eval_summary_schema() -> bytes:
             "type": "object",
             "required": [
                 "checkpoint",
-                "dataset_jsonl",
+                "test_jsonl",
                 "num_samples",
                 "teacher_forced_loss",
                 "teacher_forced_token_accuracy",
@@ -568,7 +560,7 @@ def stage1_eval_summary_schema() -> bytes:
             ],
             "properties": {
                 "checkpoint": {"type": "string"},
-                "dataset_jsonl": {"type": "string"},
+                "test_jsonl": {"type": "string"},
                 "num_samples": {"type": "integer"},
                 "teacher_forced_loss": {"type": "number"},
                 "teacher_forced_token_accuracy": {"type": "number"},
@@ -771,10 +763,10 @@ def main() -> None:
         requested_max_pixels=args.image_max_pixels or None,
     )
 
-    dataset_jsonl = resolve_dataset_jsonl(args, checkpoint)
-    dataset = Stage1JsonlDataset(dataset_jsonl, max_samples=args.max_samples)
+    test_jsonl = args.test_jsonl
+    dataset = Stage1JsonlDataset(test_jsonl, max_samples=args.max_samples)
     dataset_fingerprint = collect_dataset_view_fingerprint(dataset)
-    extract_summary = load_extract_summary(dataset_jsonl)
+    extract_summary = load_extract_summary(test_jsonl)
     loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -791,7 +783,7 @@ def main() -> None:
     action_dim = int(stage1_metadata.get("action_dim", 12))
     k_steps = int(stage1_metadata.get("k", action_dim // 2))
     dt = float(stage1_metadata.get("dt", 0.5))
-    episode_id = infer_episode_id(dataset_jsonl, extract_summary)
+    episode_id = infer_episode_id(test_jsonl, extract_summary)
     episode_metadata = {
         "episode_id": episode_id,
         "route_name": "stage1_eval",
@@ -834,7 +826,7 @@ def main() -> None:
         {
             "event": "stage1_eval_setup",
             "checkpoint": args.checkpoint,
-            "dataset_jsonl": dataset_jsonl,
+            "test_jsonl": test_jsonl,
             "num_samples": len(dataset),
             "batch_size": args.batch_size,
             "action_dim": action_dim,
@@ -1118,7 +1110,7 @@ def main() -> None:
             "config_args": args.config_args,
             "run_args": vars(args),
             "checkpoint": args.checkpoint,
-            "dataset_jsonl": dataset_jsonl,
+            "test_jsonl": test_jsonl,
             "num_samples": len(pred_actions_list),
             "teacher_forced_loss": tf_loss_total / max(tf_batches, 1),
             "teacher_forced_token_accuracy": tf_correct / max(tf_total_tokens, 1),
@@ -1138,7 +1130,9 @@ def main() -> None:
             "run_metadata": {
                 "git": git_metadata,
                 "gpu": gpu_info,
-                "dataset": dataset_fingerprint,
+                "datasets": {
+                    "test": dataset_fingerprint,
+                },
                 "processor": processor_settings,
                 "checkpoint_run_metadata": checkpoint.get("run_metadata"),
             },

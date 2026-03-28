@@ -1,7 +1,7 @@
 """Stage 1 trainer for the Qwen3.5 branch.
 
 This is the long-running trainer:
-- train/validation split support
+- train/val split support
 - best/final checkpoint saving
 - epoch-based loop for real Stage 1 runs
 
@@ -38,7 +38,7 @@ from ..utils.run_metadata import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG_PATH_KEYS = {
-    "dataset_jsonl",
+    "train_jsonl",
     "val_jsonl",
     "model_path",
     "resume_from_checkpoint",
@@ -61,9 +61,9 @@ DEFAULT_QUESTION = (
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Train Qwen3.5 Stage 1 with validation and checkpoints.")
+    parser = argparse.ArgumentParser(description="Train Qwen3.5 Stage 1 with train/val data and checkpoints.")
     parser.add_argument("--config-json", type=str, default="")
-    parser.add_argument("--dataset-jsonl", type=str, default="")
+    parser.add_argument("--train-jsonl", type=str, default="")
     parser.add_argument("--val-jsonl", type=str, default="")
     parser.add_argument(
         "--model-path",
@@ -154,8 +154,8 @@ def parse_args() -> argparse.Namespace:
     args.config_json = config_path
     args.config_payload = config_payload
     args.config_args = config_args
-    if not args.dataset_jsonl:
-        raise RuntimeError("`dataset_jsonl` must be defined in the config JSON.")
+    if not args.train_jsonl:
+        raise RuntimeError("`train_jsonl` must be defined in the config JSON.")
     if args.early_stopping_patience < 0:
         raise RuntimeError("`early_stopping_patience` must be >= 0.")
     if args.early_stopping_min_delta < 0:
@@ -284,7 +284,7 @@ def stage1_collate(samples: list[dict]) -> dict:
 
 
 def build_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader | None, int, int]:
-    train_dataset = Stage1JsonlDataset(args.dataset_jsonl, max_samples=args.max_samples)
+    train_dataset = Stage1JsonlDataset(args.train_jsonl, max_samples=args.max_samples)
     if len(train_dataset) == 0:
         raise RuntimeError("Training dataset is empty.")
 
@@ -338,7 +338,7 @@ def build_stage1_metadata(
     gt_waypoints = record.get("gt_waypoints", [])
     action = record.get("action", [])
     return {
-        "dataset_jsonl": args.dataset_jsonl,
+        "train_jsonl": args.train_jsonl,
         "val_jsonl": args.val_jsonl or None,
         "sample_format": "jsonl+images",
         "k": len(gt_waypoints) if gt_waypoints else len(action) // 2,
@@ -459,7 +459,7 @@ def validate_resume_args(args: argparse.Namespace, checkpoint: dict) -> None:
         "image_max_pixels": 0,
     }
     keys_to_match = [
-        "dataset_jsonl",
+        "train_jsonl",
         "val_jsonl",
         "model_path",
         "dtype",
@@ -1016,7 +1016,7 @@ def main() -> None:
             "config_args": args.config_args,
             "run_args": vars(args),
             "run_config_path": str(save_dir / "run_config.json"),
-            "dataset_jsonl": args.dataset_jsonl,
+            "train_jsonl": args.train_jsonl,
             "val_jsonl": args.val_jsonl or None,
             "train_size": train_size,
             "val_size": val_size,

@@ -6,8 +6,8 @@ Current workflow:
 
 1. Convert episodes under `datasets/raw/<collection_name>/` into `jsonl + images/` with a data config
 2. Run a short profiling probe for VRAM and step time
-3. Run a longer Stage 1 training loop with a JSON config, validation, and checkpoints
-4. Evaluate Stage 1 with token metrics and trajectory metrics
+3. Run a longer Stage 1 training loop with a JSON config, explicit train/val inputs, and checkpoints
+4. Evaluate Stage 1 on a test split with token metrics and trajectory metrics
 
 Recommended repo layout:
 
@@ -37,10 +37,13 @@ The data, train, and eval entrypoints intentionally reject CLI overrides so the 
 
 Stage 1 train configs now support:
 
+- `train_jsonl` as the required training split input and `val_jsonl` as the optional validation split input
 - `resume_from_checkpoint` for epoch-level resume from `last.pt`
 - `early_stopping_patience` and `early_stopping_min_delta`
 - `image_min_pixels` and `image_max_pixels` to control the Qwen processor image-token budget
   `0` keeps the processor default, and smaller `image_max_pixels` reduces image tokens for tighter VRAM budgets
+
+Stage 1 eval configs use `test_jsonl` explicitly so the evaluation split is named separately from train/val.
 
 Stage 1 train outputs record:
 
