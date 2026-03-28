@@ -9,7 +9,7 @@
     "save_dir": "checkpoints/stage1/vlm_ce/canonical/ignore_rule_data_k64_dt01_smoke_12gb",
     "batch_size": 1,
     "grad_accum_steps": 1,
-    "max_epochs": 5,
+    "max_epochs": 1,
     "lr": 1e-05,
     "weight_decay": 0.01,
     "warmup_ratio": 0.05,
