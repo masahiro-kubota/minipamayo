@@ -23,7 +23,6 @@ from ....sequence.stage3_builder import build_stage2_prompt_text
 from ....stage1.prompt import COT_END_TOKEN, TRAJ_FUTURE_START_TOKEN
 from ....stage1.vlm_ce.eval import load_components
 from ....stage1.vlm_ce.train import (
-    first_record_from_dataset,
     format_gib,
     inject_history_inputs_embeds,
     log_gpu_preflight,
@@ -194,22 +193,9 @@ def build_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader 
 
 
 def build_stage2_metadata(dataset, args: argparse.Namespace) -> dict:
-    record = first_record_from_dataset(dataset)
-    required_keys = [
-        "gt_waypoints",
-        "action",
-        "dt",
-        "ego_history_xyz",
-        "ego_history_rot",
-        "reasoning_text",
-    ]
-    missing_keys = [key for key in required_keys if key not in record]
-    if missing_keys:
-        raise RuntimeError(
-            "Training record is missing canonical Stage 2 fields:\n" + "\n".join(missing_keys)
-        )
-    gt_waypoints = record["gt_waypoints"]
-    action = record["action"]
+    sample = dataset[0]
+    gt_waypoints = sample["gt_waypoints"].detach().cpu().reshape(-1, 2)
+    action = sample["action"].detach().cpu().reshape(-1)
     return {
         "stage1a_checkpoint": args.stage1a_checkpoint,
         "train_jsonl": args.train_jsonl,
@@ -218,9 +204,9 @@ def build_stage2_metadata(dataset, args: argparse.Namespace) -> dict:
         "reasoning_source": "provided_reasoning_text",
         "target_layout": "reasoning_then_cot_end_then_traj_future_start_then_eos",
         "prompt_contract": "alpamayo_like_reasoning_with_cot_prefill",
-        "k": len(gt_waypoints) if gt_waypoints else len(action) // 2,
-        "action_dim": len(action),
-        "dt": float(record["dt"]),
+        "k": int(gt_waypoints.shape[0]),
+        "action_dim": int(action.shape[0]),
+        "dt": float(sample["dt"]),
         "action_loss_weight": args.action_loss_weight,
         "handoff_loss_weight": args.handoff_loss_weight,
     }

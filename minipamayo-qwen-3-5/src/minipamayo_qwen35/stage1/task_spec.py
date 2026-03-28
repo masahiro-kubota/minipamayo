@@ -10,13 +10,12 @@ import numpy as np
 import torch
 from torch.utils.data import Subset
 
+from .data.canonical_action import canonical_action_array_from_record
 from .tokenization.quantizer import ActionQuantizer
 
 
 def _record_action_array(record: dict) -> np.ndarray:
-    if "action" not in record:
-        raise RuntimeError(f"Stage 1 record is missing canonical `action`: {record!r}")
-    action = np.asarray(record["action"], dtype=np.float32)
+    action = canonical_action_array_from_record(record)
     if action.ndim != 1 or action.size == 0 or action.size % 2 != 0:
         raise RuntimeError(f"Stage 1 record has invalid `action` layout: {record!r}")
     return action

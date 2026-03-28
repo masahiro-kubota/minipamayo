@@ -10,11 +10,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import torch
 from mcap.reader import make_reader
 
-from ...utils.dynamics import interleave_action, inverse_dynamics_np, to_ego_centric
 from ...utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
 from ...utils.preflight import require_clean_git_worktree
+from ...utils.dynamics import to_ego_centric
+from .canonical_action import canonical_action_tensor_from_tensors
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 DATASETS_ROOT = PROJECT_ROOT / "datasets"
@@ -443,8 +445,6 @@ def _extract_job(job: ExtractionJob, args: argparse.Namespace, *, job_index: int
         positions = np.asarray([[frame.x, frame.y] for frame in pose_window], dtype=np.float64)
         headings = np.deg2rad(np.asarray([frame.yaw_deg for frame in pose_window], dtype=np.float64))
 
-        accel, kappa = inverse_dynamics_np(positions, headings, dt=args.dt)
-        action = interleave_action(accel, kappa)
         gt_waypoints = to_ego_centric(
             positions[1 : args.k + 1],
             positions[0],
@@ -481,6 +481,17 @@ def _extract_job(job: ExtractionJob, args: argparse.Namespace, *, job_index: int
         ego_future_rot = np.stack(
             [_rotation_matrix_from_yaw(float(yaw)) for yaw in ego_future_yaw],
             axis=0,
+        )
+        action = (
+            canonical_action_tensor_from_tensors(
+                history_xyz=torch.from_numpy(ego_history_xyz).unsqueeze(0),
+                history_rot=torch.from_numpy(ego_history_rot).unsqueeze(0),
+                future_xyz=torch.from_numpy(ego_future_xyz).unsqueeze(0),
+                future_rot=torch.from_numpy(ego_future_rot).unsqueeze(0),
+                dt=args.dt,
+            )
+            .cpu()
+            .numpy()
         )
 
         image_rel_path = f"images/{source_frame.frame_id:06d}.{source_frame.image_format}"

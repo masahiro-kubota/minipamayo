@@ -460,25 +460,20 @@ def build_stage1_metadata(
     quantizer,
     task_spec: Stage1TaskSpec,
 ) -> dict:
-    record = first_record_from_dataset(dataset)
-    required_keys = ["gt_waypoints", "action", "dt", "ego_history_xyz", "ego_history_rot"]
-    missing_keys = [key for key in required_keys if key not in record]
-    if missing_keys:
-        raise RuntimeError(
-            "Training record is missing canonical Stage 1 fields:\n" + "\n".join(missing_keys)
-        )
-    gt_waypoints = record["gt_waypoints"]
-    full_action = np.asarray(record["action"], dtype=np.float32)
-    ego_history_xyz = np.asarray(record["ego_history_xyz"], dtype=np.float32)
+    sample = dataset[0]
+    gt_waypoints = sample["gt_waypoints"].detach().cpu().reshape(-1, 2)
+    full_action = sample["action"].detach().cpu().reshape(-1).numpy()
+    ego_history_xyz = sample["ego_history_xyz"].detach().cpu().numpy()
+    dt_value = float(sample["dt"].item())
     target = task_spec.target_from_action_array(full_action)
     return {
         "train_jsonl": list(args.train_jsonl),
         "val_jsonl": list(args.val_jsonl) if args.val_jsonl is not None else None,
         "sample_format": "jsonl+images",
-        "k": len(gt_waypoints) if gt_waypoints else len(full_action) // 2,
+        "k": int(gt_waypoints.shape[0]),
         "target_dim": int(target.shape[0]),
         "full_action_dim": int(full_action.shape[0]),
-        "dt": record["dt"],
+        "dt": dt_value,
         "action_token_scheme": "alpamayo_like_discrete_tokens",
         "token_prefix": registry.token_prefix,
         "token_start_index": registry.start_index,

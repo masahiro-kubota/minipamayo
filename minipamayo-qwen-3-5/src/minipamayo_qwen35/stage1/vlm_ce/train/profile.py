@@ -14,7 +14,6 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
 import torch
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
@@ -153,25 +152,18 @@ def build_stage1_metadata(
     quantizer,
     question: str,
 ) -> dict:
-    record = dataset.records[0]
-    required_keys = ["gt_waypoints", "action", "dt", "ego_history_xyz", "ego_history_rot"]
-    missing_keys = [key for key in required_keys if key not in record]
-    if missing_keys:
-        raise RuntimeError(
-            "Stage 1 profiling record is missing canonical fields:\n" + "\n".join(missing_keys)
-        )
-    gt_waypoints = record["gt_waypoints"]
-    action = record["action"]
-    ego_history_xyz = np.asarray(record["ego_history_xyz"], dtype=np.float32)
+    sample = dataset[0]
+    gt_waypoints = sample["gt_waypoints"].detach().cpu().reshape(-1, 2)
+    action = sample["action"].detach().cpu().reshape(-1).numpy()
+    ego_history_xyz = sample["ego_history_xyz"].detach().cpu().numpy()
+    dt_value = float(sample["dt"].item())
     return {
         "train_jsonl": [str(path) for path in dataset.jsonl_paths],
         "sample_format": "jsonl+images",
-        "k": len(gt_waypoints) if gt_waypoints else len(action) // 2,
-        "target_dim": int(
-            task_spec.target_from_action_array(torch.tensor(action).numpy()).shape[0]
-        ),
-        "full_action_dim": len(action),
-        "dt": record["dt"],
+        "k": int(gt_waypoints.shape[0]),
+        "target_dim": int(task_spec.target_from_action_array(action).shape[0]),
+        "full_action_dim": int(action.shape[0]),
+        "dt": dt_value,
         "action_token_scheme": "alpamayo_like_discrete_tokens",
         "token_prefix": registry.token_prefix,
         "token_start_index": registry.start_index,

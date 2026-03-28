@@ -22,11 +22,11 @@ import torch
 from PIL import Image
 from transformers import AutoModelForImageTextToText, AutoTokenizer
 
-from ....utils.dynamics import forward_dynamics_batch
 from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
 from ....utils.preflight import require_expected_cuda_toolkit
 from ....utils.run_metadata import collect_processor_settings
 from ... import CanonicalStage1Spec, KappaOnlyStage1Spec, Stage1TaskSpec
+from ...data.canonical_action import rollout_waypoints_from_action_tensor
 from ...data.dataset import Stage1JsonlDataset
 from ..eval.runner import (
     greedy_generate_action_tokens,
@@ -289,18 +289,13 @@ def main() -> None:
         gt_action_tensor=gt_action_tensor,
     )
 
-    pred_accel = pred_full_action_tensor[0::2].unsqueeze(0).to(device)
-    pred_kappa = pred_full_action_tensor[1::2].unsqueeze(0).to(device)
-    v0 = sample["v0"].reshape(1).to(device)
     pred_waypoints = (
-        forward_dynamics_batch(
-            pred_accel,
-            pred_kappa,
-            v0,
+        rollout_waypoints_from_action_tensor(
+            action=pred_full_action_tensor.view(1, -1, 2),
+            history_xyz=sample["ego_history_xyz"].to(dtype=torch.float32),
+            history_rot=sample["ego_history_rot"].to(dtype=torch.float32),
             dt=float(stage1_metadata["dt"]),
-        )[0]
-        .detach()
-        .cpu()
+        )[0].detach().cpu()
     )
 
     gt_target_tensor = task_spec.target_from_action_tensor(gt_action_tensor)

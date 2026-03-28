@@ -3,25 +3,16 @@
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 
-import numpy as np
 import torch
 from torch.utils.data import Dataset
 
 from ..tokenization.history import canonicalize_history_sample_tensors
-
-
-def read_jsonl(path: str | Path) -> list[dict]:
-    records: list[dict] = []
-    with Path(path).open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            records.append(json.loads(line))
-    return records
+from .canonical_action import (
+    canonical_action_tensor_from_tensors,
+    derive_future_tensors_from_global_poses,
+)
 
 
 def normalize_jsonl_paths(
@@ -47,60 +38,15 @@ def normalize_jsonl_paths(
     return normalized_paths
 
 
-def _rotation_matrix_from_yaw(yaw_rad: float) -> np.ndarray:
-    cos_yaw = math.cos(float(yaw_rad))
-    sin_yaw = math.sin(float(yaw_rad))
-    return np.asarray(
-        [
-            [cos_yaw, -sin_yaw, 0.0],
-            [sin_yaw, cos_yaw, 0.0],
-            [0.0, 0.0, 1.0],
-        ],
-        dtype=np.float32,
-    )
-
-
-def _derive_future_tensors_from_global_poses(record: dict) -> tuple[torch.Tensor, torch.Tensor]:
-    if "ego_pose" not in record or "future_poses_global" not in record:
-        raise RuntimeError(
-            "Stage 1 record is missing `ego_pose` or `future_poses_global`, "
-            "which are required to derive canonical future trajectory tensors."
-        )
-    ego_pose = record["ego_pose"]
-    future_poses = record["future_poses_global"]
-    if not isinstance(future_poses, list) or not future_poses:
-        raise RuntimeError("Stage 1 record has invalid `future_poses_global`.")
-    if "gt_waypoints" not in record or not isinstance(record["gt_waypoints"], list):
-        raise RuntimeError("Stage 1 record is missing canonical `gt_waypoints` for future alignment.")
-    target_steps = len(record["gt_waypoints"])
-    if target_steps <= 0:
-        raise RuntimeError("Stage 1 record has empty `gt_waypoints`.")
-    future_poses = future_poses[:target_steps]
-
-    origin_x = float(ego_pose["x"])
-    origin_y = float(ego_pose["y"])
-    origin_yaw = math.radians(float(ego_pose["yaw_deg"]))
-    cos_yaw = math.cos(origin_yaw)
-    sin_yaw = math.sin(origin_yaw)
-
-    future_xyz = np.zeros((len(future_poses), 3), dtype=np.float32)
-    future_rot = np.zeros((len(future_poses), 3, 3), dtype=np.float32)
-    for pose_idx, pose in enumerate(future_poses):
-        dx = float(pose["x"]) - origin_x
-        dy = float(pose["y"]) - origin_y
-        local_x = cos_yaw * dx + sin_yaw * dy
-        local_y = -sin_yaw * dx + cos_yaw * dy
-        future_xyz[pose_idx, 0] = local_x
-        future_xyz[pose_idx, 1] = local_y
-
-        yaw_rad = math.radians(float(pose["yaw_deg"]))
-        local_yaw = math.atan2(math.sin(yaw_rad - origin_yaw), math.cos(yaw_rad - origin_yaw))
-        future_rot[pose_idx] = _rotation_matrix_from_yaw(local_yaw)
-
-    return (
-        torch.from_numpy(future_xyz).unsqueeze(0),
-        torch.from_numpy(future_rot).unsqueeze(0),
-    )
+def read_jsonl(path: str | Path) -> list[dict]:
+    records: list[dict] = []
+    with Path(path).open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            records.append(json.loads(line))
+    return records
 
 
 class Stage1JsonlDataset(Dataset):
@@ -134,8 +80,8 @@ class Stage1JsonlDataset(Dataset):
         required_keys = [
             "sample_id",
             "image_path",
-            "action",
             "v0",
+            "dt",
             "gt_waypoints",
             "command",
             "ego_history_xyz",
@@ -156,11 +102,18 @@ class Stage1JsonlDataset(Dataset):
                 torch.tensor(record["ego_future_rot"], dtype=torch.float32),
             )
         else:
-            ego_future_xyz, ego_future_rot = _derive_future_tensors_from_global_poses(record)
+            ego_future_xyz, ego_future_rot = derive_future_tensors_from_global_poses(record)
+        canonical_action = canonical_action_tensor_from_tensors(
+            history_xyz=ego_history_xyz,
+            history_rot=ego_history_rot,
+            future_xyz=ego_future_xyz,
+            future_rot=ego_future_rot,
+            dt=float(record["dt"]),
+        )
         return {
             "sample_id": record["sample_id"],
             "image_path": str(root_dir / record["image_path"]),
-            "action": torch.tensor(record["action"], dtype=torch.float32),
+            "action": canonical_action,
             "v0": torch.tensor(record["v0"], dtype=torch.float32),
             "dt": torch.tensor(record["dt"], dtype=torch.float32),
             "gt_waypoints": torch.tensor(record["gt_waypoints"], dtype=torch.float32),

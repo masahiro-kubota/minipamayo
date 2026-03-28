@@ -24,7 +24,6 @@ from PIL import Image
 from torch.utils.data import DataLoader
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
-from ....utils.dynamics import forward_dynamics_batch
 from ....utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
@@ -40,6 +39,7 @@ from ....utils.run_metadata import (
 )
 from ... import CanonicalStage1Spec, Stage1TaskSpec
 from ...data.dataset import Stage1JsonlDataset
+from ...data.canonical_action import rollout_waypoints_from_action_tensor
 from ...prompt import add_prompt_special_tokens
 from ...tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ...tokenization.registry import Stage1TokenRegistry
@@ -983,7 +983,7 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
 
     pred_actions_list: list[torch.Tensor] = []
     gt_actions_list: list[torch.Tensor] = []
-    v0_list: list[torch.Tensor] = []
+    pred_waypoints_list: list[torch.Tensor] = []
     gt_waypoints_list: list[torch.Tensor] = []
     generated_bins: list[int] = []
     record_cursor = 0
@@ -1075,20 +1075,19 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
 
                     pred_actions_list.append(pred_action_tensor)
                     gt_actions_list.append(gt_action_tensor)
-                    v0_list.append(v0_tensor)
                     gt_waypoints_list.append(gt_waypoint_tensor)
                     generated_bins.extend(pred_bins)
 
                     pred_waypoint_tensor = (
-                        forward_dynamics_batch(
-                            pred_action_tensor.view(1, k_steps, 2)[:, :, 0],
-                            pred_action_tensor.view(1, k_steps, 2)[:, :, 1],
-                            v0_tensor.view(1),
+                        rollout_waypoints_from_action_tensor(
+                            action=pred_action_tensor.view(1, k_steps, 2),
+                            history_xyz=batch["ego_history_xyz"][row_idx].detach().cpu(),
+                            history_rot=batch["ego_history_rot"][row_idx].detach().cpu(),
                             dt=dt,
                         )
                         .squeeze(0)
-                        .cpu()
                     )
+                    pred_waypoints_list.append(pred_waypoint_tensor)
                     displacement = torch.norm(pred_waypoint_tensor - gt_waypoint_tensor, dim=1)
                     tf_match_count = int(tf_per_sample_correct[row_idx].item())
                     tf_token_count = int(tf_per_sample_total[row_idx].item())
@@ -1283,12 +1282,11 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
 
         pred_actions = torch.stack(pred_actions_list)
         gt_actions = torch.stack(gt_actions_list)
-        v0s = torch.stack(v0_list)
+        pred_waypoints = torch.stack(pred_waypoints_list)
         gt_waypoints = torch.stack(gt_waypoints_list)
 
         pred_kv = pred_actions.reshape(-1, k_steps, 2)
         gt_kv = gt_actions.reshape(-1, k_steps, 2)
-        pred_waypoints = forward_dynamics_batch(pred_kv[:, :, 0], pred_kv[:, :, 1], v0s, dt=dt)
         displacement_errors = torch.norm(pred_waypoints - gt_waypoints, dim=2)
 
         summary = {

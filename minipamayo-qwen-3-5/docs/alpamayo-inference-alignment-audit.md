@@ -14,32 +14,7 @@
 
 ## 未整合の一覧
 
-### 1. `action` の教師信号と rollout 評価が旧 dynamics 契約のまま
-
-`stage1` / `stage2` の trajectory tokenization と `action_space` rollout は、
-いまは Alpamayo 寄せの `UnicycleAccelCurvatureActionSpace` を使う。
-
-一方で、学習用 JSONL に保存される `action` は extractor 側で依然として
-旧 `inverse_dynamics_np` から作られている。
-
-その結果、現在の canonical path は次の 2 系統を同時に持っている。
-
-- Stage 1A discrete token supervision:
-  - `ego_history_xyz/rot + ego_future_xyz/rot` から
-    Alpamayo 寄せ `action_space.traj_to_action(...)` を通して token 化
-- Stage 1B expert CFM / Stage 1A eval action MAE:
-  - JSONL に保存された旧 `action` を教師として使用
-- Stage 1A eval trajectory ADE/FDE:
-  - 旧 `forward_dynamics_batch` を使用
-
-影響:
-
-- Stage 1A token CE と Stage 1B expert CFM が、完全に同じ `(a, kappa)` 契約を見ていない
-- Stage 1A eval の `action_mae_*`, `ADE/FDE` も、tokenization / Stage 1B rollout と別契約になる
-- そのため、現在の `stage1 -> stage2` は Alpamayo 比較以前に、
-  repo 内部で action contract が二重化している
-
-### 2. `stage2` の free-running handoff 成立性
+### 1. `stage2` の free-running handoff 成立性
 
 `stage2 -> expert_cfm` の code path 自体はある。  
 また `stage2` の target も、いまは
@@ -68,7 +43,7 @@
 - ただし Alpamayo 推論コードと同じ「reasoning rollout のあと expert に handoff」が、
   いまの smoke 学習済み重みで安定成立するところまではまだ確認できていない
 
-### 3. 依存ライブラリ stack
+### 2. 依存ライブラリ stack
 
 まだ一致していない主要差分:
 
@@ -106,8 +81,7 @@
 過去画像なしとバックボーン差分を除けば、
 `stage1` / `stage2` の **配線** はかなり Alpamayo に寄っている。
 
-いま残っているのは主にこの 3 つである。
+いま残っているのは主にこの 2 つである。
 
-- `stage1` 内部の action contract 二重化
 - `stage2` free-running handoff の成立性
 - 依存ライブラリ stack

@@ -13,6 +13,10 @@ import torch
 from torch.utils.data import Dataset
 
 from ...stage1.data.dataset import normalize_jsonl_paths, read_jsonl
+from ...stage1.data.canonical_action import (
+    canonical_action_tensor_from_tensors,
+    derive_future_tensors_from_global_poses,
+)
 from ...stage1.tokenization.history import canonicalize_history_sample_tensors
 
 if TYPE_CHECKING:
@@ -53,7 +57,6 @@ class ReasoningSftJsonlDataset(Dataset):
         required_keys = [
             "sample_id",
             "image_path",
-            "action",
             "v0",
             "gt_waypoints",
             "dt",
@@ -72,15 +75,31 @@ class ReasoningSftJsonlDataset(Dataset):
             torch.tensor(record["ego_history_xyz"], dtype=torch.float32),
             torch.tensor(record["ego_history_rot"], dtype=torch.float32),
         )
+        if "ego_future_xyz" in record and "ego_future_rot" in record:
+            ego_future_xyz, ego_future_rot = canonicalize_history_sample_tensors(
+                torch.tensor(record["ego_future_xyz"], dtype=torch.float32),
+                torch.tensor(record["ego_future_rot"], dtype=torch.float32),
+            )
+        else:
+            ego_future_xyz, ego_future_rot = derive_future_tensors_from_global_poses(record)
+        canonical_action = canonical_action_tensor_from_tensors(
+            history_xyz=ego_history_xyz,
+            history_rot=ego_history_rot,
+            future_xyz=ego_future_xyz,
+            future_rot=ego_future_rot,
+            dt=float(record["dt"]),
+        )
         sample = {
             "sample_id": str(record["sample_id"]),
             "image_path": str(root_dir / str(record["image_path"])),
-            "action": torch.tensor(record["action"], dtype=torch.float32),
+            "action": canonical_action,
             "v0": torch.tensor(record["v0"], dtype=torch.float32),
             "gt_waypoints": torch.tensor(record["gt_waypoints"], dtype=torch.float32),
             "dt": float(record["dt"]),
             "ego_history_xyz": ego_history_xyz,
             "ego_history_rot": ego_history_rot,
+            "ego_future_xyz": ego_future_xyz,
+            "ego_future_rot": ego_future_rot,
             "reasoning_text": str(record["reasoning_text"]),
         }
         if "command" in record:
@@ -103,6 +122,8 @@ def reasoning_sft_collate(samples: list[dict]) -> dict:
         "gt_waypoints": torch.stack([sample["gt_waypoints"] for sample in samples], dim=0),
         "ego_history_xyz": torch.stack([sample["ego_history_xyz"] for sample in samples], dim=0),
         "ego_history_rot": torch.stack([sample["ego_history_rot"] for sample in samples], dim=0),
+        "ego_future_xyz": torch.stack([sample["ego_future_xyz"] for sample in samples], dim=0),
+        "ego_future_rot": torch.stack([sample["ego_future_rot"] for sample in samples], dim=0),
         "dt": [sample["dt"] for sample in samples],
         "reasoning_text": [sample["reasoning_text"] for sample in samples],
     }
