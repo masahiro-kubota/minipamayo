@@ -30,6 +30,7 @@ from ....stage1.vlm_ce.train import (
     metric_improved,
     model_forward_inputs,
     move_inputs_to_device,
+    prepare_prompt_inputs_with_history,
     release_cuda_memory,
     set_seed,
     write_run_config,
@@ -48,6 +49,7 @@ from ....utils.run_metadata import (
     collect_processor_settings,
 )
 from ..data import ReasoningSftJsonlDataset, reasoning_sft_collate
+from ..inference.runner import generate_reasoning_handoff
 from ..prompt import build_stage2_prompt_text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
@@ -84,6 +86,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image-min-pixels", type=int, default=CANONICAL_IMAGE_MIN_PIXELS)
     parser.add_argument("--image-max-pixels", type=int, default=CANONICAL_IMAGE_MAX_PIXELS)
     parser.add_argument("--handoff-loss-weight", type=float, default=8.0)
+    parser.add_argument("--handoff-probe-samples", type=int, default=0)
+    parser.add_argument("--handoff-probe-max-reasoning-tokens", type=int, default=256)
     parser.add_argument("--gradient-checkpointing", action="store_true", default=True)
     parser.add_argument("--wandb-project", type=str, default="minipamayo-qwen35")
     parser.add_argument("--wandb-entity", type=str, default="")
@@ -142,6 +146,10 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`train_jsonl` must be defined in the config JSON.")
     if args.handoff_loss_weight <= 0.0:
         raise RuntimeError("`handoff_loss_weight` must be > 0.")
+    if args.handoff_probe_samples < 0:
+        raise RuntimeError("`handoff_probe_samples` must be >= 0.")
+    if args.handoff_probe_max_reasoning_tokens <= 0:
+        raise RuntimeError("`handoff_probe_max_reasoning_tokens` must be > 0.")
     if args.early_stopping_patience < 0:
         raise RuntimeError("`early_stopping_patience` must be >= 0.")
     if args.early_stopping_min_delta < 0:
@@ -468,6 +476,105 @@ def checkpoint_payload(
     }
 
 
+@torch.inference_mode()
+def evaluate_handoff_probe(
+    *,
+    model,
+    dataset,
+    processor,
+    registry,
+    history_registry,
+    history_quantizer,
+    device: torch.device,
+    max_samples: int,
+    max_reasoning_tokens: int,
+    seed: int,
+) -> dict | None:
+    if max_samples <= 0 or len(dataset) == 0:
+        return None
+
+    num_samples = min(max_samples, len(dataset))
+    stop_token_id = int(processor.tokenizer.convert_tokens_to_ids(TRAJ_FUTURE_START_TOKEN))
+    if stop_token_id < 0:
+        raise RuntimeError("Tokenizer is missing canonical `<|traj_future_start|>`.")
+
+    prev_use_cache = bool(getattr(model.config, "use_cache", False))
+    was_training = model.training
+    model.config.use_cache = True
+    model.eval()
+
+    success_count = 0
+    failure_sample_ids: list[str] = []
+    success_positions: list[int] = []
+    failure_reasons: list[str] = []
+    try:
+        for sample_idx in range(num_samples):
+            sample = dataset[sample_idx]
+            torch.manual_seed(seed + sample_idx)
+            torch.cuda.manual_seed_all(seed + sample_idx)
+
+            batch = {
+                "sample_id": [sample["sample_id"]],
+                "image_path": [sample["image_path"]],
+                "action": sample["action"].unsqueeze(0),
+                "v0": sample["v0"].unsqueeze(0),
+                "gt_waypoints": sample["gt_waypoints"].unsqueeze(0),
+                "ego_history_xyz": sample["ego_history_xyz"].unsqueeze(0),
+                "ego_history_rot": sample["ego_history_rot"].unsqueeze(0),
+                "dt": [sample["dt"]],
+                "reasoning_text": [sample["reasoning_text"]],
+            }
+            prompt_text = build_stage2_prompt_text(
+                processor,
+                float(sample["v0"].item()),
+                history_token_count=history_quantizer.token_count,
+            )
+            prompt_inputs = prepare_prompt_inputs_with_history(
+                model=model,
+                batch=batch,
+                processor=processor,
+                history_registry=history_registry,
+                history_quantizer=history_quantizer,
+                prompt_text=prompt_text,
+                device=device,
+            )
+            try:
+                _, _, _, stop_positions = generate_reasoning_handoff(
+                    model=model,
+                    tokenizer=processor.tokenizer,
+                    prompt_inputs=prompt_inputs,
+                    traj_registry=registry,
+                    stop_token_id=stop_token_id,
+                    max_new_tokens=max_reasoning_tokens,
+                    temperature=0.6,
+                    top_p=0.98,
+                    top_k=0,
+                )
+                success_count += 1
+                success_positions.append(int(stop_positions[0].item()))
+            except RuntimeError as exc:
+                failure_sample_ids.append(str(sample["sample_id"]))
+                failure_reasons.append(str(exc))
+    finally:
+        model.config.use_cache = prev_use_cache
+        if was_training:
+            model.train()
+
+    success_rate = success_count / max(num_samples, 1)
+    mean_stop_position = (
+        sum(success_positions) / len(success_positions) if success_positions else None
+    )
+    first_failure_reason = failure_reasons[0] if failure_reasons else ""
+    return {
+        "num_samples": num_samples,
+        "num_success": success_count,
+        "success_rate": success_rate,
+        "mean_stop_position": mean_stop_position,
+        "failure_sample_ids": failure_sample_ids,
+        "first_failure_reason": first_failure_reason,
+    }
+
+
 def main() -> None:
     wandb_run = None
     args = parse_args()
@@ -535,6 +642,10 @@ def main() -> None:
 
         stage2_metadata = build_stage2_metadata(train_loader.dataset, args)
         stage2_metadata["processor_settings"] = processor_settings
+        stage2_metadata["handoff_probe_samples"] = int(args.handoff_probe_samples)
+        stage2_metadata["handoff_probe_max_reasoning_tokens"] = int(
+            args.handoff_probe_max_reasoning_tokens
+        )
         run_metadata = {
             "git": git_metadata,
             "gpu": gpu_info,
@@ -596,6 +707,9 @@ def main() -> None:
         best_epoch = 0
         epochs_without_improvement = 0
         best_metric_name = "val_loss" if val_loader is not None else "train_loss"
+        best_handoff_success_rate = -1.0
+        best_handoff_epoch = 0
+        best_handoff_metric = float("inf")
 
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats(device)
@@ -726,6 +840,21 @@ def main() -> None:
                 val_token_accuracy = None
                 metric_to_track = train_loss
 
+            probe_dataset = val_loader.dataset if val_loader is not None else train_loader.dataset
+            handoff_probe = evaluate_handoff_probe(
+                model=model,
+                dataset=probe_dataset,
+                processor=processor,
+                registry=registry,
+                history_registry=history_registry,
+                history_quantizer=history_quantizer,
+                device=device,
+                max_samples=args.handoff_probe_samples,
+                max_reasoning_tokens=args.handoff_probe_max_reasoning_tokens,
+                seed=args.seed,
+            )
+            release_cuda_memory()
+
             improved = metric_improved(metric_to_track, best_metric, args.early_stopping_min_delta)
             if improved:
                 best_metric = metric_to_track
@@ -733,6 +862,21 @@ def main() -> None:
                 epochs_without_improvement = 0
             else:
                 epochs_without_improvement += 1
+
+            handoff_improved = False
+            if handoff_probe is not None:
+                probe_success_rate = float(handoff_probe["success_rate"])
+                if probe_success_rate > best_handoff_success_rate:
+                    handoff_improved = True
+                elif (
+                    probe_success_rate == best_handoff_success_rate
+                    and metric_to_track < best_handoff_metric
+                ):
+                    handoff_improved = True
+                if handoff_improved:
+                    best_handoff_success_rate = probe_success_rate
+                    best_handoff_epoch = epoch
+                    best_handoff_metric = metric_to_track
 
             epoch_metrics = {
                 "epoch": epoch,
@@ -751,6 +895,21 @@ def main() -> None:
                 "epoch_elapsed_s": round(time.perf_counter() - epoch_start, 3),
                 "optimizer_steps_this_epoch": optimizer_steps_this_epoch,
             }
+            if handoff_probe is not None:
+                epoch_metrics["handoff_probe_num_samples"] = int(handoff_probe["num_samples"])
+                epoch_metrics["handoff_probe_num_success"] = int(handoff_probe["num_success"])
+                epoch_metrics["handoff_probe_success_rate"] = float(handoff_probe["success_rate"])
+                epoch_metrics["handoff_probe_mean_stop_position"] = handoff_probe[
+                    "mean_stop_position"
+                ]
+                epoch_metrics["handoff_probe_failure_sample_ids"] = handoff_probe[
+                    "failure_sample_ids"
+                ]
+                epoch_metrics["handoff_probe_first_failure_reason"] = handoff_probe[
+                    "first_failure_reason"
+                ]
+                epoch_metrics["best_handoff_success_rate"] = best_handoff_success_rate
+                epoch_metrics["best_handoff_epoch"] = best_handoff_epoch
             metrics_history.append(epoch_metrics)
             print(json.dumps({"event": "epoch_end", **epoch_metrics}, ensure_ascii=False))
             wandb_payload = {
@@ -763,6 +922,15 @@ def main() -> None:
             if val_loss is not None:
                 wandb_payload["val/loss"] = val_loss
                 wandb_payload["val/token_accuracy"] = val_token_accuracy
+            if handoff_probe is not None:
+                wandb_payload["handoff_probe/success_rate"] = float(handoff_probe["success_rate"])
+                wandb_payload["handoff_probe/num_success"] = int(handoff_probe["num_success"])
+                wandb_payload["handoff_probe/num_samples"] = int(handoff_probe["num_samples"])
+                if handoff_probe["mean_stop_position"] is not None:
+                    wandb_payload["handoff_probe/mean_stop_position"] = float(
+                        handoff_probe["mean_stop_position"]
+                    )
+                wandb_payload["summary/best_handoff_success_rate"] = best_handoff_success_rate
             maybe_wandb_log(wandb_run, wandb_payload, step=global_step)
 
             if improved:
@@ -801,6 +969,24 @@ def main() -> None:
                 ),
                 save_dir / "last.pt",
             )
+            if handoff_improved:
+                torch.save(
+                    checkpoint_payload(
+                        model=model,
+                        optimizer=optimizer,
+                        scheduler=scheduler,
+                        args=args,
+                        stage2_metadata=stage2_metadata,
+                        token_registry=token_registry_payload,
+                        quantizer=quantizer_payload,
+                        initial_eval=initial_eval,
+                        epoch=epoch,
+                        global_step=global_step,
+                        metrics_history=metrics_history,
+                        run_metadata=run_metadata,
+                    ),
+                    save_dir / "best_handoff.pt",
+                )
             with (save_dir / "history.json").open("w", encoding="utf-8") as f:
                 json.dump(metrics_history, f, indent=2, ensure_ascii=False)
 
@@ -859,6 +1045,10 @@ def main() -> None:
             "best_metric_name": best_metric_name,
             "best_metric": best_metric,
             "best_epoch": best_epoch,
+            "best_handoff_success_rate": (
+                best_handoff_success_rate if best_handoff_epoch > 0 else None
+            ),
+            "best_handoff_epoch": best_handoff_epoch if best_handoff_epoch > 0 else None,
             "peak_allocated_gib": format_gib(torch.cuda.max_memory_allocated(device)),
             "peak_reserved_gib": format_gib(torch.cuda.max_memory_reserved(device)),
             "total_wall_time_s": round(time.perf_counter() - wall_start, 3),
@@ -878,6 +1068,10 @@ def main() -> None:
             {
                 "summary/best_metric": best_metric,
                 "summary/best_epoch": best_epoch,
+                "summary/best_handoff_success_rate": (
+                    best_handoff_success_rate if best_handoff_epoch > 0 else None
+                ),
+                "summary/best_handoff_epoch": best_handoff_epoch if best_handoff_epoch > 0 else None,
                 "summary/total_wall_time_s": summary["total_wall_time_s"],
             },
             step=global_step,
