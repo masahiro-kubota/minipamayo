@@ -28,6 +28,8 @@ from transformers import AutoModelForImageTextToText, AutoProcessor
 
 from .. import CanonicalStage1Spec, Stage1TaskSpec
 from ..data.dataset import Stage1JsonlDataset
+from ..prompt import DEFAULT_QUESTION, build_prompt_text
+from ..tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ..tokenization.registry import Stage1TokenRegistry
 from ...utils.json_config import (
     load_json_payload,
@@ -54,9 +56,6 @@ CONFIG_PATH_KEYS = {
 }
 MULTI_VALUE_CONFIG_KEYS = {"train_jsonl", "val_jsonl"}
 
-DEFAULT_QUESTION = (
-    "Predict the future ego trajectory as action tokens. Output only the action tokens in order."
-)
 CHECKPOINT_KIND_FULL = "full"
 CHECKPOINT_KIND_MODEL_ONLY = "model_only"
 
@@ -193,23 +192,6 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def build_prompt_text(processor, question: str) -> str:
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image"},
-                {"type": "text", "text": question},
-            ],
-        }
-    ]
-    return processor.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True,
-    )
-
-
 def build_processor_kwargs(image_min_pixels: int, image_max_pixels: int) -> dict:
     kwargs = {}
     if image_min_pixels > 0:
@@ -298,6 +280,8 @@ def stage1_collate(samples: list[dict]) -> dict:
         "action": torch.stack([sample["action"] for sample in samples], dim=0),
         "v0": torch.stack([sample["v0"] for sample in samples], dim=0),
         "gt_waypoints": torch.stack([sample["gt_waypoints"] for sample in samples], dim=0),
+        "ego_history_xyz": torch.stack([sample["ego_history_xyz"] for sample in samples], dim=0),
+        "ego_history_rot": torch.stack([sample["ego_history_rot"] for sample in samples], dim=0),
         "command": [sample["command"] for sample in samples],
     }
 
@@ -358,16 +342,22 @@ def build_stage1_metadata(
     dataset,
     args: argparse.Namespace,
     registry: Stage1TokenRegistry,
+    history_registry: HistoryTokenRegistry,
+    history_quantizer: HistoryTrajectoryQuantizer,
     quantizer,
     task_spec: Stage1TaskSpec,
 ) -> dict:
     record = first_record_from_dataset(dataset)
-    if "gt_waypoints" not in record or "action" not in record or "dt" not in record:
+    required_keys = ["gt_waypoints", "action", "dt", "ego_history_xyz", "ego_history_rot"]
+    missing_keys = [key for key in required_keys if key not in record]
+    if missing_keys:
         raise RuntimeError(
-            "Training record is missing canonical Stage 1 fields: `gt_waypoints`, `action`, or `dt`."
+            "Training record is missing canonical Stage 1 fields:\n" + "\n".join(missing_keys)
         )
     gt_waypoints = record["gt_waypoints"]
     full_action = np.asarray(record["action"], dtype=np.float32)
+    ego_history_xyz = np.asarray(record["ego_history_xyz"], dtype=np.float32)
+    ego_history_rot = np.asarray(record["ego_history_rot"], dtype=np.float32)
     target = task_spec.target_from_action_array(full_action)
     return {
         "train_jsonl": list(args.train_jsonl),
@@ -379,7 +369,13 @@ def build_stage1_metadata(
         "dt": record["dt"],
         "action_token_scheme": "add_tokens",
         "token_prefix": registry.token_prefix,
+        "history_token_scheme": "placeholder_replaced_scalar_bins",
+        "history_token_prefix": history_registry.token_prefix,
+        "history_steps": int(ego_history_xyz.shape[0]),
+        "history_token_count": history_quantizer.token_count,
+        "history_layout": "ego_frame_xyz_rot_local",
         "question": args.question,
+        "history_quantizer": history_quantizer.metadata(),
         **task_spec.metadata(quantizer),
     }
 
@@ -388,6 +384,8 @@ def prepare_batch(
     batch: dict,
     processor,
     registry: Stage1TokenRegistry,
+    history_registry: HistoryTokenRegistry,
+    history_quantizer: HistoryTrajectoryQuantizer,
     quantizer,
     task_spec: Stage1TaskSpec,
     prompt_text: str,
@@ -405,6 +403,18 @@ def prepare_batch(
             images=images,
             return_tensors="pt",
             padding=True,
+        )
+        history_token_id_rows = [
+            history_registry.encode_history_token_ids(
+                history_xyz=history_xyz.cpu().numpy(),
+                history_rot=history_rot.cpu().numpy(),
+                quantizer=history_quantizer,
+            )
+            for history_xyz, history_rot in zip(batch["ego_history_xyz"], batch["ego_history_rot"])
+        ]
+        prompt_inputs["input_ids"] = history_registry.replace_placeholder_ids(
+            prompt_inputs["input_ids"],
+            history_token_id_rows,
         )
         target_token_ids = torch.tensor(target_token_id_rows, dtype=torch.long)
 
@@ -449,6 +459,40 @@ def prepare_batch(
             image.close()
 
 
+def prepare_prompt_inputs_with_history(
+    batch: dict,
+    processor,
+    history_registry: HistoryTokenRegistry,
+    history_quantizer: HistoryTrajectoryQuantizer,
+    prompt_text: str,
+    device: torch.device,
+) -> dict:
+    images = [Image.open(path).convert("RGB") for path in batch["image_path"]]
+    try:
+        prompt_inputs = processor(
+            text=[prompt_text] * len(images),
+            images=images,
+            return_tensors="pt",
+            padding=True,
+        )
+        history_token_id_rows = [
+            history_registry.encode_history_token_ids(
+                history_xyz=history_xyz.cpu().numpy(),
+                history_rot=history_rot.cpu().numpy(),
+                quantizer=history_quantizer,
+            )
+            for history_xyz, history_rot in zip(batch["ego_history_xyz"], batch["ego_history_rot"])
+        ]
+        prompt_inputs["input_ids"] = history_registry.replace_placeholder_ids(
+            prompt_inputs["input_ids"],
+            history_token_id_rows,
+        )
+        return move_inputs_to_device(prompt_inputs, device)
+    finally:
+        for image in images:
+            image.close()
+
+
 def compute_token_accuracy(logits: torch.Tensor, labels: torch.Tensor) -> tuple[int, int]:
     shifted_logits = logits[:, :-1, :].argmax(dim=-1)
     shifted_labels = labels[:, 1:]
@@ -464,6 +508,8 @@ def evaluate(
     dataloader: DataLoader,
     processor,
     registry: Stage1TokenRegistry,
+    history_registry: HistoryTokenRegistry,
+    history_quantizer: HistoryTrajectoryQuantizer,
     quantizer,
     task_spec: Stage1TaskSpec,
     prompt_text: str,
@@ -478,7 +524,15 @@ def evaluate(
 
     for batch in dataloader:
         full_inputs, labels = prepare_batch(
-            batch, processor, registry, quantizer, task_spec, prompt_text, device
+            batch,
+            processor,
+            registry,
+            history_registry,
+            history_quantizer,
+            quantizer,
+            task_spec,
+            prompt_text,
+            device,
         )
         with torch.autocast("cuda", dtype=model_dtype):
             outputs = model(**full_inputs, labels=labels)
@@ -588,6 +642,8 @@ def checkpoint_payload(
     model,
     args: argparse.Namespace,
     registry: Stage1TokenRegistry,
+    history_registry: HistoryTokenRegistry,
+    history_quantizer: HistoryTrajectoryQuantizer,
     quantizer,
     task_spec: Stage1TaskSpec,
     stage1_metadata: dict,
@@ -611,6 +667,8 @@ def checkpoint_payload(
             "token_prefix": registry.token_prefix,
             "token_strings": registry.token_strings,
         },
+        "history_registry": history_registry.metadata(),
+        "history_quantizer": history_quantizer.metadata(),
         "quantizer": task_spec.quantizer_metadata(quantizer),
         "stage1_metadata": stage1_metadata,
         "initial_eval": initial_eval,
@@ -624,6 +682,8 @@ def full_checkpoint_payload(
     scheduler,
     args: argparse.Namespace,
     registry: Stage1TokenRegistry,
+    history_registry: HistoryTokenRegistry,
+    history_quantizer: HistoryTrajectoryQuantizer,
     quantizer,
     task_spec: Stage1TaskSpec,
     stage1_metadata: dict,
@@ -638,6 +698,8 @@ def full_checkpoint_payload(
         model=model,
         args=args,
         registry=registry,
+        history_registry=history_registry,
+        history_quantizer=history_quantizer,
         quantizer=quantizer,
         task_spec=task_spec,
         stage1_metadata=stage1_metadata,
@@ -656,6 +718,8 @@ def model_only_checkpoint_payload(
     model,
     args: argparse.Namespace,
     registry: Stage1TokenRegistry,
+    history_registry: HistoryTokenRegistry,
+    history_quantizer: HistoryTrajectoryQuantizer,
     quantizer,
     task_spec: Stage1TaskSpec,
     stage1_metadata: dict,
@@ -670,6 +734,8 @@ def model_only_checkpoint_payload(
         model=model,
         args=args,
         registry=registry,
+        history_registry=history_registry,
+        history_quantizer=history_quantizer,
         quantizer=quantizer,
         task_spec=task_spec,
         stage1_metadata=stage1_metadata,
@@ -775,6 +841,9 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
             trust_remote_code=True,
         )
 
+        history_quantizer = HistoryTrajectoryQuantizer()
+        history_registry = HistoryTokenRegistry(n_bins=history_quantizer.n_bins)
+        history_added = history_registry.add_to_tokenizer(processor.tokenizer)
         quantizer = task_spec.build_quantizer(train_loader.dataset)
         registry = Stage1TokenRegistry(n_bins=quantizer.n_bins)
         added = registry.add_to_tokenizer(processor.tokenizer)
@@ -782,6 +851,8 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
             train_loader.dataset,
             args,
             registry,
+            history_registry,
+            history_quantizer,
             quantizer,
             task_spec,
         )
@@ -822,7 +893,11 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
             return 0.5 * (1.0 + math.cos(math.pi * progress))
 
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-        prompt_text = build_prompt_text(processor, args.question)
+        prompt_text = build_prompt_text(
+            processor,
+            args.question,
+            history_token_count=history_quantizer.token_count,
+        )
         best_metric_name = "val_loss" if val_loader is not None else "train_loss"
         initial_eval_split = "val" if val_loader is not None else "train"
         run_metadata = {
@@ -847,6 +922,7 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                 if resume_checkpoint is not None
                 else 0,
             },
+            "history_quantizer": history_quantizer.metadata(),
         }
         write_run_config(save_dir, args, run_metadata)
 
@@ -867,6 +943,8 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                 dataloader=initial_eval_loader,
                 processor=processor,
                 registry=registry,
+                history_registry=history_registry,
+                history_quantizer=history_quantizer,
                 quantizer=quantizer,
                 task_spec=task_spec,
                 prompt_text=prompt_text,
@@ -908,6 +986,7 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
             "early_stopping_min_delta": args.early_stopping_min_delta,
             "total_vocab_size": len(processor.tokenizer),
             "added_action_tokens": added,
+            "added_history_tokens": history_added,
             "model_load_elapsed_s": round(load_elapsed, 3),
             "stage1_metadata": stage1_metadata,
             "task_spec": task_spec.name,
@@ -934,12 +1013,15 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
             "setup/start_epoch": start_epoch,
             "setup/total_vocab_size": len(processor.tokenizer),
             "setup/added_action_tokens": added,
+            "setup/added_history_tokens": history_added,
             "setup/model_load_elapsed_s": round(load_elapsed, 3),
             "setup/k": stage1_metadata["k"],
             "setup/dt": stage1_metadata["dt"],
             "setup/n_bins": stage1_metadata["n_bins"],
             "setup/target_dim": stage1_metadata["target_dim"],
             "setup/full_action_dim": stage1_metadata["full_action_dim"],
+            "setup/history_steps": stage1_metadata["history_steps"],
+            "setup/history_token_count": stage1_metadata["history_token_count"],
             "setup/image_min_pixels": args.image_min_pixels,
             "setup/image_max_pixels": args.image_max_pixels,
             "setup/resumed": resume_checkpoint is not None,
@@ -972,7 +1054,15 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
             optimizer.zero_grad(set_to_none=True)
             for batch_idx, batch in enumerate(train_loader, start=1):
                 full_inputs, labels = prepare_batch(
-                    batch, processor, registry, quantizer, task_spec, prompt_text, device
+                    batch,
+                    processor,
+                    registry,
+                    history_registry,
+                    history_quantizer,
+                    quantizer,
+                    task_spec,
+                    prompt_text,
+                    device,
                 )
 
                 with torch.autocast("cuda", dtype=model_dtype):
@@ -1026,6 +1116,8 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                     dataloader=val_loader,
                     processor=processor,
                     registry=registry,
+                    history_registry=history_registry,
+                    history_quantizer=history_quantizer,
                     quantizer=quantizer,
                     task_spec=task_spec,
                     prompt_text=prompt_text,
@@ -1090,6 +1182,8 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                         model=model,
                         args=args,
                         registry=registry,
+                        history_registry=history_registry,
+                        history_quantizer=history_quantizer,
                         quantizer=quantizer,
                         task_spec=task_spec,
                         stage1_metadata=stage1_metadata,
@@ -1110,6 +1204,8 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                         scheduler=scheduler,
                         args=args,
                         registry=registry,
+                        history_registry=history_registry,
+                        history_quantizer=history_quantizer,
                         quantizer=quantizer,
                         task_spec=task_spec,
                         stage1_metadata=stage1_metadata,
@@ -1129,6 +1225,8 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                     scheduler=scheduler,
                     args=args,
                     registry=registry,
+                    history_registry=history_registry,
+                    history_quantizer=history_quantizer,
                     quantizer=quantizer,
                     task_spec=task_spec,
                     stage1_metadata=stage1_metadata,
@@ -1177,6 +1275,8 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                 model=model,
                 args=args,
                 registry=registry,
+                history_registry=history_registry,
+                history_quantizer=history_quantizer,
                 quantizer=quantizer,
                 task_spec=task_spec,
                 stage1_metadata=stage1_metadata,
@@ -1221,6 +1321,7 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
             else None,
             "resumed": resume_checkpoint is not None,
             "added_action_tokens": added,
+            "added_history_tokens": history_added,
             "total_vocab_size": len(processor.tokenizer),
             "model_load_elapsed_s": round(load_elapsed, 3),
             "total_wall_time_s": round(time.perf_counter() - wall_start, 3),

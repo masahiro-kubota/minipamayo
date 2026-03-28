@@ -26,6 +26,7 @@ from transformers import AutoModelForImageTextToText, AutoProcessor
 
 from .. import CanonicalStage1Spec, Stage1TaskSpec
 from ..data.dataset import Stage1JsonlDataset
+from ..tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ..tokenization.registry import Stage1TokenRegistry
 from ..train import (
     CHECKPOINT_KIND_FULL,
@@ -35,8 +36,8 @@ from ..train import (
     compute_token_accuracy,
     format_gib,
     load_checkpoint,
-    move_inputs_to_device,
     prepare_batch,
+    prepare_prompt_inputs_with_history,
     stage1_collate,
 )
 from ...utils.dynamics import forward_dynamics_batch
@@ -166,7 +167,16 @@ def resolve_dtype(dtype_name: str) -> torch.dtype:
 def load_components(
     args: argparse.Namespace,
     task_spec: Stage1TaskSpec | None = None,
-) -> tuple[dict, object, object, Stage1TokenRegistry, Any, torch.dtype]:
+) -> tuple[
+    dict,
+    object,
+    object,
+    Stage1TokenRegistry,
+    HistoryTokenRegistry,
+    HistoryTrajectoryQuantizer,
+    Any,
+    torch.dtype,
+]:
     task_spec = task_spec or CanonicalStage1Spec()
     checkpoint_path = Path(args.checkpoint)
     checkpoint = load_checkpoint(checkpoint_path)
@@ -180,12 +190,49 @@ def load_components(
     processor_kwargs = build_processor_kwargs(args.image_min_pixels, args.image_max_pixels)
     processor = AutoProcessor.from_pretrained(processor_path, trust_remote_code=True, **processor_kwargs)
 
+    if "history_registry" not in checkpoint or not isinstance(checkpoint["history_registry"], dict):
+        raise RuntimeError("Checkpoint is missing canonical `history_registry` metadata.")
+    history_cfg = checkpoint["history_registry"]
+    if "token_prefix" not in history_cfg or "n_bins" not in history_cfg:
+        raise RuntimeError("Checkpoint history_registry is missing `token_prefix` or `n_bins`.")
+    history_registry = HistoryTokenRegistry(
+        n_bins=int(history_cfg["n_bins"]),
+        token_prefix=str(history_cfg["token_prefix"]),
+    )
+    history_registry.add_to_tokenizer(processor.tokenizer)
+
     token_cfg = checkpoint["token_registry"]
     registry = Stage1TokenRegistry(
         n_bins=token_cfg["n_bins"],
         token_prefix=token_cfg["token_prefix"],
     )
     registry.add_to_tokenizer(processor.tokenizer)
+
+    if "history_quantizer" not in checkpoint or not isinstance(checkpoint["history_quantizer"], dict):
+        raise RuntimeError("Checkpoint is missing canonical `history_quantizer` metadata.")
+    history_quantizer_cfg = checkpoint["history_quantizer"]
+    required_history_quantizer_keys = [
+        "history_steps",
+        "n_bins",
+        "x_range",
+        "y_range",
+        "yaw_range",
+    ]
+    missing_history_quantizer_keys = [
+        key for key in required_history_quantizer_keys if key not in history_quantizer_cfg
+    ]
+    if missing_history_quantizer_keys:
+        raise RuntimeError(
+            "Checkpoint history_quantizer is missing canonical fields:\n"
+            + "\n".join(missing_history_quantizer_keys)
+        )
+    history_quantizer = HistoryTrajectoryQuantizer(
+        history_steps=int(history_quantizer_cfg["history_steps"]),
+        n_bins=int(history_quantizer_cfg["n_bins"]),
+        x_range=tuple(history_quantizer_cfg["x_range"]),
+        y_range=tuple(history_quantizer_cfg["y_range"]),
+        yaw_range=tuple(history_quantizer_cfg["yaw_range"]),
+    )
 
     if "quantizer" not in checkpoint or not isinstance(checkpoint["quantizer"], dict):
         raise RuntimeError("Checkpoint is missing canonical `quantizer` metadata.")
@@ -200,7 +247,16 @@ def load_components(
     model.load_state_dict(checkpoint["model_state_dict"])
     model.config.use_cache = True
     model.eval()
-    return checkpoint, model, processor, registry, quantizer, model_dtype
+    return (
+        checkpoint,
+        model,
+        processor,
+        registry,
+        history_registry,
+        history_quantizer,
+        quantizer,
+        model_dtype,
+    )
 
 
 def require_checkpoint_run_metadata(checkpoint: dict) -> dict:
@@ -210,26 +266,6 @@ def require_checkpoint_run_metadata(checkpoint: dict) -> dict:
     if not isinstance(run_metadata, dict):
         raise RuntimeError("Checkpoint is missing canonical `run_metadata`.")
     return run_metadata
-
-
-def prepare_prompt_inputs(
-    image_paths: list[str],
-    processor,
-    prompt_text: str,
-    device: torch.device,
-) -> dict:
-    images = [Image.open(path).convert("RGB") for path in image_paths]
-    try:
-        prompt_inputs = processor(
-            text=[prompt_text] * len(images),
-            images=images,
-            return_tensors="pt",
-            padding=True,
-        )
-    finally:
-        for image in images:
-            image.close()
-    return move_inputs_to_device(prompt_inputs, device)
 
 
 def normalize_image_format(image_path: str) -> str:
@@ -797,7 +833,16 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
     git_metadata = collect_git_metadata(Path(__file__).resolve().parent)
     gpu_info = collect_gpu_info(device)
 
-    checkpoint, model, processor, registry, quantizer, model_dtype = load_components(args, task_spec)
+    (
+        checkpoint,
+        model,
+        processor,
+        registry,
+        history_registry,
+        history_quantizer,
+        quantizer,
+        model_dtype,
+    ) = load_components(args, task_spec)
     checkpoint_run_metadata = require_checkpoint_run_metadata(checkpoint)
     model.to(device)
     processor_settings = collect_processor_settings(
@@ -832,6 +877,8 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
         "full_action_dim",
         "k",
         "dt",
+        "history_steps",
+        "history_token_count",
         "action_representation",
         "rollout_accel_source",
     ]
@@ -841,7 +888,11 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
             "Checkpoint is missing canonical Stage 1 metadata:\n" + "\n".join(missing_stage1_keys)
         )
     question = stage1_metadata["question"]
-    prompt_text = build_prompt_text(processor, question)
+    prompt_text = build_prompt_text(
+        processor,
+        question,
+        history_token_count=int(stage1_metadata["history_token_count"]),
+    )
     target_dim = int(stage1_metadata["target_dim"])
     full_action_dim = int(stage1_metadata["full_action_dim"])
     k_steps = int(stage1_metadata["k"])
@@ -896,6 +947,8 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
             "full_action_dim": full_action_dim,
             "k": k_steps,
             "dt": dt,
+            "history_steps": int(stage1_metadata["history_steps"]),
+            "history_token_count": int(stage1_metadata["history_token_count"]),
             "dtype": "bf16" if model_dtype == torch.bfloat16 else "fp16",
             "image_min_pixels": args.image_min_pixels or None,
             "image_max_pixels": args.image_max_pixels or None,
@@ -931,6 +984,8 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                     batch,
                     processor,
                     registry,
+                    history_registry,
+                    history_quantizer,
                     quantizer,
                     task_spec,
                     prompt_text,
@@ -951,7 +1006,14 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                 tf_per_sample_total = shifted_mask.sum(dim=1)
                 tf_per_sample_correct = ((shifted_preds == shifted_labels) & shifted_mask).sum(dim=1)
 
-                prompt_inputs = prepare_prompt_inputs(batch["image_path"], processor, prompt_text, device)
+                prompt_inputs = prepare_prompt_inputs_with_history(
+                    batch,
+                    processor,
+                    history_registry,
+                    history_quantizer,
+                    prompt_text,
+                    device,
+                )
                 generated_token_ids = greedy_generate_action_tokens(
                     model=model,
                     prompt_inputs=prompt_inputs,

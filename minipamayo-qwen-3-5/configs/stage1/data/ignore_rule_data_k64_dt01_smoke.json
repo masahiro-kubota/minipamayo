@@ -3,6 +3,7 @@
   "extract": {
     "k": 64,
     "dt": 0.1,
+    "history_steps": 16,
     "sample_stride": 5,
     "max_samples": 128,
     "log_every": 32

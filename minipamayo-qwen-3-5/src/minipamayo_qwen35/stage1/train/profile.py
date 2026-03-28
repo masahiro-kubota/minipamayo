@@ -14,17 +14,16 @@ import time
 from pathlib import Path
 
 import torch
-from PIL import Image
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
+from .. import CanonicalStage1Spec
 from ..data.dataset import Stage1JsonlDataset
-from ..tokenization.quantizer import ActionQuantizer
+from ..prompt import DEFAULT_QUESTION, build_prompt_text
+from ..tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ..tokenization.registry import Stage1TokenRegistry
+from .runner import format_gib, prepare_batch, stage1_collate
 from ...utils.json_config import normalize_required_string_list
 
-DEFAULT_QUESTION = (
-    "Predict the future ego trajectory as action tokens. Output only the action tokens in order."
-)
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 
 # Measured Stage 1 presets on the CARLA-derived smoke dataset in this repo:
@@ -86,38 +85,6 @@ def set_seed(seed: int) -> None:
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-
-def build_prompt_text(processor, question: str) -> str:
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image"},
-                {"type": "text", "text": question},
-            ],
-        }
-    ]
-    return processor.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True,
-    )
-
-
-def move_inputs_to_device(batch: dict, device: torch.device) -> dict:
-    out = {}
-    for key, value in batch.items():
-        if isinstance(value, torch.Tensor):
-            out[key] = value.to(device)
-        else:
-            out[key] = value
-    return out
-
-
-def format_gib(num_bytes: int) -> float:
-    return round(num_bytes / (1024**3), 3)
-
-
 def get_batch(dataset: Stage1JsonlDataset, start_index: int, batch_size: int) -> list[dict]:
     return [dataset[(start_index + i) % len(dataset)] for i in range(batch_size)]
 
@@ -125,11 +92,14 @@ def get_batch(dataset: Stage1JsonlDataset, start_index: int, batch_size: int) ->
 def build_stage1_metadata(
     dataset: Stage1JsonlDataset,
     registry: Stage1TokenRegistry,
-    quantizer: ActionQuantizer,
+    history_registry: HistoryTokenRegistry,
+    history_quantizer: HistoryTrajectoryQuantizer,
+    task_spec: CanonicalStage1Spec,
+    quantizer,
     question: str,
 ) -> dict:
     record = dataset.records[0]
-    required_keys = ["gt_waypoints", "action", "dt"]
+    required_keys = ["gt_waypoints", "action", "dt", "ego_history_xyz", "ego_history_rot"]
     missing_keys = [key for key in required_keys if key not in record]
     if missing_keys:
         raise RuntimeError(
@@ -137,18 +107,22 @@ def build_stage1_metadata(
         )
     gt_waypoints = record["gt_waypoints"]
     action = record["action"]
+    ego_history_xyz = record["ego_history_xyz"]
     return {
         "train_jsonl": [str(path) for path in dataset.jsonl_paths],
         "sample_format": "jsonl+images",
         "k": len(gt_waypoints) if gt_waypoints else len(action) // 2,
-        "action_dim": len(action),
+        "target_dim": int(task_spec.target_from_action_array(torch.tensor(action).numpy()).shape[0]),
+        "full_action_dim": len(action),
         "dt": record["dt"],
-        "n_bins": quantizer.n_bins,
-        "a_range": list(quantizer.a_range),
-        "kappa_range": list(quantizer.kappa_range),
         "action_token_scheme": "add_tokens",
         "token_prefix": registry.token_prefix,
+        "history_token_scheme": "placeholder_replaced_scalar_bins",
+        "history_token_prefix": history_registry.token_prefix,
+        "history_steps": len(ego_history_xyz),
+        "history_token_count": history_quantizer.token_count,
         "question": question,
+        **task_spec.metadata(quantizer),
     }
 
 
@@ -176,10 +150,22 @@ def main() -> None:
         trust_remote_code=True,
     )
 
-    quantizer = ActionQuantizer()
+    task_spec = CanonicalStage1Spec()
+    history_quantizer = HistoryTrajectoryQuantizer()
+    history_registry = HistoryTokenRegistry(n_bins=history_quantizer.n_bins)
+    history_added = history_registry.add_to_tokenizer(processor.tokenizer)
+    quantizer = task_spec.build_quantizer(dataset)
     registry = Stage1TokenRegistry(n_bins=quantizer.n_bins)
     added = registry.add_to_tokenizer(processor.tokenizer)
-    stage1_metadata = build_stage1_metadata(dataset, registry, quantizer, args.question)
+    stage1_metadata = build_stage1_metadata(
+        dataset,
+        registry,
+        history_registry,
+        history_quantizer,
+        task_spec,
+        quantizer,
+        args.question,
+    )
     model.resize_token_embeddings(len(processor.tokenizer))
     model.config.use_cache = False
     if args.gradient_checkpointing:
@@ -193,7 +179,11 @@ def main() -> None:
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     load_elapsed = time.perf_counter() - load_start
 
-    prompt_text = build_prompt_text(processor, args.question)
+    prompt_text = build_prompt_text(
+        processor,
+        args.question,
+        history_token_count=history_quantizer.token_count,
+    )
     total_steps = args.warmup_steps + args.measure_steps
     losses: list[float] = []
     warmup_times: list[float] = []
@@ -204,56 +194,20 @@ def main() -> None:
 
     start_total = time.perf_counter()
     for step in range(total_steps):
-        batch_samples = get_batch(dataset, step * args.batch_size, args.batch_size)
-        images = [Image.open(sample["image_path"]).convert("RGB") for sample in batch_samples]
-        action_token_id_rows = [
-            registry.encode_action_token_ids(sample["action"].numpy(), quantizer)
-            for sample in batch_samples
-        ]
-
-        prompt_inputs = processor(
-            text=[prompt_text] * args.batch_size,
-            images=images,
-            return_tensors="pt",
-            padding=True,
+        batch_samples = stage1_collate(
+            get_batch(dataset, step * args.batch_size, args.batch_size)
         )
-        action_token_ids = torch.tensor(action_token_id_rows, dtype=torch.long)
-
-        prompt_input_ids = prompt_inputs["input_ids"]
-        prompt_attention_mask = prompt_inputs["attention_mask"]
-        batch_size = prompt_input_ids.shape[0]
-        action_len = action_token_ids.shape[1]
-
-        input_ids = torch.cat([prompt_input_ids, action_token_ids], dim=1)
-        attention_mask = torch.cat(
-            [
-                prompt_attention_mask,
-                torch.ones((batch_size, action_len), dtype=prompt_attention_mask.dtype),
-            ],
-            dim=1,
+        full_inputs, labels = prepare_batch(
+            batch_samples,
+            processor,
+            registry,
+            history_registry,
+            history_quantizer,
+            quantizer,
+            task_spec,
+            prompt_text,
+            device,
         )
-        labels = torch.full_like(input_ids, -100)
-        labels[:, -action_len:] = action_token_ids
-
-        full_inputs = {
-            key: value
-            for key, value in prompt_inputs.items()
-            if key not in {"input_ids", "attention_mask"}
-        }
-        full_inputs["input_ids"] = input_ids
-        full_inputs["attention_mask"] = attention_mask
-        if "mm_token_type_ids" in full_inputs:
-            full_inputs["mm_token_type_ids"] = torch.cat(
-                [
-                    full_inputs["mm_token_type_ids"],
-                    torch.zeros(
-                        (batch_size, action_len), dtype=full_inputs["mm_token_type_ids"].dtype
-                    ),
-                ],
-                dim=1,
-            )
-        full_inputs = move_inputs_to_device(full_inputs, device)
-        labels = labels.to(device)
 
         optimizer.zero_grad(set_to_none=True)
         torch.cuda.reset_peak_memory_stats(device)
@@ -295,8 +249,6 @@ def main() -> None:
                 ensure_ascii=False,
             )
         )
-        for image in images:
-            image.close()
 
     train_elapsed = time.perf_counter() - start_total
     total_elapsed = time.perf_counter() - wall_start
@@ -316,6 +268,7 @@ def main() -> None:
         "warmup_steps": args.warmup_steps,
         "measure_steps": args.measure_steps,
         "added_action_tokens": added,
+        "added_history_tokens": history_added,
         "total_vocab_size": len(processor.tokenizer),
         "stage1_metadata": stage1_metadata,
         "warmup_step_times_s": warmup_times,
