@@ -1,0 +1,104 @@
+"""Canonical reasoning-SFT dataset contract.
+
+This dataset is intentionally separate from the old synthetic reasoning path.
+Canonical Stage 2 and Stage 3 expect reasoning supervision to be provided by
+the dataset itself via `reasoning_text`.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import torch
+from torch.utils.data import Dataset
+
+from ...stage1.data.dataset import normalize_jsonl_paths, read_jsonl
+
+
+class ReasoningSftJsonlDataset(Dataset):
+    """Stage 1 JSONL records plus provided reasoning supervision."""
+
+    def __init__(self, jsonl_path: str | Path | list[str] | list[Path], max_samples: int = 0):
+        self.jsonl_paths = normalize_jsonl_paths(
+            jsonl_path,
+            dataset_name="ReasoningSftJsonlDataset",
+        )
+        if len(self.jsonl_paths) == 1:
+            self.jsonl_path = self.jsonl_paths[0]
+
+        records: list[dict] = []
+        record_root_dirs: list[Path] = []
+        for path in self.jsonl_paths:
+            source_records = read_jsonl(path)
+            records.extend(source_records)
+            record_root_dirs.extend([path.parent] * len(source_records))
+
+        if max_samples > 0:
+            records = records[:max_samples]
+            record_root_dirs = record_root_dirs[:max_samples]
+
+        self.records = records
+        self.record_root_dirs = record_root_dirs
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __getitem__(self, index: int) -> dict:
+        record = self.records[index]
+        root_dir = self.record_root_dirs[index]
+        required_keys = [
+            "sample_id",
+            "image_path",
+            "action",
+            "v0",
+            "gt_waypoints",
+            "dt",
+            "reasoning_text",
+        ]
+        missing_keys = [key for key in required_keys if key not in record]
+        if missing_keys:
+            raise RuntimeError(
+                "Reasoning SFT dataset record is missing canonical fields:\n"
+                + "\n".join(missing_keys)
+            )
+
+        sample = {
+            "sample_id": str(record["sample_id"]),
+            "image_path": str(root_dir / str(record["image_path"])),
+            "action": torch.tensor(record["action"], dtype=torch.float32),
+            "v0": torch.tensor(record["v0"], dtype=torch.float32),
+            "gt_waypoints": torch.tensor(record["gt_waypoints"], dtype=torch.float32),
+            "dt": float(record["dt"]),
+            "reasoning_text": str(record["reasoning_text"]),
+        }
+        if "command" in record:
+            sample["command"] = str(record["command"])
+        if "planner_state" in record:
+            sample["planner_state"] = str(record["planner_state"])
+        if "decision_longitudinal" in record:
+            sample["decision_longitudinal"] = str(record["decision_longitudinal"])
+        if "decision_lateral" in record:
+            sample["decision_lateral"] = str(record["decision_lateral"])
+        return sample
+
+
+def reasoning_sft_collate(samples: list[dict]) -> dict:
+    batch = {
+        "sample_id": [sample["sample_id"] for sample in samples],
+        "image_path": [sample["image_path"] for sample in samples],
+        "action": torch.stack([sample["action"] for sample in samples], dim=0),
+        "v0": torch.stack([sample["v0"] for sample in samples], dim=0),
+        "gt_waypoints": torch.stack([sample["gt_waypoints"] for sample in samples], dim=0),
+        "dt": [sample["dt"] for sample in samples],
+        "reasoning_text": [sample["reasoning_text"] for sample in samples],
+    }
+    optional_keys = [
+        "command",
+        "planner_state",
+        "decision_longitudinal",
+        "decision_lateral",
+    ]
+    for key in optional_keys:
+        if any(key in sample for sample in samples):
+            batch[key] = [sample.get(key, "") for sample in samples]
+    return batch
