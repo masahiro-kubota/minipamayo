@@ -2,7 +2,13 @@
 
 Paper-aligned Qwen3.5 stage experiments live here.
 
-Canonical GPU runs in this repo expect CUDA toolkit `12.8` for `flash-attn`.
+Canonical GPU runs in this repo require CUDA toolkit `12.8`.
+
+- Expected toolkit: `nvcc 12.8`
+- Expected env: `CUDA_HOME=/usr/local/cuda-12.8`
+- Expected PyTorch CUDA runtime: `torch.version.cuda == "12.8"`
+- Reason: canonical paths keep `flash-attn` enabled and the repo preflight now rejects mismatched CUDA toolkit setups
+
 Use the repo-local env file before `uv` commands:
 
 ```bash
