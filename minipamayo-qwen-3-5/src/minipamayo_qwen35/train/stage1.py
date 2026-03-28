@@ -27,7 +27,13 @@ from transformers import AutoModelForImageTextToText, AutoProcessor
 from ..data.stage1_dataset import Stage1JsonlDataset
 from ..tokens.action_quantizer import ActionQuantizer
 from ..tokens.token_registry import Stage1TokenRegistry
-from ..utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
+from ..utils.json_config import (
+    load_json_payload,
+    normalize_arg_config,
+    normalize_optional_string_list,
+    normalize_required_string_list,
+    resolve_path_base,
+)
 from ..utils.preflight import collect_gpu_preflight_snapshot, enforce_training_prerequisites
 from ..utils.run_metadata import (
     collect_dataset_view_fingerprint,
@@ -44,10 +50,10 @@ CONFIG_PATH_KEYS = {
     "resume_from_checkpoint",
     "save_dir",
 }
+MULTI_VALUE_CONFIG_KEYS = {"train_jsonl", "val_jsonl"}
 
 DEFAULT_QUESTION = (
-    "Predict the future ego trajectory as action tokens. "
-    "Output only the action tokens in order."
+    "Predict the future ego trajectory as action tokens. Output only the action tokens in order."
 )
 CHECKPOINT_KIND_FULL = "full"
 CHECKPOINT_KIND_MODEL_ONLY = "model_only"
@@ -63,7 +69,9 @@ CHECKPOINT_KIND_MODEL_ONLY = "model_only"
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Train Qwen3.5 Stage 1 with train/val data and checkpoints.")
+    parser = argparse.ArgumentParser(
+        description="Train Qwen3.5 Stage 1 with train/val data and checkpoints."
+    )
     parser.add_argument("--config-json", type=str, default="")
     parser.add_argument("--train-jsonl", type=str, default="")
     parser.add_argument("--val-jsonl", type=str, default="")
@@ -134,6 +142,7 @@ def _load_config_args(config_json: str, parser: argparse.ArgumentParser) -> tupl
         parser,
         exclude_dests={"help", "config_json"},
         path_keys=CONFIG_PATH_KEYS,
+        list_keys=MULTI_VALUE_CONFIG_KEYS,
         base_dir=base_dir,
     )
     return str(config_path), payload, config_args
@@ -147,7 +156,9 @@ def parse_args() -> argparse.Namespace:
     pre_parser.add_argument("--config-json", type=str, required=True)
     pre_args, remaining = pre_parser.parse_known_args()
     if remaining:
-        raise RuntimeError("Stage 1 training accepts only --config-json. Put all settings in the JSON file.")
+        raise RuntimeError(
+            "Stage 1 training accepts only --config-json. Put all settings in the JSON file."
+        )
 
     parser = build_parser()
     config_path, config_payload, config_args = _load_config_args(pre_args.config_json, parser)
@@ -156,15 +167,19 @@ def parse_args() -> argparse.Namespace:
     args.config_json = config_path
     args.config_payload = config_payload
     args.config_args = config_args
-    if not args.train_jsonl:
-        raise RuntimeError("`train_jsonl` must be defined in the config JSON.")
+    args.train_jsonl = normalize_required_string_list(args.train_jsonl, key_name="train_jsonl")
+    args.val_jsonl = normalize_optional_string_list(args.val_jsonl, key_name="val_jsonl")
     if args.early_stopping_patience < 0:
         raise RuntimeError("`early_stopping_patience` must be >= 0.")
     if args.early_stopping_min_delta < 0:
         raise RuntimeError("`early_stopping_min_delta` must be >= 0.")
     if args.image_min_pixels < 0 or args.image_max_pixels < 0:
         raise RuntimeError("`image_min_pixels` and `image_max_pixels` must be >= 0.")
-    if args.image_min_pixels > 0 and args.image_max_pixels > 0 and args.image_min_pixels > args.image_max_pixels:
+    if (
+        args.image_min_pixels > 0
+        and args.image_max_pixels > 0
+        and args.image_min_pixels > args.image_max_pixels
+    ):
         raise RuntimeError("`image_min_pixels` must be <= `image_max_pixels` when both are set.")
     return args
 
@@ -299,7 +314,9 @@ def build_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader 
         val_size = min(val_size, len(train_dataset) - 1)
         train_size = len(train_dataset) - val_size
         generator = torch.Generator().manual_seed(args.seed)
-        train_dataset, val_dataset = random_split(train_dataset, [train_size, val_size], generator=generator)
+        train_dataset, val_dataset = random_split(
+            train_dataset, [train_size, val_size], generator=generator
+        )
     else:
         val_dataset = None
 
@@ -315,7 +332,12 @@ def build_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader 
     if val_dataset is not None:
         val_loader = DataLoader(val_dataset, shuffle=False, drop_last=False, **loader_kwargs)
 
-    return train_loader, val_loader, len(train_dataset), len(val_dataset) if val_dataset is not None else 0
+    return (
+        train_loader,
+        val_loader,
+        len(train_dataset),
+        len(val_dataset) if val_dataset is not None else 0,
+    )
 
 
 def first_record_from_dataset(dataset) -> dict:
@@ -338,12 +360,14 @@ def build_stage1_metadata(
 ) -> dict:
     record = first_record_from_dataset(dataset)
     if "gt_waypoints" not in record or "action" not in record or "dt" not in record:
-        raise RuntimeError("Training record is missing canonical Stage 1 fields: `gt_waypoints`, `action`, or `dt`.")
+        raise RuntimeError(
+            "Training record is missing canonical Stage 1 fields: `gt_waypoints`, `action`, or `dt`."
+        )
     gt_waypoints = record["gt_waypoints"]
     action = record["action"]
     return {
-        "train_jsonl": args.train_jsonl,
-        "val_jsonl": args.val_jsonl or None,
+        "train_jsonl": list(args.train_jsonl),
+        "val_jsonl": list(args.val_jsonl) if args.val_jsonl is not None else None,
         "sample_format": "jsonl+images",
         "k": len(gt_waypoints) if gt_waypoints else len(action) // 2,
         "action_dim": len(action),
@@ -387,20 +411,29 @@ def prepare_batch(
 
         input_ids = torch.cat([prompt_input_ids, action_token_ids], dim=1)
         attention_mask = torch.cat(
-            [prompt_attention_mask, torch.ones((batch_size, action_len), dtype=prompt_attention_mask.dtype)],
+            [
+                prompt_attention_mask,
+                torch.ones((batch_size, action_len), dtype=prompt_attention_mask.dtype),
+            ],
             dim=1,
         )
         labels = torch.full_like(input_ids, -100)
         labels[:, -action_len:] = action_token_ids
 
-        full_inputs = {key: value for key, value in prompt_inputs.items() if key not in {"input_ids", "attention_mask"}}
+        full_inputs = {
+            key: value
+            for key, value in prompt_inputs.items()
+            if key not in {"input_ids", "attention_mask"}
+        }
         full_inputs["input_ids"] = input_ids
         full_inputs["attention_mask"] = attention_mask
         if "mm_token_type_ids" in full_inputs:
             full_inputs["mm_token_type_ids"] = torch.cat(
                 [
                     full_inputs["mm_token_type_ids"],
-                    torch.zeros((batch_size, action_len), dtype=full_inputs["mm_token_type_ids"].dtype),
+                    torch.zeros(
+                        (batch_size, action_len), dtype=full_inputs["mm_token_type_ids"].dtype
+                    ),
                 ],
                 dim=1,
             )
@@ -439,7 +472,9 @@ def evaluate(
     total_tokens = 0
 
     for batch in dataloader:
-        full_inputs, labels = prepare_batch(batch, processor, registry, quantizer, prompt_text, device)
+        full_inputs, labels = prepare_batch(
+            batch, processor, registry, quantizer, prompt_text, device
+        )
         with torch.autocast("cuda", dtype=model_dtype):
             outputs = model(**full_inputs, labels=labels)
         correct, token_total = compute_token_accuracy(outputs.logits, labels)
@@ -560,7 +595,9 @@ def checkpoint_payload(
         "checkpoint_kind": checkpoint_kind,
         "epoch": epoch,
         "global_step": global_step,
-        "model_state_dict": {key: value.detach().cpu() for key, value in model.state_dict().items()},
+        "model_state_dict": {
+            key: value.detach().cpu() for key, value in model.state_dict().items()
+        },
         "args": vars(args),
         "metrics_history": metrics_history,
         "token_registry": {
@@ -670,7 +707,11 @@ def main() -> None:
     wall_start = time.perf_counter()
 
     try:
-        device = torch.device(args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
+        device = torch.device(
+            args.device
+            if args.device != "auto"
+            else ("cuda" if torch.cuda.is_available() else "cpu")
+        )
         if device.type != "cuda":
             raise RuntimeError("This Stage 1 trainer is intended to run on CUDA.")
         gpu_preflight = log_gpu_preflight(device)
@@ -682,7 +723,9 @@ def main() -> None:
         if len(train_loader) == 0:
             raise RuntimeError("Train DataLoader is empty.")
         train_dataset_fingerprint = collect_dataset_view_fingerprint(train_loader.dataset)
-        val_dataset_fingerprint = collect_dataset_view_fingerprint(val_loader.dataset) if val_loader is not None else None
+        val_dataset_fingerprint = (
+            collect_dataset_view_fingerprint(val_loader.dataset) if val_loader is not None else None
+        )
 
         save_dir = Path(args.save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
@@ -710,7 +753,9 @@ def main() -> None:
 
         load_start = time.perf_counter()
         processor_kwargs = build_processor_kwargs(args.image_min_pixels, args.image_max_pixels)
-        processor = AutoProcessor.from_pretrained(processor_source, trust_remote_code=True, **processor_kwargs)
+        processor = AutoProcessor.from_pretrained(
+            processor_source, trust_remote_code=True, **processor_kwargs
+        )
         model_dtype = torch.bfloat16 if args.dtype == "bf16" else torch.float16
         model = AutoModelForImageTextToText.from_pretrained(
             args.model_path,
@@ -743,7 +788,9 @@ def main() -> None:
         processor.save_pretrained(save_dir / "processor")
         load_elapsed = time.perf_counter() - load_start
 
-        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=args.lr, weight_decay=args.weight_decay
+        )
         steps_per_epoch = math.ceil(len(train_loader) / max(args.grad_accum_steps, 1))
         total_update_steps = steps_per_epoch * args.max_epochs
         warmup_steps = int(total_update_steps * args.warmup_ratio)
@@ -771,10 +818,16 @@ def main() -> None:
             "processor": processor_settings,
             "resume": {
                 "requested": bool(args.resume_from_checkpoint),
-                "resume_from_checkpoint": str(resume_checkpoint_path) if resume_checkpoint_path is not None else None,
+                "resume_from_checkpoint": str(resume_checkpoint_path)
+                if resume_checkpoint_path is not None
+                else None,
                 "resumed": resume_checkpoint is not None,
-                "checkpoint_epoch": int(resume_checkpoint["epoch"]) if resume_checkpoint is not None else 0,
-                "checkpoint_global_step": int(resume_checkpoint["global_step"]) if resume_checkpoint is not None else 0,
+                "checkpoint_epoch": int(resume_checkpoint["epoch"])
+                if resume_checkpoint is not None
+                else 0,
+                "checkpoint_global_step": int(resume_checkpoint["global_step"])
+                if resume_checkpoint is not None
+                else 0,
             },
         }
         write_run_config(save_dir, args, run_metadata)
@@ -783,7 +836,9 @@ def main() -> None:
             optimizer.load_state_dict(resume_checkpoint["optimizer_state_dict"])
             scheduler.load_state_dict(resume_checkpoint["scheduler_state_dict"])
             move_optimizer_state_to_device(optimizer, device)
-            initial_eval, metrics_history, global_step, start_epoch = load_resume_state(resume_checkpoint)
+            initial_eval, metrics_history, global_step, start_epoch = load_resume_state(
+                resume_checkpoint
+            )
             best_metric, best_epoch = best_metric_from_history(metrics_history, best_metric_name)
             last_epoch = int(metrics_history[-1]["epoch"]) if metrics_history else 0
             epochs_without_improvement = max(0, last_epoch - best_epoch)
@@ -873,7 +928,9 @@ def main() -> None:
             setup_wandb_payload.update(
                 {
                     "setup/gpu_free_gib": round(gpu_preflight["free_mib"] / 1024, 3),
-                    "setup/gpu_non_self_compute_gib": round(gpu_preflight["non_self_compute_used_mib"] / 1024, 3),
+                    "setup/gpu_non_self_compute_gib": round(
+                        gpu_preflight["non_self_compute_used_mib"] / 1024, 3
+                    ),
                     "setup/gpu_other_used_gib": round(gpu_preflight["other_used_mib"] / 1024, 3),
                 }
             )
@@ -892,7 +949,9 @@ def main() -> None:
 
             optimizer.zero_grad(set_to_none=True)
             for batch_idx, batch in enumerate(train_loader, start=1):
-                full_inputs, labels = prepare_batch(batch, processor, registry, quantizer, prompt_text, device)
+                full_inputs, labels = prepare_batch(
+                    batch, processor, registry, quantizer, prompt_text, device
+                )
 
                 with torch.autocast("cuda", dtype=model_dtype):
                     outputs = model(**full_inputs, labels=labels)
@@ -905,9 +964,8 @@ def main() -> None:
                 train_tokens += token_total
                 train_batches += 1
 
-                should_step = (
-                    batch_idx % args.grad_accum_steps == 0
-                    or batch_idx == len(train_loader)
+                should_step = batch_idx % args.grad_accum_steps == 0 or batch_idx == len(
+                    train_loader
                 )
                 if should_step:
                     if args.max_grad_norm > 0:
@@ -1061,7 +1119,10 @@ def main() -> None:
                 json.dump(metrics_history, f, indent=2, ensure_ascii=False)
             completed_epochs = epoch
 
-            if args.early_stopping_patience > 0 and epochs_without_improvement >= args.early_stopping_patience:
+            if (
+                args.early_stopping_patience > 0
+                and epochs_without_improvement >= args.early_stopping_patience
+            ):
                 stop_reason = "early_stopping"
                 early_stop_payload = {
                     "event": "early_stopping",
@@ -1107,8 +1168,8 @@ def main() -> None:
             "config_args": args.config_args,
             "run_args": vars(args),
             "run_config_path": str(save_dir / "run_config.json"),
-            "train_jsonl": args.train_jsonl,
-            "val_jsonl": args.val_jsonl or None,
+            "train_jsonl": list(args.train_jsonl),
+            "val_jsonl": list(args.val_jsonl) if args.val_jsonl is not None else None,
             "train_size": train_size,
             "val_size": val_size,
             "model_path": args.model_path,
@@ -1128,7 +1189,9 @@ def main() -> None:
             "best_metric_name": best_metric_name,
             "best_metric": best_metric,
             "best_epoch": best_epoch,
-            "resume_from_checkpoint": str(resume_checkpoint_path) if resume_checkpoint_path is not None else None,
+            "resume_from_checkpoint": str(resume_checkpoint_path)
+            if resume_checkpoint_path is not None
+            else None,
             "resumed": resume_checkpoint is not None,
             "added_action_tokens": added,
             "total_vocab_size": len(processor.tokenizer),

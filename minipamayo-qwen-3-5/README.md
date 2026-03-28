@@ -37,7 +37,8 @@ The data, train, and eval entrypoints intentionally reject CLI overrides so the 
 
 Stage 1 train configs now support:
 
-- `train_jsonl` as the required training split input and `val_jsonl` as the optional validation split input
+- `train_jsonl` as one or more required training split JSONLs and `val_jsonl` as zero or more optional validation split JSONLs
+  Each value may be either a single path string or a JSON array of path strings.
 - `resume_from_checkpoint` for epoch-level resume from `last.pt`
 - `early_stopping_patience` and `early_stopping_min_delta`
 - `image_min_pixels` and `image_max_pixels` to control the Qwen processor image-token budget

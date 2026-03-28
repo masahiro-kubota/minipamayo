@@ -1,7 +1,11 @@
 {
   "path_base": "project_root",
   "args": {
-    "train_jsonl": "datasets/processed/stage1/ignore_rule_data/20260327_231917_town01_perimeter_cw_expert_eval_0025824a9fa8/samples.jsonl",
+    "train_jsonl": [
+      "datasets/processed/stage1/ignore_rule_data/20260327_231917_town01_intersection_weave_ccw_expert_eval_0025824a9fa8/samples.jsonl",
+      "datasets/processed/stage1/ignore_rule_data/20260327_231917_town01_intersection_weave_cw_expert_eval_0025824a9fa8/samples.jsonl",
+      "datasets/processed/stage1/ignore_rule_data/20260327_231917_town01_perimeter_cw_expert_eval_0025824a9fa8/samples.jsonl"
+    ],
     "save_dir": "checkpoints/stage1_ignore_rule_12gb_longrun",
     "batch_size": 1,
     "grad_accum_steps": 1,

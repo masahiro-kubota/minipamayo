@@ -20,11 +20,10 @@ from transformers import AutoModelForImageTextToText, AutoProcessor
 from ..data.stage1_dataset import Stage1JsonlDataset
 from ..tokens.action_quantizer import ActionQuantizer
 from ..tokens.token_registry import Stage1TokenRegistry
-
+from ..utils.json_config import normalize_required_string_list
 
 DEFAULT_QUESTION = (
-    "Predict the future ego trajectory as action tokens. "
-    "Output only the action tokens in order."
+    "Predict the future ego trajectory as action tokens. Output only the action tokens in order."
 )
 
 # Measured Stage 1 presets on the CARLA-derived smoke dataset in this repo:
@@ -40,7 +39,7 @@ DEFAULT_QUESTION = (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a short Qwen3.5 Stage 1 training trial.")
-    parser.add_argument("--train-jsonl", type=str, required=True)
+    parser.add_argument("--train-jsonl", type=str, nargs="+", required=True)
     parser.add_argument(
         "--model-path",
         type=str,
@@ -75,7 +74,9 @@ def parse_args() -> argparse.Namespace:
         help="Disable gradient checkpointing.",
     )
     parser.set_defaults(gradient_checkpointing=True)
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.train_jsonl = normalize_required_string_list(args.train_jsonl, key_name="train_jsonl")
+    return args
 
 
 def set_seed(seed: int) -> None:
@@ -127,14 +128,20 @@ def build_stage1_metadata(
     question: str,
 ) -> dict:
     record = dataset.records[0]
-    gt_waypoints = record.get("gt_waypoints", [])
-    action = record.get("action", [])
+    required_keys = ["gt_waypoints", "action", "dt"]
+    missing_keys = [key for key in required_keys if key not in record]
+    if missing_keys:
+        raise RuntimeError(
+            "Stage 1 profiling record is missing canonical fields:\n" + "\n".join(missing_keys)
+        )
+    gt_waypoints = record["gt_waypoints"]
+    action = record["action"]
     return {
-        "train_jsonl": str(dataset.jsonl_path),
+        "train_jsonl": [str(path) for path in dataset.jsonl_paths],
         "sample_format": "jsonl+images",
         "k": len(gt_waypoints) if gt_waypoints else len(action) // 2,
         "action_dim": len(action),
-        "dt": record.get("dt"),
+        "dt": record["dt"],
         "n_bins": quantizer.n_bins,
         "a_range": list(quantizer.a_range),
         "kappa_range": list(quantizer.kappa_range),
@@ -149,7 +156,9 @@ def main() -> None:
     set_seed(args.seed)
     wall_start = time.perf_counter()
 
-    device = torch.device(args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
+    device = torch.device(
+        args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
+    )
     if device.type != "cuda":
         raise RuntimeError("This Stage 1 probe is intended to be run on CUDA to measure VRAM.")
 
@@ -216,20 +225,29 @@ def main() -> None:
 
         input_ids = torch.cat([prompt_input_ids, action_token_ids], dim=1)
         attention_mask = torch.cat(
-            [prompt_attention_mask, torch.ones((batch_size, action_len), dtype=prompt_attention_mask.dtype)],
+            [
+                prompt_attention_mask,
+                torch.ones((batch_size, action_len), dtype=prompt_attention_mask.dtype),
+            ],
             dim=1,
         )
         labels = torch.full_like(input_ids, -100)
         labels[:, -action_len:] = action_token_ids
 
-        full_inputs = {key: value for key, value in prompt_inputs.items() if key not in {"input_ids", "attention_mask"}}
+        full_inputs = {
+            key: value
+            for key, value in prompt_inputs.items()
+            if key not in {"input_ids", "attention_mask"}
+        }
         full_inputs["input_ids"] = input_ids
         full_inputs["attention_mask"] = attention_mask
         if "mm_token_type_ids" in full_inputs:
             full_inputs["mm_token_type_ids"] = torch.cat(
                 [
                     full_inputs["mm_token_type_ids"],
-                    torch.zeros((batch_size, action_len), dtype=full_inputs["mm_token_type_ids"].dtype),
+                    torch.zeros(
+                        (batch_size, action_len), dtype=full_inputs["mm_token_type_ids"].dtype
+                    ),
                 ],
                 dim=1,
             )
@@ -283,7 +301,7 @@ def main() -> None:
     total_elapsed = time.perf_counter() - wall_start
     summary = {
         "model_path": args.model_path,
-        "train_jsonl": args.train_jsonl,
+        "train_jsonl": list(args.train_jsonl),
         "num_optimizer_steps": total_steps,
         "num_samples_seen": total_steps * args.batch_size,
         "dataset_size": len(dataset),

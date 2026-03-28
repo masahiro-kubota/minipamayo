@@ -5,12 +5,15 @@ from __future__ import annotations
 import hashlib
 import subprocess
 from pathlib import Path
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch.utils.data import Subset
 
 from .preflight import resolve_git_repo_root
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 def _run_git(args: list[str], cwd: str | Path | None = None) -> str:
@@ -60,7 +63,7 @@ def _count_non_empty_lines(path: str | Path) -> int:
 def _sha256_int_sequence(values: Iterable[int]) -> str:
     digest = hashlib.sha256()
     for value in values:
-        digest.update(f"{int(value)}\n".encode("utf-8"))
+        digest.update(f"{int(value)}\n".encode())
     return digest.hexdigest()
 
 
@@ -93,25 +96,46 @@ def _jsonl_source_fingerprint(jsonl_path: str | Path) -> dict[str, Any]:
     return fingerprint
 
 
+def _dataset_source_fingerprints(dataset) -> dict[str, Any]:
+    if hasattr(dataset, "jsonl_paths"):
+        jsonl_paths = dataset.jsonl_paths
+        if not isinstance(jsonl_paths, list) or not jsonl_paths:
+            raise RuntimeError("Dataset `jsonl_paths` must be a non-empty list.")
+        source_fingerprints = [_jsonl_source_fingerprint(path) for path in jsonl_paths]
+        if len(source_fingerprints) == 1:
+            return {
+                "num_sources": 1,
+                "source": source_fingerprints[0],
+            }
+        return {
+            "num_sources": len(source_fingerprints),
+            "sources": source_fingerprints,
+        }
+
+    if hasattr(dataset, "jsonl_path"):
+        return {
+            "num_sources": 1,
+            "source": _jsonl_source_fingerprint(dataset.jsonl_path),
+        }
+
+    raise RuntimeError("Dataset does not expose canonical JSONL source paths for fingerprinting.")
+
+
 def collect_dataset_view_fingerprint(dataset) -> dict[str, Any]:
     if isinstance(dataset, Subset):
         base_dataset = dataset.dataset
-        if not hasattr(base_dataset, "jsonl_path"):
-            raise RuntimeError("Subset base dataset does not expose `jsonl_path` for fingerprinting.")
         indices = list(dataset.indices)
         return {
             "view_type": "subset",
             "selected_count": len(dataset),
             "indices_sha256": _sha256_int_sequence(indices),
-            "source": _jsonl_source_fingerprint(base_dataset.jsonl_path),
+            **_dataset_source_fingerprints(base_dataset),
         }
 
-    if not hasattr(dataset, "jsonl_path"):
-        raise RuntimeError("Dataset does not expose `jsonl_path` for fingerprinting.")
     return {
         "view_type": "dataset",
         "selected_count": len(dataset),
-        "source": _jsonl_source_fingerprint(dataset.jsonl_path),
+        **_dataset_source_fingerprints(dataset),
     }
 
 
@@ -120,7 +144,9 @@ def collect_gpu_info(device: torch.device) -> dict[str, Any]:
         "device": str(device),
         "torch_version": torch.__version__,
         "cuda_version": torch.version.cuda,
-        "cudnn_version": torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else None,
+        "cudnn_version": torch.backends.cudnn.version()
+        if torch.backends.cudnn.is_available()
+        else None,
     }
     if device.type != "cuda":
         return info

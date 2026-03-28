@@ -20,22 +20,57 @@ def read_jsonl(path: str | Path) -> list[dict]:
     return records
 
 
+def normalize_jsonl_paths(
+    jsonl_path: str | Path | list[str] | list[Path],
+    *,
+    dataset_name: str,
+) -> list[Path]:
+    if isinstance(jsonl_path, str | Path):
+        raw_paths = [Path(jsonl_path)]
+    elif isinstance(jsonl_path, list) and jsonl_path:
+        raw_paths = [Path(path) for path in jsonl_path]
+    else:
+        raise RuntimeError(f"{dataset_name} requires one or more JSONL paths.")
+
+    normalized_paths: list[Path] = []
+    for path in raw_paths:
+        resolved_path = path.resolve()
+        if not resolved_path.exists():
+            raise RuntimeError(f"{dataset_name} JSONL does not exist: {resolved_path}")
+        if not resolved_path.is_file():
+            raise RuntimeError(f"{dataset_name} JSONL path must be a file: {resolved_path}")
+        normalized_paths.append(resolved_path)
+    return normalized_paths
+
+
 class Stage1JsonlDataset(Dataset):
     """Returns metadata and labels; image decoding is done at training time."""
 
-    def __init__(self, jsonl_path: str | Path, max_samples: int = 0):
-        records = read_jsonl(jsonl_path)
+    def __init__(self, jsonl_path: str | Path | list[str] | list[Path], max_samples: int = 0):
+        self.jsonl_paths = normalize_jsonl_paths(jsonl_path, dataset_name="Stage1JsonlDataset")
+        if len(self.jsonl_paths) == 1:
+            self.jsonl_path = self.jsonl_paths[0]
+
+        records: list[dict] = []
+        record_root_dirs: list[Path] = []
+        for path in self.jsonl_paths:
+            source_records = read_jsonl(path)
+            records.extend(source_records)
+            record_root_dirs.extend([path.parent] * len(source_records))
+
         if max_samples > 0:
             records = records[:max_samples]
-        self.jsonl_path = Path(jsonl_path)
-        self.root_dir = self.jsonl_path.parent
+            record_root_dirs = record_root_dirs[:max_samples]
+
         self.records = records
+        self.record_root_dirs = record_root_dirs
 
     def __len__(self) -> int:
         return len(self.records)
 
     def __getitem__(self, index: int) -> dict:
         record = self.records[index]
+        root_dir = self.record_root_dirs[index]
         required_keys = ["sample_id", "image_path", "action", "v0", "gt_waypoints", "command"]
         missing_keys = [key for key in required_keys if key not in record]
         if missing_keys:
@@ -44,7 +79,7 @@ class Stage1JsonlDataset(Dataset):
             )
         return {
             "sample_id": record["sample_id"],
-            "image_path": str(self.root_dir / record["image_path"]),
+            "image_path": str(root_dir / record["image_path"]),
             "action": torch.tensor(record["action"], dtype=torch.float32),
             "v0": torch.tensor(record["v0"], dtype=torch.float32),
             "gt_waypoints": torch.tensor(record["gt_waypoints"], dtype=torch.float32),
