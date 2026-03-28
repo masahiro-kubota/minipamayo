@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 import sys
@@ -12,7 +13,6 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, random_split
 
-from ....models.trajectory_decoder import TrajectoryDecoder, cfm_loss
 from ....stage1.data.dataset import Stage1JsonlDataset
 from ....stage1.train import (
     format_gib,
@@ -47,12 +47,13 @@ from ....utils.run_metadata import (
 from ..common import (
     build_stage1b_metadata,
     compute_action_stats,
-    extract_last_layer_kv_cache,
+    extract_prompt_cache,
     freeze_module,
     infer_prompt_text,
     load_stage1_condition_components,
     prepare_condition_inputs,
 )
+from ..model import Stage1ActionExpert, cfm_loss
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {
@@ -92,11 +93,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--image-min-pixels", type=int, default=CANONICAL_IMAGE_MIN_PIXELS)
     parser.add_argument("--image-max-pixels", type=int, default=CANONICAL_IMAGE_MAX_PIXELS)
-    parser.add_argument("--decoder-hidden-size", type=int, default=512)
+    parser.add_argument("--decoder-hidden-size", type=int, default=0)
     parser.add_argument("--decoder-num-layers", type=int, default=6)
-    parser.add_argument("--decoder-num-attention-heads", type=int, default=8)
+    parser.add_argument("--decoder-num-attention-heads", type=int, default=0)
     parser.add_argument("--decoder-intermediate-size", type=int, default=2048)
     parser.add_argument("--decoder-attention-dropout", type=float, default=0.0)
+    parser.add_argument("--expert-non-causal-attention", type=bool, default=True)
     parser.add_argument("--num-fourier-feats", type=int, default=20)
     parser.add_argument("--fourier-max-freq", type=float, default=100.0)
     parser.add_argument("--mlp-hidden-size", type=int, default=1024)
@@ -160,10 +162,14 @@ def parse_args() -> argparse.Namespace:
     if args.early_stopping_min_delta < 0:
         raise RuntimeError("`early_stopping_min_delta` must be >= 0.")
     validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
-    if args.decoder_hidden_size % args.decoder_num_attention_heads != 0:
-        raise RuntimeError(
-            "`decoder_hidden_size` must be divisible by `decoder_num_attention_heads`."
-        )
+    if args.decoder_hidden_size < 0:
+        raise RuntimeError("`decoder_hidden_size` must be >= 0.")
+    if args.decoder_num_layers <= 0:
+        raise RuntimeError("`decoder_num_layers` must be > 0.")
+    if args.decoder_num_attention_heads < 0:
+        raise RuntimeError("`decoder_num_attention_heads` must be >= 0.")
+    if args.decoder_intermediate_size <= 0:
+        raise RuntimeError("`decoder_intermediate_size` must be > 0.")
     return args
 
 
@@ -206,9 +212,55 @@ def build_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader 
     )
 
 
+def resolve_expert_text_config(model, args: argparse.Namespace) -> dict:
+    if not hasattr(model.config, "text_config"):
+        raise RuntimeError("Frozen Stage 1A model is missing `text_config` for Stage 1B.")
+    base_text_config = copy.deepcopy(model.config.text_config.to_dict())
+    base_hidden_size = int(base_text_config["hidden_size"])
+    base_num_heads = int(base_text_config["num_attention_heads"])
+    base_num_layers = int(base_text_config["num_hidden_layers"])
+
+    requested_hidden_size = int(args.decoder_hidden_size)
+    requested_num_heads = int(args.decoder_num_attention_heads)
+    requested_num_layers = int(args.decoder_num_layers)
+    requested_intermediate_size = int(args.decoder_intermediate_size)
+
+    if requested_hidden_size not in {0, base_hidden_size}:
+        raise RuntimeError(
+            "Canonical Stage 1B expert must preserve the Stage 1A text hidden size "
+            "to remain prompt-cache compatible.\n"
+            f"stage1_hidden_size={base_hidden_size}\n"
+            f"requested_decoder_hidden_size={requested_hidden_size}"
+        )
+    if requested_num_heads not in {0, base_num_heads}:
+        raise RuntimeError(
+            "Canonical Stage 1B expert must preserve the Stage 1A attention head count "
+            "to remain prompt-cache compatible.\n"
+            f"stage1_num_attention_heads={base_num_heads}\n"
+            f"requested_decoder_num_attention_heads={requested_num_heads}"
+        )
+    if requested_num_layers > base_num_layers:
+        raise RuntimeError(
+            "Canonical Stage 1B expert cannot use more layers than the frozen Stage 1A prompt cache.\n"
+            f"stage1_num_hidden_layers={base_num_layers}\n"
+            f"requested_decoder_num_layers={requested_num_layers}"
+        )
+
+    base_text_config["hidden_size"] = base_hidden_size
+    base_text_config["num_attention_heads"] = base_num_heads
+    base_text_config["num_hidden_layers"] = requested_num_layers
+    base_text_config["intermediate_size"] = requested_intermediate_size
+    if "layer_types" in base_text_config and isinstance(base_text_config["layer_types"], list):
+        base_text_config["layer_types"] = list(
+            base_text_config["layer_types"][:requested_num_layers]
+        )
+    base_text_config["use_cache"] = True
+    return base_text_config
+
+
 @torch.no_grad()
 def evaluate(
-    decoder: TrajectoryDecoder,
+    expert: Stage1ActionExpert,
     model,
     dataloader: DataLoader,
     processor,
@@ -217,7 +269,7 @@ def evaluate(
     prompt_text: str,
     device: torch.device,
 ) -> dict:
-    decoder.eval()
+    expert.eval()
     total_loss = 0.0
     total_batches = 0
     for batch in dataloader:
@@ -230,13 +282,13 @@ def evaluate(
             prompt_text=prompt_text,
             device=device,
         )
-        condition_context, condition_mask = extract_last_layer_kv_cache(model, prompt_inputs)
+        prompt_cache, prompt_attention_mask = extract_prompt_cache(model, prompt_inputs)
         gt_action = batch["action"].to(device=device, dtype=torch.float32)
         loss = cfm_loss(
-            decoder=decoder,
+            expert=expert,
             gt_action=gt_action,
-            condition_hidden_states=condition_context,
-            condition_mask=condition_mask,
+            prompt_cache=prompt_cache,
+            prompt_attention_mask=prompt_attention_mask,
         )
         total_loss += float(loss.detach().cpu())
         total_batches += 1
@@ -246,7 +298,7 @@ def evaluate(
 def save_checkpoint(
     save_path: Path,
     *,
-    decoder: TrajectoryDecoder,
+    expert: Stage1ActionExpert,
     optimizer,
     scheduler,
     epoch: int,
@@ -261,12 +313,12 @@ def save_checkpoint(
             "epoch": epoch,
             "global_step": global_step,
             "args": vars(args),
-            "decoder_state_dict": {
-                key: value.detach().cpu() for key, value in decoder.state_dict().items()
+            "expert_state_dict": {
+                key: value.detach().cpu() for key, value in expert.state_dict().items()
             },
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
-            "decoder_config": vars(decoder.export_config()),
+            "expert_config": vars(expert.export_config()),
             "action_stats": action_stats,
             "stage1b_metadata": stage1b_metadata,
         },
@@ -288,8 +340,6 @@ def main() -> None:
     last_path = save_dir / "last.pt"
     summary_path = save_dir / "summary.json"
 
-    train_loader = None
-    val_loader = None
     history: list[dict] = []
     best_val_loss = math.inf
     best_epoch = 0
@@ -322,28 +372,14 @@ def main() -> None:
         freeze_module(model)
 
         prompt_text = infer_prompt_text(stage1_checkpoint, processor)
-
         first_batch = next(iter(train_loader))
-        first_prompt_inputs = prepare_condition_inputs(
-            model=model,
-            batch=first_batch,
-            processor=processor,
-            history_registry=history_registry,
-            history_quantizer=history_quantizer,
-            prompt_text=prompt_text,
-            device=device,
-        )
-        condition_context, _condition_mask = extract_last_layer_kv_cache(model, first_prompt_inputs)
-        condition_dim = int(condition_context.shape[-1])
         action_stats = compute_action_stats(train_loader.dataset)
-        decoder = TrajectoryDecoder(
+        expert_text_config = resolve_expert_text_config(model, args)
+        expert = Stage1ActionExpert(
             k=int(first_batch["action"].shape[-1] // 2),
-            condition_dim=condition_dim,
-            hidden_size=args.decoder_hidden_size,
-            num_layers=args.decoder_num_layers,
-            num_attention_heads=args.decoder_num_attention_heads,
-            intermediate_size=args.decoder_intermediate_size,
-            attention_dropout=args.decoder_attention_dropout,
+            action_dims=(int(first_batch["action"].shape[-1] // 2), 2),
+            expert_text_config=expert_text_config,
+            expert_non_causal_attention=bool(args.expert_non_causal_attention),
             num_fourier_feats=args.num_fourier_feats,
             fourier_max_freq=args.fourier_max_freq,
             mlp_hidden_size=args.mlp_hidden_size,
@@ -352,8 +388,12 @@ def main() -> None:
             accel_std=action_stats["accel_std"],
             kappa_mean=action_stats["kappa_mean"],
             kappa_std=action_stats["kappa_std"],
-        ).to(device)
-        stage1b_metadata = build_stage1b_metadata(train_loader.dataset, args, condition_dim)
+        ).to(device=device, dtype=next(model.parameters()).dtype)
+        stage1b_metadata = build_stage1b_metadata(
+            train_loader.dataset,
+            args,
+            vars(expert.export_config()),
+        )
 
         total_optimizer_steps = max(
             1,
@@ -361,7 +401,7 @@ def main() -> None:
         )
         warmup_steps = int(round(total_optimizer_steps * args.warmup_ratio))
         optimizer = torch.optim.AdamW(
-            decoder.parameters(), lr=args.lr, weight_decay=args.weight_decay
+            expert.parameters(), lr=args.lr, weight_decay=args.weight_decay
         )
 
         def lr_lambda(current_step: int) -> float:
@@ -394,7 +434,8 @@ def main() -> None:
             {
                 "setup/train_size": train_size,
                 "setup/val_size": val_size,
-                "setup/condition_dim": condition_dim,
+                "setup/expert_layers": int(expert.expert_num_layers),
+                "setup/expert_hidden_size": int(expert.expert.config.hidden_size),
                 "setup/history_steps": int(stage1_checkpoint["stage1_metadata"]["history_steps"]),
             },
             step=0,
@@ -402,7 +443,7 @@ def main() -> None:
 
         for epoch in range(1, args.max_epochs + 1):
             epoch_start = time.time()
-            decoder.train()
+            expert.train()
             optimizer.zero_grad(set_to_none=True)
             train_loss_total = 0.0
             batch_count = 0
@@ -419,22 +460,20 @@ def main() -> None:
                     device=device,
                 )
                 with torch.no_grad():
-                    condition_context, condition_mask = extract_last_layer_kv_cache(
-                        model, prompt_inputs
-                    )
+                    prompt_cache, prompt_attention_mask = extract_prompt_cache(model, prompt_inputs)
                 gt_action = batch["action"].to(device=device, dtype=torch.float32)
                 loss = cfm_loss(
-                    decoder=decoder,
+                    expert=expert,
                     gt_action=gt_action,
-                    condition_hidden_states=condition_context,
-                    condition_mask=condition_mask,
+                    prompt_cache=prompt_cache,
+                    prompt_attention_mask=prompt_attention_mask,
                 )
                 (loss / float(args.grad_accum_steps)).backward()
                 train_loss_total += float(loss.detach().cpu())
                 batch_count += 1
 
                 if batch_idx % args.grad_accum_steps == 0 or batch_idx == len(train_loader):
-                    torch.nn.utils.clip_grad_norm_(decoder.parameters(), args.max_grad_norm)
+                    torch.nn.utils.clip_grad_norm_(expert.parameters(), args.max_grad_norm)
                     optimizer.step()
                     scheduler.step()
                     optimizer.zero_grad(set_to_none=True)
@@ -469,7 +508,7 @@ def main() -> None:
 
             if val_loader is not None:
                 val_metrics = evaluate(
-                    decoder=decoder,
+                    expert=expert,
                     model=model,
                     dataloader=val_loader,
                     processor=processor,
@@ -488,7 +527,7 @@ def main() -> None:
                     stale_epochs = 0
                     save_checkpoint(
                         best_path,
-                        decoder=decoder,
+                        expert=expert,
                         optimizer=optimizer,
                         scheduler=scheduler,
                         epoch=epoch,
@@ -502,7 +541,7 @@ def main() -> None:
             else:
                 save_checkpoint(
                     best_path,
-                    decoder=decoder,
+                    expert=expert,
                     optimizer=optimizer,
                     scheduler=scheduler,
                     epoch=epoch,
@@ -514,7 +553,7 @@ def main() -> None:
 
             save_checkpoint(
                 last_path,
-                decoder=decoder,
+                expert=expert,
                 optimizer=optimizer,
                 scheduler=scheduler,
                 epoch=epoch,
@@ -531,13 +570,13 @@ def main() -> None:
             maybe_wandb_log(
                 wandb_run,
                 {
-                    f"train/{k}"
-                    if k.startswith("train_")
-                    else f"val/{k[4:]}"
-                    if k.startswith("val_")
-                    else k: v
-                    for k, v in epoch_log.items()
-                    if k != "epoch"
+                    f"train/{key}"
+                    if key.startswith("train_")
+                    else f"val/{key[4:]}"
+                    if key.startswith("val_")
+                    else key: value
+                    for key, value in epoch_log.items()
+                    if key != "epoch"
                 },
                 step=global_step,
             )
@@ -556,7 +595,7 @@ def main() -> None:
             "peak_allocated_gib": format_gib(peak_allocated_bytes),
             "peak_reserved_gib": format_gib(peak_reserved_bytes),
             "stage1_checkpoint": args.stage1_checkpoint,
-            "condition_source": "last_layer_past_key_value",
+            "condition_source": "prompt_past_key_values",
         }
         summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
         if wandb_run is not None:

@@ -9,7 +9,6 @@ from pathlib import Path
 
 import torch
 
-from ....models.trajectory_decoder import cfm_sample, load_decoder_from_checkpoint
 from ....stage1.data.dataset import Stage1JsonlDataset
 from ....utils.dynamics import forward_dynamics_batch
 from ....utils.image_budget import (
@@ -19,12 +18,13 @@ from ....utils.image_budget import (
 )
 from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
 from ..common import (
-    extract_last_layer_kv_cache,
+    extract_prompt_cache,
     freeze_module,
     infer_prompt_text,
     load_stage1_condition_components,
     prepare_condition_inputs,
 )
+from ..model import cfm_sample, load_action_expert_from_checkpoint
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {"checkpoint", "stage1_checkpoint", "sample_jsonl", "output_json"}
@@ -135,17 +135,17 @@ def main() -> None:
         prompt_text=prompt_text,
         device=device,
     )
-    condition_context, condition_mask = extract_last_layer_kv_cache(model, prompt_inputs)
-    decoder, checkpoint = load_decoder_from_checkpoint(args.checkpoint, device)
+    prompt_cache, prompt_attention_mask = extract_prompt_cache(model, prompt_inputs)
+    expert, checkpoint = load_action_expert_from_checkpoint(args.checkpoint, device)
     if "stage1b_metadata" not in checkpoint or not isinstance(checkpoint["stage1b_metadata"], dict):
         raise RuntimeError("Stage 1B checkpoint is missing canonical `stage1b_metadata`.")
     stage1b_metadata = checkpoint["stage1b_metadata"]
     if "dt" not in stage1b_metadata:
         raise RuntimeError("Stage 1B checkpoint metadata is missing canonical `dt`.")
     pred_action = cfm_sample(
-        decoder=decoder,
-        condition_hidden_states=condition_context,
-        condition_mask=condition_mask,
+        expert=expert,
+        prompt_cache=prompt_cache,
+        prompt_attention_mask=prompt_attention_mask,
         n_steps=args.flow_steps,
     ).reshape(1, -1, 2)
     dt = float(stage1b_metadata["dt"])

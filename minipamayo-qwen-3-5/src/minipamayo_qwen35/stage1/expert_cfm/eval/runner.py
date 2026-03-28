@@ -10,7 +10,6 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 
-from ....models.trajectory_decoder import cfm_loss, cfm_sample, load_decoder_from_checkpoint
 from ....stage1.data.dataset import Stage1JsonlDataset
 from ....stage1.train import stage1_collate
 from ....utils.dynamics import forward_dynamics_batch
@@ -26,12 +25,13 @@ from ....utils.json_config import (
     resolve_path_base,
 )
 from ..common import (
-    extract_last_layer_kv_cache,
+    extract_prompt_cache,
     freeze_module,
     infer_prompt_text,
     load_stage1_condition_components,
     prepare_condition_inputs,
 )
+from ..model import cfm_loss, cfm_sample, load_action_expert_from_checkpoint
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {"checkpoint", "stage1_checkpoint", "eval_jsonl", "output_json"}
@@ -132,12 +132,10 @@ def main() -> None:
     ) = load_stage1_condition_components(args)
     freeze_module(model)
     prompt_text = infer_prompt_text(stage1_checkpoint, processor)
-    decoder, decoder_checkpoint = load_decoder_from_checkpoint(args.checkpoint, device)
-    if "stage1b_metadata" not in decoder_checkpoint or not isinstance(
-        decoder_checkpoint["stage1b_metadata"], dict
-    ):
+    expert, checkpoint = load_action_expert_from_checkpoint(args.checkpoint, device)
+    if "stage1b_metadata" not in checkpoint or not isinstance(checkpoint["stage1b_metadata"], dict):
         raise RuntimeError("Stage 1B checkpoint is missing canonical `stage1b_metadata`.")
-    stage1b_metadata = decoder_checkpoint["stage1b_metadata"]
+    stage1b_metadata = checkpoint["stage1b_metadata"]
     required_stage1b_keys = ["dt", "condition_source"]
     missing_stage1b_keys = [key for key in required_stage1b_keys if key not in stage1b_metadata]
     if missing_stage1b_keys:
@@ -164,24 +162,27 @@ def main() -> None:
                 prompt_text=prompt_text,
                 device=device,
             )
-            condition_context, condition_mask = extract_last_layer_kv_cache(model, prompt_inputs)
+            prompt_cache, prompt_attention_mask = extract_prompt_cache(model, prompt_inputs)
             gt_action = batch["action"].to(device=device, dtype=torch.float32)
             loss = cfm_loss(
-                decoder=decoder,
+                expert=expert,
                 gt_action=gt_action,
-                condition_hidden_states=condition_context,
-                condition_mask=condition_mask,
+                prompt_cache=prompt_cache,
+                prompt_attention_mask=prompt_attention_mask,
             )
             pred_action = cfm_sample(
-                decoder=decoder,
-                condition_hidden_states=condition_context,
-                condition_mask=condition_mask,
+                expert=expert,
+                prompt_cache=prompt_cache,
+                prompt_attention_mask=prompt_attention_mask,
                 n_steps=args.flow_steps,
             ).reshape(gt_action.shape[0], -1, 2)
             gt_waypoints = batch["gt_waypoints"].to(device=device, dtype=torch.float32)
             v0 = batch["v0"].to(device=device, dtype=torch.float32)
             pred_waypoints = forward_dynamics_batch(
-                pred_action[:, :, 0], pred_action[:, :, 1], v0, dt=dt
+                pred_action[:, :, 0],
+                pred_action[:, :, 1],
+                v0,
+                dt=dt,
             )
             displacement = torch.norm(pred_waypoints - gt_waypoints, dim=2)
 
