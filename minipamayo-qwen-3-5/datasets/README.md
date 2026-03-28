@@ -40,7 +40,7 @@ Usage:
 Batch extraction example:
 
 ```bash
-uv run python -m minipamayo_qwen35.data.extract_stage1 \
+uv run python -m minipamayo_qwen35.data.stage1 \
   --config-json configs/data/stage1/ignore_rule_data.json
 ```
 

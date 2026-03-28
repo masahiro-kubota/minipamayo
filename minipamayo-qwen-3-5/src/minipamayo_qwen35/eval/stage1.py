@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -35,11 +36,23 @@ from ..train.stage1 import (
     stage1_collate,
 )
 from ..utils.dynamics import forward_dynamics_batch
+from ..utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+CONFIG_PATH_KEYS = {
+    "checkpoint",
+    "dataset_jsonl",
+    "processor_dir",
+    "model_path",
+    "output_json",
+    "output_mcap",
+}
 
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Evaluate Qwen3.5 Stage 1 checkpoints.")
-    parser.add_argument("--checkpoint", type=str, required=True)
+    parser.add_argument("--config-json", type=str, default="")
+    parser.add_argument("--checkpoint", type=str, default="")
     parser.add_argument("--dataset-jsonl", type=str, default="")
     parser.add_argument("--processor-dir", type=str, default="")
     parser.add_argument("--model-path", type=str, default="")
@@ -51,7 +64,54 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dtype", type=str, default="", choices=["", "bf16", "fp16"])
     parser.add_argument("--output-json", type=str, default="")
     parser.add_argument("--output-mcap", type=str, default="")
-    return parser.parse_args()
+    return parser
+
+
+def _load_config_args(config_json: str, parser: argparse.ArgumentParser) -> tuple[str, dict, dict]:
+    config_path, payload = load_json_payload(config_json)
+    raw_config = payload.get("args") if isinstance(payload, dict) and "args" in payload else payload
+    if not isinstance(raw_config, dict):
+        raise RuntimeError("Config JSON must be an object or an object with an `args` object.")
+
+    base_dir = resolve_path_base(
+        config_path,
+        payload,
+        default_base="project_root",
+        base_dirs={
+            "project_root": PROJECT_ROOT,
+            "config_dir": config_path.parent,
+        },
+    )
+    config_args = normalize_arg_config(
+        raw_config,
+        parser,
+        exclude_dests={"help", "config_json"},
+        path_keys=CONFIG_PATH_KEYS,
+        base_dir=base_dir,
+    )
+    return str(config_path), payload, config_args
+
+
+def parse_args() -> argparse.Namespace:
+    if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
+        return build_parser().parse_args()
+
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--config-json", type=str, required=True)
+    pre_args, remaining = pre_parser.parse_known_args()
+    if remaining:
+        raise RuntimeError("Stage 1 evaluation accepts only --config-json. Put all settings in the JSON file.")
+
+    parser = build_parser()
+    config_path, config_payload, config_args = _load_config_args(pre_args.config_json, parser)
+    parser.set_defaults(**config_args, config_json=config_path)
+    args = parser.parse_args()
+    args.config_json = config_path
+    args.config_payload = config_payload
+    args.config_args = config_args
+    if not args.checkpoint:
+        raise RuntimeError("`checkpoint` must be defined in the config JSON.")
+    return args
 
 
 def resolve_dataset_jsonl(args: argparse.Namespace, checkpoint: dict) -> str:
@@ -1029,6 +1089,10 @@ def main() -> None:
         displacement_errors = torch.norm(pred_waypoints - gt_waypoints, dim=2)
 
         summary = {
+            "config_json": args.config_json,
+            "config_payload": args.config_payload,
+            "config_args": args.config_args,
+            "run_args": vars(args),
             "checkpoint": args.checkpoint,
             "dataset_jsonl": dataset_jsonl,
             "num_samples": len(pred_actions_list),

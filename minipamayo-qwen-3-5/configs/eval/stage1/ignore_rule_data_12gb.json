@@ -1,0 +1,12 @@
+{
+  "path_base": "project_root",
+  "args": {
+    "checkpoint": "checkpoints/stage1_ignore_rule_12gb/final.pt",
+    "dataset_jsonl": "datasets/processed/stage1/ignore_rule_data/20260327_231917_town01_perimeter_cw_expert_eval_0025824a9fa8/samples.jsonl",
+    "device": "cuda",
+    "batch_size": 1,
+    "num_workers": 2,
+    "show_samples": 10,
+    "output_json": "artifacts/eval_stage1_ignore_rule_data_12gb.json"
+  }
+}

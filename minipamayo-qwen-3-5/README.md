@@ -22,14 +22,15 @@ See `datasets/README.md` for the expected directory structure.
 
 Canonical entrypoints are:
 
-- `minipamayo_qwen35.data.extract_stage1`
-- `minipamayo_qwen35.profile_stage1`
+- `minipamayo_qwen35.data.stage1`
+- `minipamayo_qwen35.train.profile_stage1`
 - `minipamayo_qwen35.train.stage1`
 - `minipamayo_qwen35.eval.stage1`
 
 Recorded-entrypoint examples:
 
-- `uv run python -m minipamayo_qwen35.data.extract_stage1 --config-json configs/data/stage1/ignore_rule_data.json`
+- `uv run python -m minipamayo_qwen35.data.stage1 --config-json configs/data/stage1/ignore_rule_data.json`
 - `uv run python -m minipamayo_qwen35.train.stage1 --config-json configs/train/stage1/ignore_rule_data_12gb.json`
+- `uv run python -m minipamayo_qwen35.eval.stage1 --config-json configs/eval/stage1/ignore_rule_data_12gb.json`
 
-Both entrypoints intentionally reject CLI overrides so the JSON files remain the full run record.
+The data, train, and eval entrypoints intentionally reject CLI overrides so the JSON files remain the full run record.

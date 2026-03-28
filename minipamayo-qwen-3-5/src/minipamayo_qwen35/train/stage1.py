@@ -5,7 +5,7 @@ This is the long-running trainer:
 - best/final checkpoint saving
 - epoch-based loop for real Stage 1 runs
 
-For quick VRAM and throughput probes, use `minipamayo_qwen35.profile_stage1`.
+For quick VRAM and throughput probes, use `minipamayo_qwen35.train.profile_stage1`.
 """
 
 from __future__ import annotations
