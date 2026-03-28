@@ -280,8 +280,6 @@ def write_run_config(save_dir: Path, args: argparse.Namespace, run_metadata: dic
     with (save_dir / "run_config.json").open("w", encoding="utf-8") as f:
         json.dump(
             {
-                "launch_mode": "config_json_only",
-                "cli_overrides": [],
                 "config_json": args.config_json,
                 "config_payload": args.config_payload,
                 "resolved_args": vars(args),
@@ -893,8 +891,6 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
 
         setup_payload = {
             "event": "stage1_setup",
-            "launch_mode": "config_json_only",
-            "cli_overrides": [],
             "config_json": args.config_json or None,
             "run_config_path": str(save_dir / "run_config.json"),
             "run_metadata": run_metadata,
@@ -1194,8 +1190,6 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
         )
 
         final_summary = {
-            "launch_mode": "config_json_only",
-            "cli_overrides": [],
             "config_json": args.config_json or None,
             "config_payload": args.config_payload,
             "config_args": args.config_args,
