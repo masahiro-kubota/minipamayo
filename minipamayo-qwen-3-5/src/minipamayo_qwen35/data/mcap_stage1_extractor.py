@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,6 +55,12 @@ def parse_args() -> argparse.Namespace:
         help="Stride in source frames between samples. 0 = use future stride.",
     )
     parser.add_argument("--max-samples", type=int, default=0)
+    parser.add_argument(
+        "--log-every",
+        type=int,
+        default=200,
+        help="Emit extraction progress every N samples to stderr. 0 disables periodic progress logs.",
+    )
     return parser.parse_args()
 
 
@@ -281,11 +288,23 @@ def _record_to_json(
     }
 
 
-def _extract_job(job: ExtractionJob, args: argparse.Namespace) -> dict:
+def _emit_progress(event: str, **payload) -> None:
+    record = {"event": event, **payload}
+    print(json.dumps(record, ensure_ascii=False), file=sys.stderr, flush=True)
+
+
+def _describe_job(job: ExtractionJob) -> str:
+    if job.episode_dir is not None:
+        return job.episode_dir.name
+    return job.output_dir.name
+
+
+def _extract_job(job: ExtractionJob, args: argparse.Namespace, *, job_index: int, total_jobs: int) -> dict:
     output_dir = job.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     image_dir = output_dir / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
+    job_name = _describe_job(job)
 
     summary_path = (job.episode_dir / "summary.json") if job.episode_dir is not None else job.summary_path
     if summary_path is None:
@@ -303,6 +322,22 @@ def _extract_job(job: ExtractionJob, args: argparse.Namespace) -> dict:
     max_start = len(frames) - 1 - (args.k + 1) * future_stride
     if max_start < 0:
         raise RuntimeError("Not enough frames in the episode for the requested horizon.")
+    max_possible_samples = (max_start // sample_stride) + 1
+    target_samples = min(max_possible_samples, args.max_samples) if args.max_samples > 0 else max_possible_samples
+
+    _emit_progress(
+        "extract_start",
+        job_index=job_index,
+        total_jobs=total_jobs,
+        job_name=job_name,
+        episode_dir=str(job.episode_dir) if job.episode_dir is not None else None,
+        output_dir=str(output_dir),
+        num_mcap_files=len(mcap_paths),
+        num_frames=len(frames),
+        target_samples=target_samples,
+        dt=args.dt,
+        k=args.k,
+    )
 
     samples: list[dict] = []
     sample_count = 0
@@ -338,6 +373,15 @@ def _extract_job(job: ExtractionJob, args: argparse.Namespace) -> dict:
         )
         samples.append(sample)
         sample_count += 1
+        if args.log_every > 0 and sample_count % args.log_every == 0:
+            _emit_progress(
+                "extract_progress",
+                job_index=job_index,
+                total_jobs=total_jobs,
+                job_name=job_name,
+                samples_written=sample_count,
+                target_samples=target_samples,
+            )
 
     jsonl_path = output_dir / "samples.jsonl"
     with jsonl_path.open("w", encoding="utf-8") as f:
@@ -362,6 +406,15 @@ def _extract_job(job: ExtractionJob, args: argparse.Namespace) -> dict:
     with (output_dir / "extract_summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
 
+    _emit_progress(
+        "extract_complete",
+        job_index=job_index,
+        total_jobs=total_jobs,
+        job_name=job_name,
+        num_samples=len(samples),
+        jsonl_path=str(jsonl_path),
+    )
+
     return summary
 
 
@@ -369,7 +422,7 @@ def main() -> None:
     require_clean_git_worktree(Path(__file__).resolve().parent)
     args = parse_args()
     jobs = _load_jobs(args)
-    summaries = [_extract_job(job, args) for job in jobs]
+    summaries = [_extract_job(job, args, job_index=index, total_jobs=len(jobs)) for index, job in enumerate(jobs, start=1)]
 
     if len(summaries) == 1:
         print(json.dumps(summaries[0], indent=2, ensure_ascii=False))

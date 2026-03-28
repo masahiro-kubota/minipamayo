@@ -53,6 +53,12 @@ PYTHONPATH=src python -m minipamayo_qwen35.data.mcap_stage1_extractor \
   --manifest-json datasets/manifests/stage1/ignore_rule_data.json
 ```
 
+Progress logging:
+
+- progress events are emitted to `stderr`
+- the final extraction summary remains JSON on `stdout`
+- use `--log-every 0` to disable periodic progress logs
+
 Manifest format:
 
 - top-level `path_base` defaults to `datasets_root`
