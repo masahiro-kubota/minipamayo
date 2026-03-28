@@ -22,6 +22,8 @@ env/
 data/
 !minipamayo-qwen-3-5/configs/
 !minipamayo-qwen-3-5/configs/**
+!minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/data/
+!minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/data/**
 *.tar.gz
 *.zip
 *.h5

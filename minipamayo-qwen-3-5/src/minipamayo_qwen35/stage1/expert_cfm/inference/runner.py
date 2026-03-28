@@ -1,0 +1,165 @@
+"""Canonical Stage 1B single-sample inference."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import torch
+
+from ....models.trajectory_decoder import cfm_sample, load_decoder_from_checkpoint
+from ....stage1.data.dataset import Stage1JsonlDataset
+from ....utils.dynamics import forward_dynamics_batch
+from ....utils.image_budget import (
+    CANONICAL_IMAGE_MAX_PIXELS,
+    CANONICAL_IMAGE_MIN_PIXELS,
+    validate_canonical_image_budget,
+)
+from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
+from ..common import (
+    extract_last_layer_kv_cache,
+    freeze_module,
+    infer_prompt_text,
+    load_stage1_condition_components,
+    prepare_condition_inputs,
+)
+
+PROJECT_ROOT = Path(__file__).resolve().parents[5]
+CONFIG_PATH_KEYS = {"checkpoint", "stage1_checkpoint", "sample_jsonl", "output_json"}
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run canonical Stage 1B inference on one sample.")
+    parser.add_argument("--config-json", type=str, default="")
+    parser.add_argument("--checkpoint", type=str, default="")
+    parser.add_argument("--stage1-checkpoint", type=str, default="")
+    parser.add_argument("--sample-jsonl", type=str, default="")
+    parser.add_argument("--sample-index", type=int, default=0)
+    parser.add_argument("--output-json", type=str, default="")
+    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--image-min-pixels", type=int, default=CANONICAL_IMAGE_MIN_PIXELS)
+    parser.add_argument("--image-max-pixels", type=int, default=CANONICAL_IMAGE_MAX_PIXELS)
+    parser.add_argument("--flow-steps", type=int, default=10)
+    return parser
+
+
+def _load_config_args(config_json: str, parser: argparse.ArgumentParser) -> tuple[str, dict, dict]:
+    config_path, payload = load_json_payload(config_json)
+    raw_config = payload.get("args") if isinstance(payload, dict) and "args" in payload else payload
+    if not isinstance(raw_config, dict):
+        raise RuntimeError("Config JSON must be an object or an object with an `args` object.")
+    base_dir = resolve_path_base(
+        config_path,
+        payload,
+        default_base="project_root",
+        base_dirs={"project_root": PROJECT_ROOT, "config_dir": config_path.parent},
+    )
+    config_args = normalize_arg_config(
+        raw_config,
+        parser,
+        exclude_dests={"help", "config_json"},
+        path_keys=CONFIG_PATH_KEYS,
+        base_dir=base_dir,
+    )
+    return str(config_path), payload, config_args
+
+
+def parse_args() -> argparse.Namespace:
+    if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
+        return build_parser().parse_args()
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--config-json", type=str, required=True)
+    pre_args, remaining = pre_parser.parse_known_args()
+    if remaining:
+        raise RuntimeError("Stage 1B inference accepts only --config-json. Put all settings in the JSON file.")
+    parser = build_parser()
+    config_path, config_payload, config_args = _load_config_args(pre_args.config_json, parser)
+    parser.set_defaults(**config_args, config_json=config_path)
+    args = parser.parse_args()
+    args.config_json = config_path
+    args.config_payload = config_payload
+    args.config_args = config_args
+    validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
+    if not args.checkpoint or not args.stage1_checkpoint or not args.sample_jsonl:
+        raise RuntimeError("`checkpoint`, `stage1_checkpoint`, and `sample_jsonl` must be defined.")
+    if args.flow_steps <= 0:
+        raise RuntimeError("`flow_steps` must be > 0.")
+    if args.sample_index < 0:
+        raise RuntimeError("`sample_index` must be >= 0.")
+    return args
+
+
+def main() -> None:
+    args = parse_args()
+    device = torch.device(args.device)
+    dataset = Stage1JsonlDataset(args.sample_jsonl)
+    if args.sample_index >= len(dataset):
+        raise RuntimeError(f"`sample_index` {args.sample_index} is out of range for dataset size {len(dataset)}.")
+    sample = dataset[args.sample_index]
+    batch = {
+        "sample_id": [sample["sample_id"]],
+        "image_path": [sample["image_path"]],
+        "action": sample["action"].unsqueeze(0),
+        "v0": sample["v0"].unsqueeze(0),
+        "dt": sample["dt"].unsqueeze(0),
+        "gt_waypoints": sample["gt_waypoints"].unsqueeze(0),
+        "ego_history_xyz": sample["ego_history_xyz"].unsqueeze(0),
+        "ego_history_rot": sample["ego_history_rot"].unsqueeze(0),
+        "command": [sample["command"]],
+    }
+
+    (
+        stage1_checkpoint,
+        model,
+        processor,
+        _registry,
+        history_registry,
+        history_quantizer,
+        _quantizer,
+        _model_dtype,
+    ) = load_stage1_condition_components(args)
+    freeze_module(model)
+    prompt_text = infer_prompt_text(stage1_checkpoint, processor)
+    prompt_inputs = prepare_condition_inputs(
+        batch=batch,
+        processor=processor,
+        history_registry=history_registry,
+        history_quantizer=history_quantizer,
+        prompt_text=prompt_text,
+        device=device,
+    )
+    condition_context, condition_mask = extract_last_layer_kv_cache(model, prompt_inputs)
+    decoder, checkpoint = load_decoder_from_checkpoint(args.checkpoint, device)
+    pred_action = cfm_sample(
+        decoder=decoder,
+        condition_hidden_states=condition_context,
+        condition_mask=condition_mask,
+        n_steps=args.flow_steps,
+    ).reshape(1, -1, 2)
+    dt = float(checkpoint.get("stage1b_metadata", {}).get("dt") or sample["dt"].item())
+    pred_waypoints = forward_dynamics_batch(
+        pred_action[:, :, 0],
+        pred_action[:, :, 1],
+        batch["v0"].to(device=device, dtype=torch.float32),
+        dt=dt,
+    )[0]
+    gt_waypoints = batch["gt_waypoints"][0].to(dtype=torch.float32)
+    errors = torch.norm(pred_waypoints.cpu() - gt_waypoints, dim=1)
+    payload = {
+        "sample_id": sample["sample_id"],
+        "image_path": sample["image_path"],
+        "flow_steps": args.flow_steps,
+        "dt": dt,
+        "pred_action": pred_action[0].detach().cpu().tolist(),
+        "pred_waypoints": pred_waypoints.detach().cpu().tolist(),
+        "gt_waypoints": gt_waypoints.tolist(),
+        "ade_m": float(errors.mean().item()),
+        "fde_m": float(errors[-1].item()),
+    }
+    if args.output_json:
+        output_path = Path(args.output_json).resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
