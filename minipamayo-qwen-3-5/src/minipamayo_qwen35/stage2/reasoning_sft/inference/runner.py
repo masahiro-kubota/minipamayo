@@ -165,7 +165,15 @@ def main() -> None:
         _quantizer,
         model_dtype,
     ) = load_components(stage1_args)
+    stage2_embed_rows = int(
+        checkpoint["model_state_dict"]["model.language_model.embed_tokens.weight"].shape[0]
+    )
+    target_embed_rows = model.get_input_embeddings().weight.shape[0]
+    if stage2_embed_rows != target_embed_rows:
+        model.resize_token_embeddings(stage2_embed_rows)
     model.load_state_dict(checkpoint["model_state_dict"])
+    if target_embed_rows != stage2_embed_rows:
+        model.resize_token_embeddings(target_embed_rows)
     model.config.use_cache = True
     model.to(device)
     model.eval()
