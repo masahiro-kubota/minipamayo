@@ -14,7 +14,54 @@
 
 ## 未整合の一覧
 
-### 1. `stage2` の free-running handoff 成立性
+### 1. `stage1.vlm_ce.inference.alpamayo_style` の processor 契約が学習系とずれている
+
+`stage1` の train/eval は、checkpoint 横に保存した canonical processor を使う。
+
+- [eval runner](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/vlm_ce/eval/runner.py)
+  の `resolve_processor_path()` / `load_components()`
+
+一方で、`stage1.vlm_ce.inference.alpamayo_style` の helper は
+`Qwen/Qwen3-VL-2B-Instruct` から processor を作り、tokenizer だけ checkpoint 側に差し替えている。
+
+- [helper.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/vlm_ce/inference/helper.py)
+
+影響:
+
+- `stage1` sample inference だけ image processor / chat template の母体が train/eval と一致しない
+- 同じ checkpoint でも、`alpamayo_style` だけ別 processor 契約で token 化される
+- そのため、学習コードとの strict な整合性確認という意味ではズレが残る
+
+### 2. `stage2` の `action_loss_weight` / `action_token_accuracy` が実質 dead になっている
+
+現在の `stage2` target は
+
+- `reasoning_text`
+- `<|cot_end|>`
+- `<|traj_future_start|>`
+- `eos`
+
+だけで、離散 action token 自体は target に含めていない。
+
+しかし実装にはまだ
+
+- `action_loss_weight`
+- `action_token_accuracy`
+- `action_mask_rows`
+
+が残っている。
+
+- [train runner](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage2/reasoning_sft/train/runner.py)
+
+現状では `action_mask_rows` は全行ゼロで返されるため、`action_loss_weight` はどの token にも掛からず、
+`action_token_accuracy` も常に意味のない値になる。
+
+影響:
+
+- `stage2` の config / metadata / logged metric が、現在の supervised target と一致していない
+- 研究ログ上は action-aware な SFT に見えるが、実際には handoff boundary 学習だけになっている
+
+### 3. `stage2` の free-running handoff 成立性
 
 `stage2 -> expert_cfm` の code path 自体はある。  
 また `stage2` の target も、いまは
@@ -43,7 +90,7 @@
 - ただし Alpamayo 推論コードと同じ「reasoning rollout のあと expert に handoff」が、
   いまの smoke 学習済み重みで安定成立するところまではまだ確認できていない
 
-### 2. 依存ライブラリ stack
+### 4. 依存ライブラリ stack
 
 まだ一致していない主要差分:
 
@@ -81,7 +128,9 @@
 過去画像なしとバックボーン差分を除けば、
 `stage1` / `stage2` の **配線** はかなり Alpamayo に寄っている。
 
-いま残っているのは主にこの 2 つである。
+いま残っているのは主にこの 4 つである。
 
+- `stage1` inference helper の processor 契約差
+- `stage2` action-related loss / metric の dead config
 - `stage2` free-running handoff の成立性
 - 依存ライブラリ stack
