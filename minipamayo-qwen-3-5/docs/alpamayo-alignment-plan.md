@@ -192,14 +192,14 @@ configs/
 
 ### 現状との差
 
-- [x] 今の decoder は final hidden states conditioning
-- [ ] 今の decoder は論文の expert と同型ではない
+- [x] 今の decoder は final hidden states conditioning だった
+- [x] separate action-expert を Alpamayo 方式に近い構成へ置き換える
 
 ### 修正方針
 
-- [ ] 今の `TrajectoryDecoder` をそのまま canonical にしない
+- [x] 今の `TrajectoryDecoder` をそのまま canonical にしない
 - [x] `stage1/expert_cfm` として separate action-expert を切り出す
-- [ ] 可能なら Alpamayo 方式に近い
+- [x] Alpamayo 方式に近い
   - action in projection
   - expert transformer
   - action out projection
@@ -319,11 +319,11 @@ configs/
 - [x] config parse
 - [x] 1 batch の token 数確認
 - [x] Alpamayo 相当 image budget で VRAM 測定
-- [ ] canonical 128 token で train/eval smoke
+- [x] canonical 128 token で train/eval smoke
 
 注記:
-- 2026-03-29 時点では `CarlaUE4` の常駐 GPU 使用と重なったため、canonical Stage1A の full smoke train は `optimizer.step()` 前後で OOM した。
-- 同条件の `forward_only` profile は smoke dataset で完走している。
+- 2026-03-29 に `CarlaUE4` を停止して VRAM を解放した後、canonical Stage1A の smoke train/eval は完走した。
+- smoke train は `5 epoch` 完走で `best val_loss = 2.1419`、eval は `teacher_forced_loss = 1.4799`, `autoregressive_token_accuracy = 0.5892`, `ADE = 1.4038m`, `FDE = 3.9501m` を確認した。
 
 ### Stage1B
 
@@ -357,10 +357,10 @@ configs/
 
 この修正方針の核心は次の 4 点です。
 
-- [ ] canonical は Alpamayo 論文準拠に寄せる
+- [x] canonical は Alpamayo 論文準拠に寄せる
 - [x] `o_egomotion` / history を本流に入れる
 - [x] 今の `stage2 decoder` 相当は論文準拠では Stage1B とみなす
-- [ ] `steer_only` や smoke は experiment に閉じ込める
+- [x] `steer_only` や smoke は experiment に閉じ込める
   - `steer_only` は experiment へ隔離済み
   - smoke dataset / smoke config は contract 検証用に残している
 
