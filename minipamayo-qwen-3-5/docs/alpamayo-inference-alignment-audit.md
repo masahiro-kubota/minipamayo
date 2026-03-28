@@ -274,3 +274,32 @@ Alpamayo 側の主要依存:
 - 学習コードと推論コードの整合性を強く取りたい
 
 という目的に対しては、上の残差分は無視できない。
+
+## 実行確認メモ
+
+2026-03-29 時点で、smoke 実行で確認できたことは次のとおり。
+
+- `Stage1B` smoke train は完走した
+  - `best_val_cfm_loss = 1.7816`
+  - `peak_reserved_gib = 2.691`
+- `Stage1B` inference は通った
+  - `flow_steps = 10`
+  - `ADE = 3.4728m`
+  - `FDE = 7.7718m`
+- `Stage2` smoke train は現行 contract で回し直した
+  - `target_layout = reasoning_then_traj_future_start_then_action_tokens`
+  - `val_loss = 3.7437`
+
+ただし、`Stage2 -> expert_cfm` の free-running handoff 推論は、smoke 1epoch checkpoint ではまだ成功していない。
+
+- failure:
+  - `Stage 2 reasoning rollout did not emit <|traj_future_start|> within the token budget`
+  - `max_reasoning_tokens = 256`
+
+したがって、
+
+- code path 自体は存在する
+- `Stage1B` 単体は動く
+- しかし `Stage2` の free-running rollout が handoff token を安定して出すところまでは、smoke checkpoint では未確認
+
+という状態である。
