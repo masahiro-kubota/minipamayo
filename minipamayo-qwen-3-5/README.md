@@ -2,6 +2,17 @@
 
 Paper-aligned Qwen3.5 stage experiments live here.
 
+Canonical GPU runs in this repo expect CUDA toolkit `12.8` for `flash-attn`.
+Use the repo-local env file before `uv` commands:
+
+```bash
+cd /home/masa/minipamayo/minipamayo-qwen-3-5
+. ./env/cuda-12.8.sh
+uv sync --locked
+```
+
+If you use `direnv`, the tracked `.envrc` applies the same repo-local CUDA settings.
+
 Current workflow:
 
 1. Convert episodes under `datasets/raw/<collection_name>/` into `jsonl + images/` with a data config
