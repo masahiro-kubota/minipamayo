@@ -28,6 +28,7 @@ from ..tokens.action_quantizer import ActionQuantizer
 from ..tokens.token_registry import Stage1TokenRegistry
 from ..train.stage1 import (
     DEFAULT_QUESTION,
+    build_processor_kwargs,
     build_prompt_text,
     compute_token_accuracy,
     format_gib,
@@ -37,6 +38,12 @@ from ..train.stage1 import (
 )
 from ..utils.dynamics import forward_dynamics_batch
 from ..utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
+from ..utils.run_metadata import (
+    collect_dataset_view_fingerprint,
+    collect_git_metadata,
+    collect_gpu_info,
+    collect_processor_settings,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG_PATH_KEYS = {
@@ -62,6 +69,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--show-samples", type=int, default=10)
     parser.add_argument("--dtype", type=str, default="", choices=["", "bf16", "fp16"])
+    parser.add_argument("--image-min-pixels", type=int, default=0)
+    parser.add_argument("--image-max-pixels", type=int, default=0)
     parser.add_argument("--output-json", type=str, default="")
     parser.add_argument("--output-mcap", type=str, default="")
     return parser
@@ -111,6 +120,10 @@ def parse_args() -> argparse.Namespace:
     args.config_args = config_args
     if not args.checkpoint:
         raise RuntimeError("`checkpoint` must be defined in the config JSON.")
+    if args.image_min_pixels < 0 or args.image_max_pixels < 0:
+        raise RuntimeError("`image_min_pixels` and `image_max_pixels` must be >= 0.")
+    if args.image_min_pixels > 0 and args.image_max_pixels > 0 and args.image_min_pixels > args.image_max_pixels:
+        raise RuntimeError("`image_min_pixels` must be <= `image_max_pixels` when both are set.")
     return args
 
 
@@ -157,8 +170,8 @@ def load_components(args: argparse.Namespace) -> tuple[dict, object, object, Sta
     model_path = resolve_model_path(args, checkpoint)
     processor_path = resolve_processor_path(args, checkpoint_path, model_path)
     model_dtype = resolve_dtype(args, checkpoint)
-
-    processor = AutoProcessor.from_pretrained(processor_path, trust_remote_code=True)
+    processor_kwargs = build_processor_kwargs(args.image_min_pixels, args.image_max_pixels)
+    processor = AutoProcessor.from_pretrained(processor_path, trust_remote_code=True, **processor_kwargs)
 
     token_cfg = checkpoint["token_registry"]
     registry = Stage1TokenRegistry(
@@ -747,12 +760,20 @@ def main() -> None:
     device = torch.device(args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
     if device.type != "cuda":
         raise RuntimeError("Stage 1 evaluation currently expects CUDA.")
+    git_metadata = collect_git_metadata(Path(__file__).resolve().parent)
+    gpu_info = collect_gpu_info(device)
 
     checkpoint, model, processor, registry, quantizer, model_dtype = load_components(args)
     model.to(device)
+    processor_settings = collect_processor_settings(
+        processor,
+        requested_min_pixels=args.image_min_pixels or None,
+        requested_max_pixels=args.image_max_pixels or None,
+    )
 
     dataset_jsonl = resolve_dataset_jsonl(args, checkpoint)
     dataset = Stage1JsonlDataset(dataset_jsonl, max_samples=args.max_samples)
+    dataset_fingerprint = collect_dataset_view_fingerprint(dataset)
     extract_summary = load_extract_summary(dataset_jsonl)
     loader = DataLoader(
         dataset,
@@ -820,6 +841,9 @@ def main() -> None:
             "k": k_steps,
             "dt": dt,
             "dtype": "bf16" if model_dtype == torch.bfloat16 else "fp16",
+            "image_min_pixels": args.image_min_pixels or None,
+            "image_max_pixels": args.image_max_pixels or None,
+            "processor_settings": processor_settings,
         },
         ensure_ascii=False,
     ))
@@ -1111,6 +1135,13 @@ def main() -> None:
             "k": k_steps,
             "dt": dt,
             "generation_mode": "greedy_action_vocab_only",
+            "run_metadata": {
+                "git": git_metadata,
+                "gpu": gpu_info,
+                "dataset": dataset_fingerprint,
+                "processor": processor_settings,
+                "checkpoint_run_metadata": checkpoint.get("run_metadata"),
+            },
         }
 
         print(json.dumps({"event": "stage1_eval_summary", **summary}, ensure_ascii=False, indent=2))

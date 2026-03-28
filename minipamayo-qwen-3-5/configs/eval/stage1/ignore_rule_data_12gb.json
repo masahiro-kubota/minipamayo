@@ -7,6 +7,8 @@
     "batch_size": 1,
     "num_workers": 2,
     "show_samples": 10,
+    "image_min_pixels": 0,
+    "image_max_pixels": 0,
     "output_json": "artifacts/eval_stage1_ignore_rule_data_12gb.json"
   }
 }
