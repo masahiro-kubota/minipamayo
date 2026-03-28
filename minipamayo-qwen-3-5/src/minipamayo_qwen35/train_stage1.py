@@ -25,6 +25,7 @@ from transformers import AutoModelForImageTextToText, AutoProcessor
 from .data.stage1_dataset import Stage1JsonlDataset
 from .tokens.action_quantizer import ActionQuantizer
 from .tokens.token_registry import Stage1TokenRegistry
+from .utils.preflight import enforce_training_prerequisites
 
 
 DEFAULT_QUESTION = (
@@ -64,7 +65,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--dtype", type=str, default="bf16", choices=["bf16", "fp16"])
     parser.add_argument("--question", type=str, default=DEFAULT_QUESTION)
-    parser.add_argument("--use-wandb", action="store_true")
     parser.add_argument("--wandb-project", type=str, default="minipamayo-qwen35")
     parser.add_argument("--wandb-entity", type=str, default="")
     parser.add_argument("--wandb-run-name", type=str, default="")
@@ -338,24 +338,6 @@ def checkpoint_payload(
     }
 
 
-def maybe_init_wandb(args: argparse.Namespace):
-    if not args.use_wandb:
-        return None
-
-    import wandb
-
-    init_kwargs = {
-        "project": args.wandb_project,
-        "config": vars(args),
-        "mode": "online",
-    }
-    if args.wandb_entity:
-        init_kwargs["entity"] = args.wandb_entity
-    if args.wandb_run_name:
-        init_kwargs["name"] = args.wandb_run_name
-    return wandb.init(**init_kwargs)
-
-
 def maybe_wandb_log(run, data: dict, step: int | None = None) -> None:
     if run is None:
         return
@@ -369,10 +351,17 @@ def maybe_wandb_finish(run) -> None:
 
 
 def main() -> None:
+    wandb_run = None
     args = parse_args()
+    wandb_run = enforce_training_prerequisites(
+        project=args.wandb_project,
+        config=vars(args),
+        entity=args.wandb_entity,
+        name=args.wandb_run_name,
+        git_cwd=Path(__file__).resolve().parent,
+    )
     set_seed(args.seed)
     wall_start = time.perf_counter()
-    wandb_run = maybe_init_wandb(args)
 
     try:
         device = torch.device(args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
