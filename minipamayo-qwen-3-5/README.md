@@ -1,13 +1,14 @@
 # MiniPamayo Qwen3.5
 
-Minimal Qwen3.5-native Stage 1 experiments live here.
+Paper-aligned Qwen3.5 stage experiments live here.
 
 Current workflow:
 
 1. Convert episodes under `datasets/raw/<collection_name>/` into `jsonl + images/` with a data config
 2. Run a short profiling probe for VRAM and step time
-3. Run a longer Stage 1 training loop with a JSON config, explicit train/val inputs, and checkpoints
-4. Evaluate Stage 1 on a test split with token metrics and trajectory metrics
+3. Run canonical `Stage1A` VLM CE training
+4. Run canonical `Stage1B` expert CFM training
+5. Evaluate the stage that was trained
 
 Recommended repo layout:
 
@@ -15,32 +16,41 @@ Recommended repo layout:
 - Extracted Stage 1 datasets: `datasets/processed/stage1/<dataset_name>/`
 - Split files: `datasets/splits/stage1/`
 - Data configs: `configs/stage1/data/*.json`
-- Train configs: `configs/stage1/train/canonical/*.json`
-- Eval configs: `configs/stage1/eval/canonical/*.json`
-- Experiment configs: `configs/stage1/train/experiments/**` and `configs/stage1/eval/experiments/**`
+- Stage1A train configs: `configs/stage1/vlm_ce/train/**`
+- Stage1A eval configs: `configs/stage1/vlm_ce/eval/**`
+- Stage1B configs: `configs/stage1/expert_cfm/**`
+- Stage2 configs: `configs/stage2/reasoning_sft/**`
+- Stage3 configs: `configs/stage3/post_training/**`
 
 See `datasets/README.md` for the expected directory structure.
 
 Canonical entrypoints are:
 
 - `minipamayo_qwen35.stage1.data`
-- `minipamayo_qwen35.stage1.train.profile`
-- `minipamayo_qwen35.stage1.train`
-- `minipamayo_qwen35.stage1.eval`
+- `minipamayo_qwen35.stage1.vlm_ce.train.profile`
+- `minipamayo_qwen35.stage1.vlm_ce.train`
+- `minipamayo_qwen35.stage1.vlm_ce.eval`
+- `minipamayo_qwen35.stage1.expert_cfm.train`
+- `minipamayo_qwen35.stage1.expert_cfm.eval`
+- `minipamayo_qwen35.stage1.expert_cfm.inference`
+- `minipamayo_qwen35.stage2.reasoning_sft.train`
+- `minipamayo_qwen35.stage3.post_training.train`
 
 Stage 1 experiments live under the same stage package:
 
-- `minipamayo_qwen35.stage1.train.experiments.steer_only`
-- `minipamayo_qwen35.stage1.eval.experiments.steer_only`
+- `minipamayo_qwen35.stage1.vlm_ce.train.experiments.steer_only`
+- `minipamayo_qwen35.stage1.vlm_ce.eval.experiments.steer_only`
 
 Recorded-entrypoint examples:
 
 - `uv run python -m minipamayo_qwen35.stage1.data --config-json configs/stage1/data/ignore_rule_data.json`
-- `uv run python -m minipamayo_qwen35.stage1.train --config-json configs/stage1/train/canonical/ignore_rule_data_12gb.json`
-- `uv run python -m minipamayo_qwen35.stage1.eval --config-json configs/stage1/eval/canonical/ignore_rule_data_12gb.json`
-- `uv run python -m minipamayo_qwen35.stage1.train.experiments.steer_only --config-json configs/stage1/train/experiments/steer_only/ignore_rule_data_12gb.json`
+- `uv run python -m minipamayo_qwen35.stage1.vlm_ce.train.profile --config-json configs/stage1/vlm_ce/profile/canonical/ignore_rule_data_k64_dt01_smoke_12gb_forward_only.json`
+- `uv run python -m minipamayo_qwen35.stage1.vlm_ce.train --config-json configs/stage1/vlm_ce/train/canonical/ignore_rule_data_k64_dt01_12gb.json`
+- `uv run python -m minipamayo_qwen35.stage1.vlm_ce.eval --config-json configs/stage1/vlm_ce/eval/canonical/ignore_rule_data_k64_dt01_12gb.json`
+- `uv run python -m minipamayo_qwen35.stage1.expert_cfm.train --config-json configs/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_smoke_12gb.json`
+- `uv run python -m minipamayo_qwen35.stage1.vlm_ce.train.experiments.steer_only --config-json configs/stage1/vlm_ce/train/experiments/steer_only/ignore_rule_data_k64_dt01_smoke_12gb.json`
 
-The data, train, and eval entrypoints intentionally reject CLI overrides so the JSON files remain the full run record.
+The data, train, eval, profile, and inference entrypoints intentionally reject CLI overrides so the JSON files remain the full run record.
 
 Stage 1 train configs now support:
 
@@ -59,4 +69,4 @@ Stage 1 train outputs record:
 - `summary.json` with the same run metadata plus final metrics
 - `last.pt`, `best.pt`, and `final.pt` for resume and comparison
 
-Canonical Stage 1 predicts interleaved acceleration plus curvature tokens and is the only Stage 1 path that connects to the current Stage 2/3/4 pipeline. The `steer_only` entrypoints are experiment-only and record a train-corpus-derived `kappa_range` in `run_config.json`, `summary.json`, and checkpoint metadata.
+Canonical `Stage1A` predicts interleaved acceleration plus curvature tokens with `k=64`, `dt=0.1`, Alpamayo-style image budget, and history-conditioned prompts. Canonical `Stage1B` consumes the frozen `Stage1A` prompt KV-cache and trains a continuous action decoder with CFM. The `steer_only` entrypoints remain experiment-only and record a train-corpus-derived `kappa_range` in `run_config.json`, `summary.json`, and checkpoint metadata.

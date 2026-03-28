@@ -12,6 +12,7 @@ import json
 import random
 import time
 from pathlib import Path
+import sys
 
 import torch
 from transformers import AutoModelForImageTextToText, AutoProcessor
@@ -22,9 +23,16 @@ from ..prompt import DEFAULT_QUESTION, build_prompt_text
 from ..tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ..tokenization.registry import Stage1TokenRegistry
 from .runner import format_gib, prepare_batch, stage1_collate
-from ...utils.json_config import normalize_required_string_list
+from ...utils.json_config import (
+    load_json_payload,
+    normalize_arg_config,
+    normalize_required_string_list,
+    resolve_path_base,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
+CONFIG_PATH_KEYS = {"train_jsonl", "model_path", "output_json"}
+MULTI_VALUE_CONFIG_KEYS = {"train_jsonl"}
 
 # Measured Stage 1 presets on the CARLA-derived smoke dataset in this repo:
 # - 12 GB class GPU: keep `--batch-size 1 --gradient-checkpointing`
@@ -39,7 +47,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[4]
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a short Qwen3.5 Stage 1 training trial.")
-    parser.add_argument("--train-jsonl", type=str, nargs="+", required=True)
+    parser.add_argument("--config-json", type=str, default="")
+    parser.add_argument("--train-jsonl", type=str, default="")
     parser.add_argument(
         "--model-path",
         type=str,
@@ -55,6 +64,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--dtype", type=str, default="bf16", choices=["bf16", "fp16"])
     parser.add_argument("--question", type=str, default=DEFAULT_QUESTION)
+    parser.add_argument("--forward-only", action="store_true", default=False)
     parser.add_argument(
         "--output-json",
         type=str,
@@ -74,7 +84,46 @@ def parse_args() -> argparse.Namespace:
         help="Disable gradient checkpointing.",
     )
     parser.set_defaults(gradient_checkpointing=True)
+
+    if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
+        args = parser.parse_args()
+        args.train_jsonl = normalize_required_string_list(args.train_jsonl, key_name="train_jsonl")
+        return args
+
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--config-json", type=str, required=True)
+    pre_args, remaining = pre_parser.parse_known_args()
+    if remaining:
+        raise RuntimeError(
+            "Stage 1 profile accepts only --config-json. Put all settings in the JSON file."
+        )
+
+    config_path, payload = load_json_payload(pre_args.config_json)
+    raw_config = payload.get("args") if isinstance(payload, dict) and "args" in payload else payload
+    if not isinstance(raw_config, dict):
+        raise RuntimeError("Config JSON must be an object or an object with an `args` object.")
+    base_dir = resolve_path_base(
+        config_path,
+        payload,
+        default_base="project_root",
+        base_dirs={
+            "project_root": PROJECT_ROOT,
+            "config_dir": config_path.parent,
+        },
+    )
+    config_args = normalize_arg_config(
+        raw_config,
+        parser,
+        exclude_dests={"help", "config_json"},
+        path_keys=CONFIG_PATH_KEYS,
+        list_keys=MULTI_VALUE_CONFIG_KEYS,
+        base_dir=base_dir,
+    )
+    parser.set_defaults(**config_args, config_json=str(config_path))
     args = parser.parse_args()
+    args.config_json = str(config_path)
+    args.config_payload = payload
+    args.config_args = config_args
     args.train_jsonl = normalize_required_string_list(args.train_jsonl, key_name="train_jsonl")
     return args
 
@@ -218,8 +267,9 @@ def main() -> None:
             outputs = model(**full_inputs, labels=labels)
             loss = outputs.loss
 
-        loss.backward()
-        optimizer.step()
+        if not args.forward_only:
+            loss.backward()
+            optimizer.step()
 
         torch.cuda.synchronize(device)
         step_elapsed = time.perf_counter() - step_start
@@ -265,6 +315,7 @@ def main() -> None:
         "batch_size": args.batch_size,
         "lr": args.lr,
         "weight_decay": args.weight_decay,
+        "forward_only": args.forward_only,
         "warmup_steps": args.warmup_steps,
         "measure_steps": args.measure_steps,
         "added_action_tokens": added,
