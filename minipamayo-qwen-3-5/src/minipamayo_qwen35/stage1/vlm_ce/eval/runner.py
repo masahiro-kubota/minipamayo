@@ -39,6 +39,7 @@ from ....utils.run_metadata import (
 )
 from ... import CanonicalStage1Spec, Stage1TaskSpec
 from ...data.dataset import Stage1JsonlDataset
+from ...prompt import add_prompt_special_tokens
 from ...tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ...tokenization.registry import Stage1TokenRegistry
 from ..train import (
@@ -196,6 +197,7 @@ def load_components(
     processor = AutoProcessor.from_pretrained(
         processor_path, trust_remote_code=True, **processor_kwargs
     )
+    add_prompt_special_tokens(processor.tokenizer)
 
     if "history_registry" not in checkpoint or not isinstance(checkpoint["history_registry"], dict):
         raise RuntimeError("Checkpoint is missing canonical `history_registry` metadata.")

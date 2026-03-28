@@ -128,5 +128,7 @@ def build_stage1b_metadata(dataset, args, expert_config: dict) -> dict:
         "action_dim": int(action.shape[0]),
         "dt": dt_value,
         "expert_architecture": "alpamayo_style_action_expert",
+        "diffusion_architecture": "flow_matching",
+        "action_space_contract": "unicycle_accel_curvature_single_traj_group",
         "expert_config": expert_config,
     }

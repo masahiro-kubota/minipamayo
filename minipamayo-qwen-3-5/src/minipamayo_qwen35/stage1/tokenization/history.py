@@ -18,6 +18,83 @@ HISTORY_SPECIAL_TOKENS = [
 ]
 
 
+def canonicalize_history_sample_numpy(
+    history_xyz: np.ndarray,
+    history_rot: np.ndarray,
+    *,
+    history_steps: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    xyz = np.asarray(history_xyz, dtype=np.float32)
+    rot = np.asarray(history_rot, dtype=np.float32)
+    if xyz.ndim == 3:
+        if xyz.shape[0] != 1:
+            raise RuntimeError(
+                "Canonical history sample currently supports exactly one trajectory group.\n"
+                f"ego_history_xyz.shape={xyz.shape!r}"
+            )
+        xyz = xyz[0]
+    if rot.ndim == 4:
+        if rot.shape[0] != 1:
+            raise RuntimeError(
+                "Canonical history sample currently supports exactly one trajectory group.\n"
+                f"ego_history_rot.shape={rot.shape!r}"
+            )
+        rot = rot[0]
+    if xyz.shape != (history_steps, 3):
+        raise RuntimeError(
+            "Expected canonical `ego_history_xyz` shape "
+            f"(1, {history_steps}, 3) or ({history_steps}, 3), got {history_xyz.shape!r}."
+        )
+    if rot.shape != (history_steps, 3, 3):
+        raise RuntimeError(
+            "Expected canonical `ego_history_rot` shape "
+            f"(1, {history_steps}, 3, 3) or ({history_steps}, 3, 3), got {history_rot.shape!r}."
+        )
+    return xyz, rot
+
+
+def canonicalize_history_sample_tensors(
+    history_xyz: torch.Tensor,
+    history_rot: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if history_xyz.dim() == 2:
+        history_xyz = history_xyz.unsqueeze(0)
+    if history_rot.dim() == 3:
+        history_rot = history_rot.unsqueeze(0)
+    if history_xyz.dim() != 3 or history_xyz.shape[0] != 1 or history_xyz.shape[-1] != 3:
+        raise RuntimeError(
+            "Expected canonical `ego_history_xyz` sample tensor shape "
+            f"(1, T, 3), got {tuple(history_xyz.shape)!r}."
+        )
+    if history_rot.dim() != 4 or history_rot.shape[0] != 1 or history_rot.shape[-2:] != (3, 3):
+        raise RuntimeError(
+            "Expected canonical `ego_history_rot` sample tensor shape "
+            f"(1, T, 3, 3), got {tuple(history_rot.shape)!r}."
+        )
+    return history_xyz, history_rot
+
+
+def canonicalize_history_batch_tensors(
+    history_xyz: torch.Tensor,
+    history_rot: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if history_xyz.dim() == 3:
+        history_xyz = history_xyz.unsqueeze(1)
+    if history_rot.dim() == 4:
+        history_rot = history_rot.unsqueeze(1)
+    if history_xyz.dim() != 4 or history_xyz.shape[1] != 1 or history_xyz.shape[-1] != 3:
+        raise RuntimeError(
+            "Expected canonical `ego_history_xyz` batch tensor shape "
+            f"(batch, 1, T, 3), got {tuple(history_xyz.shape)!r}."
+        )
+    if history_rot.dim() != 5 or history_rot.shape[1] != 1 or history_rot.shape[-2:] != (3, 3):
+        raise RuntimeError(
+            "Expected canonical `ego_history_rot` batch tensor shape "
+            f"(batch, 1, T, 3, 3), got {tuple(history_rot.shape)!r}."
+        )
+    return history_xyz, history_rot
+
+
 def _quantize_scalar(value: float, value_range: tuple[float, float], n_bins: int) -> int:
     lower, upper = float(value_range[0]), float(value_range[1])
     if upper <= lower:
@@ -50,24 +127,19 @@ class HistoryTrajectoryQuantizer:
         return self.history_steps * 3
 
     def encode_bin_ids(self, history_xyz: np.ndarray, history_rot: np.ndarray) -> list[int]:
-        if history_xyz.shape != (self.history_steps, 3):
-            raise RuntimeError(
-                "Expected canonical `ego_history_xyz` shape "
-                f"({self.history_steps}, 3), got {history_xyz.shape!r}."
-            )
-        if history_rot.shape != (self.history_steps, 3, 3):
-            raise RuntimeError(
-                "Expected canonical `ego_history_rot` shape "
-                f"({self.history_steps}, 3, 3), got {history_rot.shape!r}."
-            )
-        yaw = _yaw_from_rot_mats(history_rot)
+        xyz, rot = canonicalize_history_sample_numpy(
+            history_xyz,
+            history_rot,
+            history_steps=self.history_steps,
+        )
+        yaw = _yaw_from_rot_mats(rot)
         bin_ids: list[int] = []
         for step_idx in range(self.history_steps):
             bin_ids.append(
-                _quantize_scalar(float(history_xyz[step_idx, 0]), self.x_range, self.n_bins)
+                _quantize_scalar(float(xyz[step_idx, 0]), self.x_range, self.n_bins)
             )
             bin_ids.append(
-                _quantize_scalar(float(history_xyz[step_idx, 1]), self.y_range, self.n_bins)
+                _quantize_scalar(float(xyz[step_idx, 1]), self.y_range, self.n_bins)
             )
             bin_ids.append(_quantize_scalar(float(yaw[step_idx]), self.yaw_range, self.n_bins))
         return bin_ids
@@ -80,7 +152,7 @@ class HistoryTrajectoryQuantizer:
             "y_range": list(self.y_range),
             "yaw_range": list(self.yaw_range),
             "token_count": self.token_count,
-            "token_layout": "per_step_xyz_yaw_scalar_bins",
+            "token_layout": "per_step_xyz_yaw_scalar_bins_single_traj_group",
         }
 
     def canonical_scalar_ranges(
@@ -165,23 +237,38 @@ class HistoryTokenRegistry:
         }
 
 
+def encode_history_token_id_rows(
+    *,
+    history_xyz: torch.Tensor,
+    history_rot: torch.Tensor,
+    history_registry: HistoryTokenRegistry,
+    history_quantizer: HistoryTrajectoryQuantizer,
+) -> list[list[int]]:
+    batch_xyz, batch_rot = canonicalize_history_batch_tensors(history_xyz, history_rot)
+    history_token_id_rows: list[list[int]] = []
+    for row_idx in range(batch_xyz.shape[0]):
+        xyz_np = batch_xyz[row_idx].detach().cpu().numpy()
+        rot_np = batch_rot[row_idx].detach().cpu().numpy()
+        history_token_id_rows.append(
+            history_registry.encode_history_token_ids(
+                xyz_np,
+                rot_np,
+                history_quantizer,
+            )
+        )
+    return history_token_id_rows
+
+
 def history_xyz_rot_to_scalars_torch(
     history_xyz: torch.Tensor,
     history_rot: torch.Tensor,
 ) -> torch.Tensor:
-    if history_xyz.dim() != 3 or history_xyz.shape[-1] != 3:
-        raise RuntimeError(
-            "Expected `history_xyz` to have shape (batch, history_steps, 3), "
-            f"got {tuple(history_xyz.shape)!r}."
-        )
-    if history_rot.dim() != 4 or history_rot.shape[-2:] != (3, 3):
-        raise RuntimeError(
-            "Expected `history_rot` to have shape (batch, history_steps, 3, 3), "
-            f"got {tuple(history_rot.shape)!r}."
-        )
-    yaw = yaw_from_rot_mats_torch(history_rot).unsqueeze(-1)
+    batch_xyz, batch_rot = canonicalize_history_batch_tensors(history_xyz, history_rot)
+    squeezed_xyz = batch_xyz[:, 0]
+    squeezed_rot = batch_rot[:, 0]
+    yaw = yaw_from_rot_mats_torch(squeezed_rot).unsqueeze(-1)
     return torch.stack(
-        [history_xyz[..., 0], history_xyz[..., 1], yaw[..., 0]],
+        [squeezed_xyz[..., 0], squeezed_xyz[..., 1], yaw[..., 0]],
         dim=-1,
     )
 
@@ -223,13 +310,14 @@ def interpolate_history_token_embeddings(
         raise RuntimeError(
             "History token registry must be attached to a tokenizer before interpolation."
         )
-    if history_xyz.shape[1] != history_quantizer.history_steps:
+    batch_xyz, batch_rot = canonicalize_history_batch_tensors(history_xyz, history_rot)
+    if batch_xyz.shape[2] != history_quantizer.history_steps:
         raise RuntimeError(
             "History tensor step count does not match the canonical quantizer.\n"
-            f"history_xyz.shape={tuple(history_xyz.shape)!r}\n"
+            f"history_xyz.shape={tuple(batch_xyz.shape)!r}\n"
             f"history_steps={history_quantizer.history_steps}"
         )
-    history_scalars = history_xyz_rot_to_scalars_torch(history_xyz, history_rot)
+    history_scalars = history_xyz_rot_to_scalars_torch(batch_xyz, batch_rot)
     normalized = normalize_history_scalars_torch(history_scalars, history_quantizer)
     scaled = normalized.add(1.0).mul(0.5 * float(history_quantizer.n_bins - 1))
     lower_idx = torch.floor(scaled).to(torch.long)
@@ -248,4 +336,4 @@ def interpolate_history_token_embeddings(
     lower_embeds = embedding_weight.index_select(dim=0, index=lower_token_ids)
     upper_embeds = embedding_weight.index_select(dim=0, index=upper_token_ids)
     flat_interp = lower_embeds * (1.0 - frac.reshape(-1, 1)) + upper_embeds * frac.reshape(-1, 1)
-    return flat_interp.reshape(history_xyz.shape[0], history_quantizer.token_count, -1)
+    return flat_interp.reshape(batch_xyz.shape[0], history_quantizer.token_count, -1)

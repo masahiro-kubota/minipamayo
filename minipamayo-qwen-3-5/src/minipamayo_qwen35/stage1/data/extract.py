@@ -327,8 +327,8 @@ def _record_to_json(
             "y": float(source_frame.y),
             "yaw_deg": float(source_frame.yaw_deg),
         },
-        "ego_history_xyz": ego_history_xyz.tolist(),
-        "ego_history_rot": ego_history_rot.tolist(),
+        "ego_history_xyz": np.expand_dims(ego_history_xyz, axis=0).tolist(),
+        "ego_history_rot": np.expand_dims(ego_history_rot, axis=0).tolist(),
         "history_poses_global": [
             {
                 "frame_id": frame.frame_id,

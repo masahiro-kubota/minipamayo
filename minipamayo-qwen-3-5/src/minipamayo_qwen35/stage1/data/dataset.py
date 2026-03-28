@@ -8,6 +8,8 @@ from pathlib import Path
 import torch
 from torch.utils.data import Dataset
 
+from ..tokenization.history import canonicalize_history_sample_tensors
+
 
 def read_jsonl(path: str | Path) -> list[dict]:
     records: list[dict] = []
@@ -86,6 +88,10 @@ class Stage1JsonlDataset(Dataset):
             raise RuntimeError(
                 "Stage 1 dataset record is missing canonical fields:\n" + "\n".join(missing_keys)
             )
+        ego_history_xyz, ego_history_rot = canonicalize_history_sample_tensors(
+            torch.tensor(record["ego_history_xyz"], dtype=torch.float32),
+            torch.tensor(record["ego_history_rot"], dtype=torch.float32),
+        )
         return {
             "sample_id": record["sample_id"],
             "image_path": str(root_dir / record["image_path"]),
@@ -93,7 +99,7 @@ class Stage1JsonlDataset(Dataset):
             "v0": torch.tensor(record["v0"], dtype=torch.float32),
             "dt": torch.tensor(record["dt"], dtype=torch.float32),
             "gt_waypoints": torch.tensor(record["gt_waypoints"], dtype=torch.float32),
-            "ego_history_xyz": torch.tensor(record["ego_history_xyz"], dtype=torch.float32),
-            "ego_history_rot": torch.tensor(record["ego_history_rot"], dtype=torch.float32),
+            "ego_history_xyz": ego_history_xyz,
+            "ego_history_rot": ego_history_rot,
             "command": record["command"],
         }

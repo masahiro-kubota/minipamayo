@@ -44,6 +44,7 @@ from ....utils.run_metadata import (
     collect_gpu_info,
     collect_processor_settings,
 )
+from ..diffusion import FlowMatchingDiffusion
 from ..common import (
     build_stage1b_metadata,
     compute_action_stats,
@@ -53,7 +54,7 @@ from ..common import (
     load_stage1_condition_components,
     prepare_condition_inputs,
 )
-from ..model import Stage1ActionExpert, cfm_loss
+from ..model import Stage1ActionExpert
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {
@@ -261,6 +262,7 @@ def resolve_expert_text_config(model, args: argparse.Namespace) -> dict:
 @torch.no_grad()
 def evaluate(
     expert: Stage1ActionExpert,
+    diffusion: FlowMatchingDiffusion,
     model,
     dataloader: DataLoader,
     processor,
@@ -284,7 +286,7 @@ def evaluate(
         )
         prompt_cache, prompt_attention_mask = extract_prompt_cache(model, prompt_inputs)
         gt_action = batch["action"].to(device=device, dtype=torch.float32)
-        loss = cfm_loss(
+        loss = diffusion.loss(
             expert=expert,
             gt_action=gt_action,
             prompt_cache=prompt_cache,
@@ -351,10 +353,10 @@ def main() -> None:
     try:
         wandb_run = enforce_training_prerequisites(
             project=args.wandb_project,
-            cwd=Path.cwd(),
+            config=vars(args),
             entity=args.wandb_entity,
             name=args.wandb_run_name,
-            save_dir=save_dir,
+            git_cwd=Path(__file__).resolve().parent,
         )
         gpu_preflight = log_gpu_preflight(device)
         train_loader, val_loader, train_size, val_size = build_dataloaders(args)
@@ -389,6 +391,7 @@ def main() -> None:
             kappa_mean=action_stats["kappa_mean"],
             kappa_std=action_stats["kappa_std"],
         ).to(device=device, dtype=next(model.parameters()).dtype)
+        diffusion = FlowMatchingDiffusion()
         stage1b_metadata = build_stage1b_metadata(
             train_loader.dataset,
             args,
@@ -462,7 +465,7 @@ def main() -> None:
                 with torch.no_grad():
                     prompt_cache, prompt_attention_mask = extract_prompt_cache(model, prompt_inputs)
                 gt_action = batch["action"].to(device=device, dtype=torch.float32)
-                loss = cfm_loss(
+                loss = diffusion.loss(
                     expert=expert,
                     gt_action=gt_action,
                     prompt_cache=prompt_cache,
@@ -509,6 +512,7 @@ def main() -> None:
             if val_loader is not None:
                 val_metrics = evaluate(
                     expert=expert,
+                    diffusion=diffusion,
                     model=model,
                     dataloader=val_loader,
                     processor=processor,
@@ -601,5 +605,6 @@ def main() -> None:
         if wandb_run is not None:
             wandb_run.summary.update(summary)
     finally:
-        maybe_wandb_finish(wandb_run)
+        if wandb_run is not None:
+            maybe_wandb_finish(wandb_run)
         release_cuda_memory()

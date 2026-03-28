@@ -13,6 +13,7 @@ import torch
 from torch.utils.data import Dataset
 
 from ...stage1.data.dataset import normalize_jsonl_paths, read_jsonl
+from ...stage1.tokenization.history import canonicalize_history_sample_tensors
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -67,6 +68,10 @@ class ReasoningSftJsonlDataset(Dataset):
                 + "\n".join(missing_keys)
             )
 
+        ego_history_xyz, ego_history_rot = canonicalize_history_sample_tensors(
+            torch.tensor(record["ego_history_xyz"], dtype=torch.float32),
+            torch.tensor(record["ego_history_rot"], dtype=torch.float32),
+        )
         sample = {
             "sample_id": str(record["sample_id"]),
             "image_path": str(root_dir / str(record["image_path"])),
@@ -74,8 +79,8 @@ class ReasoningSftJsonlDataset(Dataset):
             "v0": torch.tensor(record["v0"], dtype=torch.float32),
             "gt_waypoints": torch.tensor(record["gt_waypoints"], dtype=torch.float32),
             "dt": float(record["dt"]),
-            "ego_history_xyz": torch.tensor(record["ego_history_xyz"], dtype=torch.float32),
-            "ego_history_rot": torch.tensor(record["ego_history_rot"], dtype=torch.float32),
+            "ego_history_xyz": ego_history_xyz,
+            "ego_history_rot": ego_history_rot,
             "reasoning_text": str(record["reasoning_text"]),
         }
         if "command" in record:

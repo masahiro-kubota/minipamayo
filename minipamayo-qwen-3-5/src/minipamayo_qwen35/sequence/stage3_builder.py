@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from ..stage1.prompt import build_history_placeholder
+from ..stage1.prompt import build_chat_prompt_text, build_history_placeholder, build_reasoning_prompt_text
 
 ACTION_SECTION_HEADER: Final[str] = "[Action Tokens]"
 
@@ -138,15 +138,12 @@ def build_chat_prompt_text(processor, user_prompt: str) -> str:
 
 
 def build_stage2_prompt_text(processor, v0: float, history_token_count: int = 0) -> str:
-    history_prefix = build_history_placeholder(history_token_count)
-    user_prompt = build_stage2_user_prompt(v0)
-    if history_prefix:
-        user_prompt = f"{history_prefix}\n{user_prompt}"
-    return build_chat_prompt_text(processor, user_prompt)
+    del v0
+    return build_reasoning_prompt_text(processor, history_token_count=history_token_count)
 
 
 def build_stage3_prompt_text(processor, v0: float) -> str:
-    return build_chat_prompt_text(processor, build_stage3_user_prompt(v0))
+    return build_chat_prompt_text(processor, user_text=build_stage3_user_prompt(v0))
 
 
 def build_stage3_target_text(reasoning_text: str, action_text: str) -> str:

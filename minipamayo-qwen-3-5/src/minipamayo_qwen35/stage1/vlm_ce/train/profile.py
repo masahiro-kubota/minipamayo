@@ -14,6 +14,7 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
@@ -25,7 +26,7 @@ from ....utils.json_config import (
 )
 from ... import CanonicalStage1Spec
 from ...data.dataset import Stage1JsonlDataset
-from ...prompt import DEFAULT_QUESTION, build_prompt_text
+from ...prompt import DEFAULT_QUESTION, add_prompt_special_tokens, build_prompt_text
 from ...tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ...tokenization.registry import Stage1TokenRegistry
 from .runner import format_gib, model_forward_inputs, prepare_batch, stage1_collate
@@ -159,7 +160,7 @@ def build_stage1_metadata(
         )
     gt_waypoints = record["gt_waypoints"]
     action = record["action"]
-    ego_history_xyz = record["ego_history_xyz"]
+    ego_history_xyz = np.asarray(record["ego_history_xyz"], dtype=np.float32)
     return {
         "train_jsonl": [str(path) for path in dataset.jsonl_paths],
         "sample_format": "jsonl+images",
@@ -171,9 +172,9 @@ def build_stage1_metadata(
         "dt": record["dt"],
         "action_token_scheme": "add_tokens",
         "token_prefix": registry.token_prefix,
-        "history_token_scheme": "placeholder_inputs_embeds_continuous_interpolation",
+        "history_token_scheme": "placeholder_input_ids_discrete_bins",
         "history_token_prefix": history_registry.token_prefix,
-        "history_steps": len(ego_history_xyz),
+        "history_steps": int(ego_history_xyz.shape[-2]),
         "history_token_count": history_quantizer.token_count,
         "question": question,
         **task_spec.metadata(quantizer),
@@ -206,6 +207,7 @@ def main() -> None:
 
     task_spec = CanonicalStage1Spec()
     history_quantizer = HistoryTrajectoryQuantizer()
+    add_prompt_special_tokens(processor.tokenizer)
     history_registry = HistoryTokenRegistry(n_bins=history_quantizer.n_bins)
     history_added = history_registry.add_to_tokenizer(processor.tokenizer)
     quantizer = task_spec.build_quantizer(dataset)

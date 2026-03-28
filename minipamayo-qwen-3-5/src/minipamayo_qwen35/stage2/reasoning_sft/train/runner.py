@@ -19,7 +19,8 @@ import torch.nn.functional as F
 from PIL import Image
 from torch.utils.data import DataLoader, random_split
 
-from ....sequence.stage3_builder import ACTION_SECTION_HEADER, build_stage2_prompt_text
+from ....sequence.stage3_builder import build_stage2_prompt_text
+from ....stage1.prompt import TRAJ_FUTURE_START_TOKEN
 from ....stage1.vlm_ce.eval import load_components
 from ....stage1.vlm_ce.train import (
     first_record_from_dataset,
@@ -212,7 +213,8 @@ def build_stage2_metadata(dataset, args: argparse.Namespace) -> dict:
         "val_jsonl": args.val_jsonl or None,
         "sample_format": "jsonl+images",
         "reasoning_source": "provided_reasoning_text",
-        "target_layout": "reasoning_plus_action_tokens",
+        "target_layout": "reasoning_then_traj_future_start_then_action_tokens",
+        "prompt_contract": "alpamayo_like_reasoning_with_cot_prefill",
         "k": len(gt_waypoints) if gt_waypoints else len(action) // 2,
         "action_dim": len(action),
         "dt": float(record["dt"]),
@@ -229,7 +231,7 @@ def _build_target_rows(
     action_mask_rows: list[list[int]] = []
     for reasoning_text, action in zip(batch["reasoning_text"], batch["action"], strict=False):
         reasoning_prefix = tokenizer(
-            f"{reasoning_text}\n\n{ACTION_SECTION_HEADER}\n",
+            f"{reasoning_text}{TRAJ_FUTURE_START_TOKEN}",
             add_special_tokens=False,
         )
         reasoning_ids = reasoning_prefix["input_ids"]

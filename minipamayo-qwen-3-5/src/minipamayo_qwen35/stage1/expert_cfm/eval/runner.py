@@ -12,7 +12,6 @@ from torch.utils.data import DataLoader
 
 from ....stage1.data.dataset import Stage1JsonlDataset
 from ....stage1.vlm_ce.train import stage1_collate
-from ....utils.dynamics import forward_dynamics_batch
 from ....utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
@@ -31,7 +30,9 @@ from ..common import (
     load_stage1_condition_components,
     prepare_condition_inputs,
 )
-from ..model import cfm_loss, cfm_sample, load_action_expert_from_checkpoint
+from ..action_space import UnicycleAccelCurvatureActionSpace
+from ..diffusion import FlowMatchingDiffusion
+from ..model import load_action_expert_from_checkpoint
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {"checkpoint", "stage1_checkpoint", "eval_jsonl", "output_json"}
@@ -144,6 +145,11 @@ def main() -> None:
             + "\n".join(missing_stage1b_keys)
         )
     dt = float(stage1b_metadata["dt"])
+    diffusion = FlowMatchingDiffusion(n_steps=args.flow_steps)
+    action_space = UnicycleAccelCurvatureActionSpace(
+        k=int(stage1b_metadata["k"]) if "k" in stage1b_metadata else int(dataset[0]["action"].shape[0] // 2),
+        dt=dt,
+    )
 
     total_loss = 0.0
     total_batches = 0
@@ -164,26 +170,24 @@ def main() -> None:
             )
             prompt_cache, prompt_attention_mask = extract_prompt_cache(model, prompt_inputs)
             gt_action = batch["action"].to(device=device, dtype=torch.float32)
-            loss = cfm_loss(
+            loss = diffusion.loss(
                 expert=expert,
                 gt_action=gt_action,
                 prompt_cache=prompt_cache,
                 prompt_attention_mask=prompt_attention_mask,
             )
-            pred_action = cfm_sample(
+            pred_action = diffusion.sample(
                 expert=expert,
                 prompt_cache=prompt_cache,
                 prompt_attention_mask=prompt_attention_mask,
-                n_steps=args.flow_steps,
             ).reshape(gt_action.shape[0], -1, 2)
             gt_waypoints = batch["gt_waypoints"].to(device=device, dtype=torch.float32)
-            v0 = batch["v0"].to(device=device, dtype=torch.float32)
-            pred_waypoints = forward_dynamics_batch(
-                pred_action[:, :, 0],
-                pred_action[:, :, 1],
-                v0,
-                dt=dt,
+            pred_xyz, _pred_rot = action_space.action_to_traj(
+                traj_history_xyz=batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
+                traj_history_rot=batch["ego_history_rot"].to(device=device, dtype=torch.float32),
+                action=pred_action,
             )
+            pred_waypoints = pred_xyz[:, 0, :, :2]
             displacement = torch.norm(pred_waypoints - gt_waypoints, dim=2)
 
             batch_size = gt_action.shape[0]

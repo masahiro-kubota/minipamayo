@@ -46,10 +46,16 @@ from ....utils.run_metadata import (
 )
 from ... import CanonicalStage1Spec, Stage1TaskSpec
 from ...data.dataset import Stage1JsonlDataset
-from ...prompt import DEFAULT_QUESTION, build_prompt_text
+from ...prompt import (
+    DEFAULT_QUESTION,
+    PROMPT_SPECIAL_TOKENS,
+    add_prompt_special_tokens,
+    build_prompt_text,
+)
 from ...tokenization.history import (
     HistoryTokenRegistry,
     HistoryTrajectoryQuantizer,
+    encode_history_token_id_rows,
     interpolate_history_token_embeddings,
 )
 from ...tokenization.registry import Stage1TokenRegistry
@@ -222,9 +228,8 @@ def model_forward_inputs(model_inputs: dict) -> dict:
     return {key: value for key, value in model_inputs.items() if key != "input_ids"}
 
 
-def inject_history_inputs_embeds(
+def inject_history_token_ids(
     *,
-    model,
     prompt_inputs: dict,
     history_registry: HistoryTokenRegistry,
     history_quantizer: HistoryTrajectoryQuantizer,
@@ -242,36 +247,37 @@ def inject_history_inputs_embeds(
             f"prompt_placeholder_count={placeholder_count}\n"
             f"history_token_count={history_quantizer.token_count}"
         )
-    if history_xyz.shape[0] != input_ids.shape[0] or history_rot.shape[0] != input_ids.shape[0]:
-        raise RuntimeError(
-            "History batch size does not match prompt batch size.\n"
-            f"history_xyz.shape={tuple(history_xyz.shape)!r}\n"
-            f"history_rot.shape={tuple(history_rot.shape)!r}\n"
-            f"input_ids.shape={tuple(input_ids.shape)!r}"
-        )
-    embedding_weight = model.get_input_embeddings().weight
-    base_embeds = model.get_input_embeddings()(input_ids)
-    history_embeds = interpolate_history_token_embeddings(
-        embedding_weight=embedding_weight,
+    history_token_id_rows = encode_history_token_id_rows(
         history_xyz=history_xyz,
         history_rot=history_rot,
         history_registry=history_registry,
         history_quantizer=history_quantizer,
-    ).to(dtype=base_embeds.dtype)
-    fused_embeds = base_embeds.clone()
-    for row_idx in range(input_ids.shape[0]):
-        row_positions = torch.nonzero(placeholder_mask[row_idx], as_tuple=False).flatten()
-        if row_positions.numel() != history_quantizer.token_count:
-            raise RuntimeError(
-                "History placeholder count does not match canonical token count for one batch row.\n"
-                f"row_idx={row_idx}\n"
-                f"expected={history_quantizer.token_count}\n"
-                f"found={int(row_positions.numel())}"
-            )
-        fused_embeds[row_idx, row_positions] = history_embeds[row_idx]
+    )
     fused_inputs = dict(prompt_inputs)
-    fused_inputs["inputs_embeds"] = fused_embeds
+    fused_inputs["input_ids"] = history_registry.replace_placeholder_ids(
+        input_ids,
+        history_token_id_rows,
+    )
     return fused_inputs
+
+
+def inject_history_inputs_embeds(
+    *,
+    model,
+    prompt_inputs: dict,
+    history_registry: HistoryTokenRegistry,
+    history_quantizer: HistoryTrajectoryQuantizer,
+    history_xyz: torch.Tensor,
+    history_rot: torch.Tensor,
+) -> dict:
+    del model
+    return inject_history_token_ids(
+        prompt_inputs=prompt_inputs,
+        history_registry=history_registry,
+        history_quantizer=history_quantizer,
+        history_xyz=history_xyz,
+        history_rot=history_rot,
+    )
 
 
 def append_token_to_model_inputs(model, model_inputs: dict, next_token: torch.Tensor) -> None:
@@ -466,12 +472,14 @@ def build_stage1_metadata(
         "dt": record["dt"],
         "action_token_scheme": "add_tokens",
         "token_prefix": registry.token_prefix,
-        "history_token_scheme": "placeholder_inputs_embeds_continuous_interpolation",
+        "history_token_scheme": "placeholder_input_ids_discrete_bins",
         "history_token_prefix": history_registry.token_prefix,
-        "history_steps": int(ego_history_xyz.shape[0]),
+        "history_steps": int(ego_history_xyz.shape[-2]),
         "history_token_count": history_quantizer.token_count,
-        "history_layout": "ego_frame_xyz_rot_local",
+        "history_layout": "ego_frame_xyz_rot_local_single_traj_group",
         "question": args.question,
+        "prompt_contract": "system_user_image_history_tokens",
+        "prompt_special_tokens": list(PROMPT_SPECIAL_TOKENS),
         "history_quantizer": history_quantizer.metadata(),
         **task_spec.metadata(quantizer),
     }
@@ -947,6 +955,7 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
         )
 
         history_quantizer = HistoryTrajectoryQuantizer()
+        add_prompt_special_tokens(processor.tokenizer)
         history_registry = HistoryTokenRegistry(n_bins=history_quantizer.n_bins)
         history_added = history_registry.add_to_tokenizer(processor.tokenizer)
         quantizer = task_spec.build_quantizer(train_loader.dataset)
