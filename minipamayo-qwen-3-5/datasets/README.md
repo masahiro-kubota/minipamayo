@@ -34,14 +34,14 @@ Usage:
 - Place raw CARLA telemetry episodes under `datasets/raw/<collection_name>/`.
 - Extract Stage 1 training data under `datasets/processed/stage1/`.
 - Keep split JSONL files under `datasets/splits/stage1/` if you generate them.
-- Keep extraction configs under `configs/data/stage1/`.
+- Keep extraction configs under `configs/stage1/data/`.
 - Stage 1 extraction is config-only. Pass `--config-json` and keep all extraction settings inside the config.
 
 Batch extraction example:
 
 ```bash
-uv run python -m minipamayo_qwen35.data.stage1 \
-  --config-json configs/data/stage1/ignore_rule_data.json
+uv run python -m minipamayo_qwen35.stage1.data \
+  --config-json configs/stage1/data/ignore_rule_data.json
 ```
 
 Progress logging:
@@ -65,4 +65,4 @@ Available `path_base` values:
 - `datasets_root`
 - `config_dir`
 
-See `configs/data/stage1/ignore_rule_data.json` for a concrete example.
+See `configs/stage1/data/ignore_rule_data.json` for a concrete example.

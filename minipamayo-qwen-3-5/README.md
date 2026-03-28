@@ -14,31 +14,31 @@ Recommended repo layout:
 - Raw episode logs: `datasets/raw/<collection_name>/<episode_id>/`
 - Extracted Stage 1 datasets: `datasets/processed/stage1/<dataset_name>/`
 - Split files: `datasets/splits/stage1/`
-- Data configs: `configs/data/stage1/*.json`
-- Train configs: `configs/train/stage1/canonical/*.json`
-- Eval configs: `configs/eval/stage1/canonical/*.json`
-- Experiment configs: `configs/train/stage1/experiments/**` and `configs/eval/stage1/experiments/**`
+- Data configs: `configs/stage1/data/*.json`
+- Train configs: `configs/stage1/train/canonical/*.json`
+- Eval configs: `configs/stage1/eval/canonical/*.json`
+- Experiment configs: `configs/stage1/train/experiments/**` and `configs/stage1/eval/experiments/**`
 
 See `datasets/README.md` for the expected directory structure.
 
 Canonical entrypoints are:
 
-- `minipamayo_qwen35.data.stage1`
-- `minipamayo_qwen35.train.stage1.profile`
-- `minipamayo_qwen35.train.stage1`
-- `minipamayo_qwen35.eval.stage1`
+- `minipamayo_qwen35.stage1.data`
+- `minipamayo_qwen35.stage1.train.profile`
+- `minipamayo_qwen35.stage1.train`
+- `minipamayo_qwen35.stage1.eval`
 
 Stage 1 experiments live under the same stage package:
 
-- `minipamayo_qwen35.train.stage1.experiments.steer_only`
-- `minipamayo_qwen35.eval.stage1.experiments.steer_only`
+- `minipamayo_qwen35.stage1.train.experiments.steer_only`
+- `minipamayo_qwen35.stage1.eval.experiments.steer_only`
 
 Recorded-entrypoint examples:
 
-- `uv run python -m minipamayo_qwen35.data.stage1 --config-json configs/data/stage1/ignore_rule_data.json`
-- `uv run python -m minipamayo_qwen35.train.stage1 --config-json configs/train/stage1/canonical/ignore_rule_data_12gb.json`
-- `uv run python -m minipamayo_qwen35.eval.stage1 --config-json configs/eval/stage1/canonical/ignore_rule_data_12gb.json`
-- `uv run python -m minipamayo_qwen35.train.stage1.experiments.steer_only --config-json configs/train/stage1/experiments/steer_only/ignore_rule_data_12gb.json`
+- `uv run python -m minipamayo_qwen35.stage1.data --config-json configs/stage1/data/ignore_rule_data.json`
+- `uv run python -m minipamayo_qwen35.stage1.train --config-json configs/stage1/train/canonical/ignore_rule_data_12gb.json`
+- `uv run python -m minipamayo_qwen35.stage1.eval --config-json configs/stage1/eval/canonical/ignore_rule_data_12gb.json`
+- `uv run python -m minipamayo_qwen35.stage1.train.experiments.steer_only --config-json configs/stage1/train/experiments/steer_only/ignore_rule_data_12gb.json`
 
 The data, train, and eval entrypoints intentionally reject CLI overrides so the JSON files remain the full run record.
 
