@@ -28,7 +28,7 @@ from ..data.stage1_dataset import Stage1JsonlDataset
 from ..tokens.action_quantizer import ActionQuantizer
 from ..tokens.token_registry import Stage1TokenRegistry
 from ..utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
-from ..utils.preflight import enforce_training_prerequisites
+from ..utils.preflight import collect_gpu_preflight_snapshot, enforce_training_prerequisites
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG_PATH_KEYS = {
@@ -189,6 +189,25 @@ def release_cuda_memory() -> None:
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+
+def log_gpu_preflight(device: torch.device) -> dict:
+    device_index = device.index if device.index is not None else torch.cuda.current_device()
+    snapshot = collect_gpu_preflight_snapshot(gpu_index=device_index)
+    print(json.dumps({"event": "gpu_preflight", **snapshot}, ensure_ascii=False))
+    if snapshot["warning_reasons"]:
+        print(
+            json.dumps(
+                {
+                    "event": "gpu_preflight_warning",
+                    "gpu_index": device_index,
+                    "warning_reasons": snapshot["warning_reasons"],
+                    "non_self_compute_processes": snapshot.get("non_self_compute_processes", []),
+                },
+                ensure_ascii=False,
+            )
+        )
+    return snapshot
 
 
 def stage1_collate(samples: list[dict]) -> dict:
@@ -428,13 +447,14 @@ def main() -> None:
         name=args.wandb_run_name,
         git_cwd=Path(__file__).resolve().parent,
     )
-    set_seed(args.seed)
     wall_start = time.perf_counter()
 
     try:
         device = torch.device(args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
         if device.type != "cuda":
             raise RuntimeError("This Stage 1 trainer is intended to run on CUDA.")
+        gpu_preflight = log_gpu_preflight(device)
+        set_seed(args.seed)
 
         train_loader, val_loader, train_size, val_size = build_dataloaders(args)
         if len(train_loader) == 0:
@@ -522,6 +542,7 @@ def main() -> None:
             "event": "stage1_setup",
             "config_json": args.config_json or None,
             "run_config_path": str(save_dir / "run_config.json"),
+            "gpu_preflight": gpu_preflight,
             "train_size": train_size,
             "val_size": val_size,
             "batch_size": args.batch_size,
@@ -546,24 +567,31 @@ def main() -> None:
                 ensure_ascii=False,
             )
         )
-        maybe_wandb_log(
-            wandb_run,
-            {
-                "setup/train_size": train_size,
-                "setup/val_size": val_size,
-                "setup/batch_size": args.batch_size,
-                "setup/grad_accum_steps": args.grad_accum_steps,
-                "setup/total_vocab_size": len(processor.tokenizer),
-                "setup/added_action_tokens": added,
-                "setup/model_load_elapsed_s": round(load_elapsed, 3),
-                "setup/k": stage1_metadata["k"],
-                "setup/dt": stage1_metadata["dt"],
-                "setup/n_bins": stage1_metadata["n_bins"],
-                f"baseline/{initial_eval_split}_loss": initial_eval["loss"],
-                f"baseline/{initial_eval_split}_token_accuracy": initial_eval["token_accuracy"],
-            },
-            step=0,
-        )
+        setup_wandb_payload = {
+            "setup/gpu_query_ok": gpu_preflight["query_ok"],
+            "setup/gpu_warning_count": len(gpu_preflight["warning_reasons"]),
+            "setup/train_size": train_size,
+            "setup/val_size": val_size,
+            "setup/batch_size": args.batch_size,
+            "setup/grad_accum_steps": args.grad_accum_steps,
+            "setup/total_vocab_size": len(processor.tokenizer),
+            "setup/added_action_tokens": added,
+            "setup/model_load_elapsed_s": round(load_elapsed, 3),
+            "setup/k": stage1_metadata["k"],
+            "setup/dt": stage1_metadata["dt"],
+            "setup/n_bins": stage1_metadata["n_bins"],
+            f"baseline/{initial_eval_split}_loss": initial_eval["loss"],
+            f"baseline/{initial_eval_split}_token_accuracy": initial_eval["token_accuracy"],
+        }
+        if gpu_preflight["query_ok"]:
+            setup_wandb_payload.update(
+                {
+                    "setup/gpu_free_gib": round(gpu_preflight["free_mib"] / 1024, 3),
+                    "setup/gpu_non_self_compute_gib": round(gpu_preflight["non_self_compute_used_mib"] / 1024, 3),
+                    "setup/gpu_other_used_gib": round(gpu_preflight["other_used_mib"] / 1024, 3),
+                }
+            )
+        maybe_wandb_log(wandb_run, setup_wandb_payload, step=0)
 
         for epoch in range(1, args.max_epochs + 1):
             epoch_start = time.perf_counter()
@@ -752,6 +780,7 @@ def main() -> None:
             "total_wall_time_s": round(time.perf_counter() - wall_start, 3),
             "peak_allocated_gib": format_gib(torch.cuda.max_memory_allocated(device)),
             "peak_reserved_gib": format_gib(torch.cuda.max_memory_reserved(device)),
+            "gpu_preflight": gpu_preflight,
             "stage1_metadata": stage1_metadata,
             "initial_eval": {
                 "split": initial_eval_split,
