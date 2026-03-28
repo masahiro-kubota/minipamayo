@@ -14,6 +14,9 @@ from mcap.reader import make_reader
 from ..utils.dynamics import interleave_action, inverse_dynamics_np, to_ego_centric
 from ..utils.preflight import require_clean_git_worktree
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+DATASETS_ROOT = PROJECT_ROOT / "datasets"
+
 
 @dataclass
 class FrameRecord:
@@ -59,6 +62,22 @@ def _resolve_path(path_value: str, base_dir: Path) -> Path:
     if path.is_absolute():
         return path
     return (base_dir / path).resolve()
+
+
+def _resolve_manifest_base_dir(manifest_path: Path, payload) -> Path:
+    path_base = "datasets_root"
+    if isinstance(payload, dict):
+        path_base = str(payload.get("path_base", "datasets_root"))
+
+    if path_base == "manifest_dir":
+        return manifest_path.parent
+    if path_base == "project_root":
+        return PROJECT_ROOT
+    if path_base == "datasets_root":
+        return DATASETS_ROOT
+    raise RuntimeError(
+        "Manifest path_base must be one of: datasets_root, project_root, manifest_dir."
+    )
 
 
 def _read_record_hz(summary_path: Path) -> float:
@@ -167,11 +186,12 @@ def _load_jobs(args: argparse.Namespace) -> list[ExtractionJob]:
     with manifest_path.open("r", encoding="utf-8") as f:
         payload = json.load(f)
 
+    base_dir = _resolve_manifest_base_dir(manifest_path, payload)
     raw_jobs = payload.get("jobs") if isinstance(payload, dict) else payload
     if not isinstance(raw_jobs, list) or not raw_jobs:
         raise RuntimeError("Manifest JSON must be a non-empty list or an object with a non-empty jobs list.")
 
-    return [_normalize_job(raw_job, manifest_path.parent) for raw_job in raw_jobs]
+    return [_normalize_job(raw_job, base_dir) for raw_job in raw_jobs]
 
 
 def _load_frames(mcap_paths: list[Path]) -> list[FrameRecord]:

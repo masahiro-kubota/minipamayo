@@ -1,0 +1,17 @@
+{
+  "path_base": "datasets_root",
+  "jobs": [
+    {
+      "episode_dir": "raw/ignore_rule_data/20260327_231917_town01_intersection_weave_ccw_expert_eval_0025824a9fa8",
+      "output_dir": "processed/stage1/ignore_rule_data/20260327_231917_town01_intersection_weave_ccw_expert_eval_0025824a9fa8"
+    },
+    {
+      "episode_dir": "raw/ignore_rule_data/20260327_231917_town01_intersection_weave_cw_expert_eval_0025824a9fa8",
+      "output_dir": "processed/stage1/ignore_rule_data/20260327_231917_town01_intersection_weave_cw_expert_eval_0025824a9fa8"
+    },
+    {
+      "episode_dir": "raw/ignore_rule_data/20260327_231917_town01_perimeter_cw_expert_eval_0025824a9fa8",
+      "output_dir": "processed/stage1/ignore_rule_data/20260327_231917_town01_perimeter_cw_expert_eval_0025824a9fa8"
+    }
+  ]
+}

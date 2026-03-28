@@ -26,6 +26,10 @@ datasets/
     stage1/
       train.jsonl
       val.jsonl
+
+  manifests/
+    stage1/
+      ignore_rule_data.json
 ```
 
 Usage:
@@ -46,13 +50,20 @@ Batch manifest example:
 
 ```bash
 PYTHONPATH=src python -m minipamayo_qwen35.data.mcap_stage1_extractor \
-  --manifest-json datasets/stage1_extract_manifest.example.json
+  --manifest-json datasets/manifests/stage1/ignore_rule_data.json
 ```
 
 Manifest format:
 
+- top-level `path_base` defaults to `datasets_root`
 - `episode_dir + output_dir`
 - or `mcap_paths + output_dir`
 - `summary_path` is optional when `mcap_paths` all live under the same `telemetry/` directory
 
-See `datasets/stage1_extract_manifest.example.json` for a concrete example.
+Available `path_base` values:
+
+- `datasets_root`
+- `project_root`
+- `manifest_dir`
+
+See `datasets/manifests/stage1/ignore_rule_data.json` for a concrete example.
