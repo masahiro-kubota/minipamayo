@@ -335,15 +335,17 @@ def build_stage1_metadata(
     quantizer: ActionQuantizer,
 ) -> dict:
     record = first_record_from_dataset(dataset)
-    gt_waypoints = record.get("gt_waypoints", [])
-    action = record.get("action", [])
+    if "gt_waypoints" not in record or "action" not in record or "dt" not in record:
+        raise RuntimeError("Training record is missing canonical Stage 1 fields: `gt_waypoints`, `action`, or `dt`.")
+    gt_waypoints = record["gt_waypoints"]
+    action = record["action"]
     return {
         "train_jsonl": args.train_jsonl,
         "val_jsonl": args.val_jsonl or None,
         "sample_format": "jsonl+images",
         "k": len(gt_waypoints) if gt_waypoints else len(action) // 2,
         "action_dim": len(action),
-        "dt": record.get("dt"),
+        "dt": record["dt"],
         "n_bins": quantizer.n_bins,
         "a_range": list(quantizer.a_range),
         "kappa_range": list(quantizer.kappa_range),
@@ -511,13 +513,17 @@ def best_metric_from_history(metrics_history: list[dict], metric_name: str) -> t
     best_metric = float("inf")
     best_epoch = 0
     for metrics in metrics_history:
-        value = metrics.get(metric_name)
+        if metric_name not in metrics or "epoch" not in metrics:
+            raise RuntimeError(
+                f"Metrics history is missing canonical fields `{metric_name}` or `epoch`: {metrics!r}"
+            )
+        value = metrics[metric_name]
         if value is None:
-            continue
+            raise RuntimeError(f"Metrics history contains null `{metric_name}`: {metrics!r}")
         value = float(value)
         if value < best_metric:
             best_metric = value
-            best_epoch = int(metrics.get("epoch", 0))
+            best_epoch = int(metrics["epoch"])
     return best_metric, best_epoch
 
 
@@ -561,13 +567,13 @@ def checkpoint_payload(
 
 def maybe_wandb_log(run, data: dict, step: int | None = None) -> None:
     if run is None:
-        return
+        raise RuntimeError("W&B run is unexpectedly unavailable.")
     run.log(data, step=step)
 
 
 def maybe_wandb_finish(run) -> None:
     if run is None:
-        return
+        raise RuntimeError("W&B run is unexpectedly unavailable.")
     run.finish()
 
 

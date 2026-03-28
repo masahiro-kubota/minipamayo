@@ -71,7 +71,12 @@ def _jsonl_source_fingerprint(jsonl_path: str | Path) -> dict[str, Any]:
 
     extract_summary_path = path.parent / "extract_summary.json"
     image_dir = path.parent / "images"
-    image_files = sorted(child for child in image_dir.iterdir() if child.is_file()) if image_dir.exists() else []
+    if not image_dir.exists():
+        raise RuntimeError(f"Dataset image directory does not exist: {image_dir}")
+    if not extract_summary_path.exists():
+        raise RuntimeError(f"Dataset extract summary does not exist: {extract_summary_path}")
+
+    image_files = sorted(child for child in image_dir.iterdir() if child.is_file())
 
     fingerprint = {
         "jsonl_path": str(path),
@@ -79,17 +84,12 @@ def _jsonl_source_fingerprint(jsonl_path: str | Path) -> dict[str, Any]:
         "jsonl_size_bytes": path.stat().st_size,
         "num_records": _count_non_empty_lines(path),
         "dataset_root": str(path.parent),
-        "image_dir": str(image_dir) if image_dir.exists() else None,
+        "image_dir": str(image_dir),
         "image_file_count": len(image_files),
+        "extract_summary_path": str(extract_summary_path),
+        "extract_summary_sha256": _sha256_file(extract_summary_path),
+        "extract_summary_size_bytes": extract_summary_path.stat().st_size,
     }
-    if extract_summary_path.exists():
-        fingerprint["extract_summary_path"] = str(extract_summary_path)
-        fingerprint["extract_summary_sha256"] = _sha256_file(extract_summary_path)
-        fingerprint["extract_summary_size_bytes"] = extract_summary_path.stat().st_size
-    else:
-        fingerprint["extract_summary_path"] = None
-        fingerprint["extract_summary_sha256"] = None
-        fingerprint["extract_summary_size_bytes"] = 0
     return fingerprint
 
 
@@ -148,7 +148,7 @@ def collect_processor_settings(
 ) -> dict[str, Any]:
     image_processor = getattr(processor, "image_processor", None)
     if image_processor is None:
-        return {}
+        raise RuntimeError("Processor is missing the canonical `image_processor` component.")
 
     size = getattr(image_processor, "size", None)
     if size is not None:

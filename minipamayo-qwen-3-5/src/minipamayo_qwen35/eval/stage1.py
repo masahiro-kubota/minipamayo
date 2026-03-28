@@ -188,6 +188,13 @@ def load_components(args: argparse.Namespace) -> tuple[dict, object, object, Sta
     return checkpoint, model, processor, registry, quantizer, model_dtype
 
 
+def require_checkpoint_run_metadata(checkpoint: dict) -> dict:
+    run_metadata = checkpoint.get("run_metadata")
+    if not isinstance(run_metadata, dict):
+        raise RuntimeError("Checkpoint is missing canonical `run_metadata`.")
+    return run_metadata
+
+
 def prepare_prompt_inputs(
     image_paths: list[str],
     processor,
@@ -224,34 +231,54 @@ def ns_to_timestamp(ns: int) -> dict:
     }
 
 
-def load_extract_summary(test_jsonl: str) -> dict | None:
+def require_extract_summary(test_jsonl: str) -> dict:
     summary_path = Path(test_jsonl).parent / "extract_summary.json"
     if not summary_path.exists():
-        return None
+        raise RuntimeError(f"Test dataset is missing extract_summary.json: {summary_path}")
     with summary_path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+        summary = json.load(f)
+    if not isinstance(summary, dict):
+        raise RuntimeError(f"Extract summary must be a JSON object: {summary_path}")
+    required_keys = ["episode_dir", "record_hz"]
+    missing_keys = [key for key in required_keys if key not in summary]
+    if missing_keys:
+        raise RuntimeError(
+            "Extract summary is missing canonical fields:\n" + "\n".join(missing_keys)
+        )
+    return summary
 
 
-def infer_episode_id(test_jsonl: str, extract_summary: dict | None) -> str:
-    if extract_summary is not None:
-        episode_dir = extract_summary.get("episode_dir")
-        if episode_dir:
-            return Path(str(episode_dir)).name
-    return Path(test_jsonl).stem
+def infer_episode_id(extract_summary: dict) -> str:
+    episode_dir = extract_summary["episode_dir"]
+    return Path(str(episode_dir)).name
 
 
-def elapsed_seconds(record: dict, extract_summary: dict | None, fallback_index: int, dt: float) -> float:
-    return record_time_ns(record, extract_summary, fallback_index, dt) / 1_000_000_000.0
+def require_record_field(record: dict, key: str):
+    if key not in record:
+        raise RuntimeError(f"Evaluation record is missing canonical field `{key}`: {record!r}")
+    return record[key]
 
 
-def record_time_ns(record: dict, extract_summary: dict | None, fallback_index: int, dt: float) -> int:
-    if extract_summary is not None and record.get("source_frame_id") is not None:
-        record_hz = float(extract_summary.get("record_hz", 0.0))
-        if record_hz > 0:
-            return int(round(float(record["source_frame_id"]) / record_hz * 1_000_000_000))
-    if record.get("sample_index") is not None:
-        return int(round(float(record["sample_index"]) * dt * 1_000_000_000))
-    return int(round(fallback_index * dt * 1_000_000_000))
+def require_ego_pose(record: dict) -> dict:
+    ego_pose = require_record_field(record, "ego_pose")
+    if not isinstance(ego_pose, dict):
+        raise RuntimeError(f"`ego_pose` must be an object: {record!r}")
+    for key in ["x", "y", "yaw_deg"]:
+        if key not in ego_pose:
+            raise RuntimeError(f"`ego_pose` is missing `{key}`: {record!r}")
+    return ego_pose
+
+
+def elapsed_seconds(record: dict, extract_summary: dict) -> float:
+    return record_time_ns(record, extract_summary) / 1_000_000_000.0
+
+
+def record_time_ns(record: dict, extract_summary: dict) -> int:
+    record_hz = float(extract_summary["record_hz"])
+    if record_hz <= 0:
+        raise RuntimeError(f"`record_hz` must be positive in extract_summary: {extract_summary!r}")
+    source_frame_id = require_record_field(record, "source_frame_id")
+    return int(round(float(source_frame_id) / record_hz * 1_000_000_000))
 
 
 def yaw_deg_to_quaternion(yaw_deg: float) -> dict:
@@ -753,6 +780,7 @@ def main() -> None:
     gpu_info = collect_gpu_info(device)
 
     checkpoint, model, processor, registry, quantizer, model_dtype = load_components(args)
+    checkpoint_run_metadata = require_checkpoint_run_metadata(checkpoint)
     model.to(device)
     processor_settings = collect_processor_settings(
         processor,
@@ -763,7 +791,7 @@ def main() -> None:
     test_jsonl = args.test_jsonl
     dataset = Stage1JsonlDataset(test_jsonl, max_samples=args.max_samples)
     dataset_fingerprint = collect_dataset_view_fingerprint(dataset)
-    extract_summary = load_extract_summary(test_jsonl)
+    extract_summary = require_extract_summary(test_jsonl)
     loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -788,7 +816,7 @@ def main() -> None:
     action_dim = int(stage1_metadata["action_dim"])
     k_steps = int(stage1_metadata["k"])
     dt = float(stage1_metadata["dt"])
-    episode_id = infer_episode_id(test_jsonl, extract_summary)
+    episode_id = infer_episode_id(extract_summary)
     episode_metadata = {
         "episode_id": episode_id,
         "route_name": "stage1_eval",
@@ -902,6 +930,12 @@ def main() -> None:
 
                 for row_idx in range(generated_token_ids.shape[0]):
                     record = dataset.records[record_cursor]
+                    sample_id = str(require_record_field(record, "sample_id"))
+                    sample_record_index = int(require_record_field(record, "sample_index"))
+                    source_frame_id = int(require_record_field(record, "source_frame_id"))
+                    command = str(require_record_field(record, "command"))
+                    planner_state = str(require_record_field(record, "planner_state"))
+                    ego_pose = require_ego_pose(record)
                     pred_token_ids = generated_token_ids[row_idx].detach().cpu().tolist()
                     gt_row = gt_token_ids[row_idx].detach().cpu().tolist()
                     pred_bins = [registry.id_to_bin[token_id] for token_id in pred_token_ids]
@@ -935,7 +969,7 @@ def main() -> None:
                                 {
                                     "event": "sample",
                                     "sample_index": sample_index,
-                                    "sample_id": batch["sample_id"][row_idx],
+                                    "sample_id": sample_id,
                                     "match_tokens": ar_match_count,
                                     "action_dim": action_dim,
                                     "ade_m": float(displacement.mean().item()),
@@ -946,9 +980,9 @@ def main() -> None:
                         )
 
                     if mcap_writer is not None:
-                        log_time_ns = record_time_ns(record, extract_summary, sample_index, dt)
+                        log_time_ns = record_time_ns(record, extract_summary)
                         last_log_time_ns = max(last_log_time_ns, log_time_ns)
-                        sample_elapsed_s = elapsed_seconds(record, extract_summary, sample_index, dt)
+                        sample_elapsed_s = elapsed_seconds(record, extract_summary)
                         if first_elapsed_s is None:
                             first_elapsed_s = sample_elapsed_s
                         last_elapsed_s = sample_elapsed_s
@@ -970,16 +1004,16 @@ def main() -> None:
                         state_payload = {
                             "timestamp": ns_to_timestamp(log_time_ns),
                             "episode_id": episode_id,
-                            "frame_id": int(record.get("source_frame_id", sample_index)),
+                            "frame_id": source_frame_id,
                             "elapsed_seconds": sample_elapsed_s,
                             "speed_mps": float(v0_tensor.item()),
                             "route_completion_ratio": None,
                             "distance_to_goal_m": None,
                             "pose": {
-                                "x": float(record.get("ego_pose", {}).get("x", 0.0)),
-                                "y": float(record.get("ego_pose", {}).get("y", 0.0)),
+                                "x": float(ego_pose["x"]),
+                                "y": float(ego_pose["y"]),
                                 "z": 0.0,
-                                "yaw_deg": float(record.get("ego_pose", {}).get("yaw_deg", 0.0)),
+                                "yaw_deg": float(ego_pose["yaw_deg"]),
                                 "pitch_deg": 0.0,
                                 "roll_deg": 0.0,
                             },
@@ -995,10 +1029,10 @@ def main() -> None:
                         planning_payload = {
                             "timestamp": ns_to_timestamp(log_time_ns),
                             "episode_id": episode_id,
-                            "frame_id": int(record.get("source_frame_id", sample_index)),
+                            "frame_id": source_frame_id,
                             "elapsed_seconds": sample_elapsed_s,
-                            "behavior": str(record.get("command", batch["command"][row_idx])),
-                            "planner_state": str(record.get("planner_state", "unknown")),
+                            "behavior": command,
+                            "planner_state": planner_state,
                             "traffic_light_state": None,
                             "overtake_state": None,
                             "target_lane_id": None,
@@ -1019,11 +1053,11 @@ def main() -> None:
                                     "parent_frame_id": "map",
                                     "child_frame_id": "ego/base_link",
                                     "translation": {
-                                        "x": float(record.get("ego_pose", {}).get("x", 0.0)),
-                                        "y": float(record.get("ego_pose", {}).get("y", 0.0)),
+                                        "x": float(ego_pose["x"]),
+                                        "y": float(ego_pose["y"]),
                                         "z": 0.0,
                                     },
-                                    "rotation": yaw_deg_to_quaternion(float(record.get("ego_pose", {}).get("yaw_deg", 0.0))),
+                                    "rotation": yaw_deg_to_quaternion(float(ego_pose["yaw_deg"])),
                                 },
                                 {
                                     "timestamp": ns_to_timestamp(log_time_ns),
@@ -1044,19 +1078,19 @@ def main() -> None:
 
                         sample_payload = {
                             "timestamp": ns_to_timestamp(log_time_ns),
-                            "sample_id": str(record.get("sample_id", batch["sample_id"][row_idx])),
-                            "sample_index": int(record.get("sample_index", sample_index)),
-                            "source_frame_id": int(record.get("source_frame_id", sample_index)),
+                            "sample_id": sample_id,
+                            "sample_index": sample_record_index,
+                            "source_frame_id": source_frame_id,
                             "v0_mps": float(v0_tensor.item()),
                             "dt": dt,
-                            "command": str(record.get("command", batch["command"][row_idx])),
-                            "planner_state": str(record.get("planner_state", "unknown")),
+                            "command": command,
+                            "planner_state": planner_state,
                             "image_topic": "/camera/front/compressed",
                             "coordinate_frame": "ego_xy_meters",
                             "ego_pose": {
-                                "x": float(record.get("ego_pose", {}).get("x", 0.0)),
-                                "y": float(record.get("ego_pose", {}).get("y", 0.0)),
-                                "yaw_deg": float(record.get("ego_pose", {}).get("yaw_deg", 0.0)),
+                                "x": float(ego_pose["x"]),
+                                "y": float(ego_pose["y"]),
+                                "yaw_deg": float(ego_pose["yaw_deg"]),
                             },
                             "gt_action": [float(x) for x in gt_action_tensor.tolist()],
                             "pred_action": [float(x) for x in pred_action_tensor.tolist()],
@@ -1139,7 +1173,7 @@ def main() -> None:
                     "test": dataset_fingerprint,
                 },
                 "processor": processor_settings,
-                "checkpoint_run_metadata": checkpoint.get("run_metadata"),
+                "checkpoint_run_metadata": checkpoint_run_metadata,
             },
         }
 
@@ -1152,6 +1186,8 @@ def main() -> None:
                 json.dump(summary, f, indent=2, ensure_ascii=False)
 
         if mcap_writer is not None:
+            if first_elapsed_s is None or last_elapsed_s is None:
+                raise RuntimeError("MCAP output requested, but elapsed time metadata was not recorded.")
             write_json_message(
                 writer=mcap_writer,
                 channel_id=summary_channel_id,
@@ -1162,8 +1198,8 @@ def main() -> None:
             write_single_segment_index(
                 output_mcap=args.output_mcap,
                 episode_metadata=episode_metadata,
-                start_elapsed_seconds=0.0 if first_elapsed_s is None else first_elapsed_s,
-                end_elapsed_seconds=0.0 if last_elapsed_s is None else last_elapsed_s,
+                start_elapsed_seconds=first_elapsed_s,
+                end_elapsed_seconds=last_elapsed_s,
                 frame_count=len(pred_actions_list),
             )
     finally:
