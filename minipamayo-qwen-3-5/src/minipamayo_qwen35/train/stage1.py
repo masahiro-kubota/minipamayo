@@ -452,12 +452,9 @@ def evaluate(
 
 
 def validate_resume_args(args: argparse.Namespace, checkpoint: dict) -> None:
-    checkpoint_args = checkpoint.get("args", {})
-    defaults = {
-        "val_jsonl": "",
-        "image_min_pixels": 0,
-        "image_max_pixels": 0,
-    }
+    checkpoint_args = checkpoint.get("args")
+    if not isinstance(checkpoint_args, dict):
+        raise RuntimeError("Resume checkpoint is missing canonical `args` metadata.")
     keys_to_match = [
         "train_jsonl",
         "val_jsonl",
@@ -467,9 +464,14 @@ def validate_resume_args(args: argparse.Namespace, checkpoint: dict) -> None:
         "image_min_pixels",
         "image_max_pixels",
     ]
+    missing_keys = [key for key in keys_to_match if key not in checkpoint_args]
+    if missing_keys:
+        raise RuntimeError(
+            "Resume checkpoint is missing canonical settings:\n" + "\n".join(missing_keys)
+        )
     mismatches = []
     for key in keys_to_match:
-        checkpoint_value = checkpoint_args.get(key, defaults.get(key))
+        checkpoint_value = checkpoint_args[key]
         current_value = getattr(args, key)
         if checkpoint_value != current_value:
             mismatches.append(f"{key}: checkpoint={checkpoint_value!r}, config={current_value!r}")

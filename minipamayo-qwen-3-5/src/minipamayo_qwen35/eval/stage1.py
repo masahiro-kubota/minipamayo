@@ -27,7 +27,6 @@ from ..data.stage1_dataset import Stage1JsonlDataset
 from ..tokens.action_quantizer import ActionQuantizer
 from ..tokens.token_registry import Stage1TokenRegistry
 from ..train.stage1 import (
-    DEFAULT_QUESTION,
     build_processor_kwargs,
     build_prompt_text,
     compute_token_accuracy,
@@ -132,11 +131,10 @@ def parse_args() -> argparse.Namespace:
 def resolve_model_path(args: argparse.Namespace, checkpoint: dict) -> str:
     if args.model_path:
         return args.model_path
-    checkpoint_args = checkpoint.get("args", {})
-    model_path = checkpoint_args.get("model_path")
-    if not model_path:
-        raise RuntimeError("Model path is not in the checkpoint. Pass --model-path explicitly.")
-    return model_path
+    checkpoint_args = checkpoint.get("args")
+    if not isinstance(checkpoint_args, dict) or "model_path" not in checkpoint_args:
+        raise RuntimeError("Checkpoint is missing canonical `args.model_path` metadata.")
+    return str(checkpoint_args["model_path"])
 
 
 def resolve_processor_path(args: argparse.Namespace, checkpoint_path: Path, model_path: str) -> str:
@@ -149,7 +147,13 @@ def resolve_processor_path(args: argparse.Namespace, checkpoint_path: Path, mode
 
 
 def resolve_dtype(args: argparse.Namespace, checkpoint: dict) -> torch.dtype:
-    dtype_name = args.dtype or checkpoint.get("args", {}).get("dtype", "bf16")
+    if args.dtype:
+        dtype_name = args.dtype
+    else:
+        checkpoint_args = checkpoint.get("args")
+        if not isinstance(checkpoint_args, dict) or "dtype" not in checkpoint_args:
+            raise RuntimeError("Checkpoint is missing canonical `args.dtype` metadata.")
+        dtype_name = checkpoint_args["dtype"]
     if dtype_name == "fp16":
         return torch.float16
     return torch.bfloat16
@@ -168,7 +172,7 @@ def load_components(args: argparse.Namespace) -> tuple[dict, object, object, Sta
     token_cfg = checkpoint["token_registry"]
     registry = Stage1TokenRegistry(
         n_bins=token_cfg["n_bins"],
-        token_prefix=token_cfg.get("token_prefix", "act"),
+        token_prefix=token_cfg["token_prefix"],
     )
     registry.add_to_tokenizer(processor.tokenizer)
 
@@ -777,12 +781,20 @@ def main() -> None:
         collate_fn=stage1_collate,
     )
 
-    stage1_metadata = checkpoint.get("stage1_metadata", {})
-    question = stage1_metadata.get("question") or checkpoint.get("args", {}).get("question") or DEFAULT_QUESTION
+    stage1_metadata = checkpoint.get("stage1_metadata")
+    if not isinstance(stage1_metadata, dict):
+        raise RuntimeError("Checkpoint is missing canonical `stage1_metadata`.")
+    required_stage1_keys = ["question", "action_dim", "k", "dt"]
+    missing_stage1_keys = [key for key in required_stage1_keys if key not in stage1_metadata]
+    if missing_stage1_keys:
+        raise RuntimeError(
+            "Checkpoint is missing canonical Stage 1 metadata:\n" + "\n".join(missing_stage1_keys)
+        )
+    question = stage1_metadata["question"]
     prompt_text = build_prompt_text(processor, question)
-    action_dim = int(stage1_metadata.get("action_dim", 12))
-    k_steps = int(stage1_metadata.get("k", action_dim // 2))
-    dt = float(stage1_metadata.get("dt", 0.5))
+    action_dim = int(stage1_metadata["action_dim"])
+    k_steps = int(stage1_metadata["k"])
+    dt = float(stage1_metadata["dt"])
     episode_id = infer_episode_id(test_jsonl, extract_summary)
     episode_metadata = {
         "episode_id": episode_id,
