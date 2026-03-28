@@ -1,4 +1,4 @@
-"""Convert a CARLA telemetry MCAP episode into Stage 1 JSONL samples."""
+"""Convert CARLA telemetry MCAP episodes into Stage 1 JSONL samples."""
 
 from __future__ import annotations
 
@@ -28,10 +28,20 @@ class FrameRecord:
     planner_state: str
 
 
+@dataclass
+class ExtractionJob:
+    output_dir: Path
+    episode_dir: Path | None = None
+    summary_path: Path | None = None
+    mcap_paths: list[Path] | None = None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Extract Stage 1 samples from MCAP telemetry.")
-    parser.add_argument("--episode-dir", type=str, required=True)
-    parser.add_argument("--output-dir", type=str, required=True)
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument("--episode-dir", type=str, help="Single episode directory to extract.")
+    input_group.add_argument("--manifest-json", type=str, help="JSON manifest describing one or more extraction jobs.")
+    parser.add_argument("--output-dir", type=str, default="", help="Output directory for --episode-dir mode.")
     parser.add_argument("--k", type=int, default=6, help="Number of predicted action steps.")
     parser.add_argument("--dt", type=float, default=0.5, help="Training step size in seconds.")
     parser.add_argument(
@@ -44,8 +54,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _read_episode_hz(episode_dir: Path) -> float:
-    summary_path = episode_dir / "summary.json"
+def _resolve_path(path_value: str, base_dir: Path) -> Path:
+    path = Path(path_value)
+    if path.is_absolute():
+        return path
+    return (base_dir / path).resolve()
+
+
+def _read_record_hz(summary_path: Path) -> float:
     with summary_path.open("r", encoding="utf-8") as f:
         summary = json.load(f)
     return float(summary["record_hz"])
@@ -87,6 +103,75 @@ def _resolve_mcap_paths(episode_dir: Path) -> list[Path]:
         "Could not find any MCAP telemetry files. Expected telemetry.mcap, "
         "telemetry/index.json, or telemetry/segment_*.mcap."
     )
+
+
+def _infer_summary_path(mcap_paths: list[Path]) -> Path:
+    if not mcap_paths:
+        raise RuntimeError("Manifest job has no MCAP paths.")
+    telemetry_dirs = {path.resolve().parent for path in mcap_paths}
+    if len(telemetry_dirs) != 1:
+        raise RuntimeError("Manifest jobs with explicit MCAP paths must share the same telemetry directory.")
+    telemetry_dir = telemetry_dirs.pop()
+    summary_path = telemetry_dir.parent / "summary.json"
+    if not summary_path.exists():
+        raise RuntimeError(f"Could not infer summary.json for telemetry directory: {telemetry_dir}")
+    return summary_path
+
+
+def _normalize_job(raw_job: dict, base_dir: Path) -> ExtractionJob:
+    if not isinstance(raw_job, dict):
+        raise RuntimeError("Each manifest job must be a JSON object.")
+
+    output_dir_value = raw_job.get("output_dir")
+    if not output_dir_value:
+        raise RuntimeError("Each manifest job must define output_dir.")
+    output_dir = _resolve_path(str(output_dir_value), base_dir)
+
+    episode_dir_value = raw_job.get("episode_dir")
+    if episode_dir_value:
+        episode_dir = _resolve_path(str(episode_dir_value), base_dir)
+        return ExtractionJob(output_dir=output_dir, episode_dir=episode_dir)
+
+    mcap_path_values = raw_job.get("mcap_paths")
+    if not isinstance(mcap_path_values, list) or not mcap_path_values:
+        raise RuntimeError("Each manifest job must define either episode_dir or a non-empty mcap_paths list.")
+
+    mcap_paths = [_resolve_path(str(path), base_dir) for path in mcap_path_values]
+    missing_paths = [str(path) for path in mcap_paths if not path.exists()]
+    if missing_paths:
+        raise RuntimeError("Manifest referenced missing MCAP files:\n" + "\n".join(missing_paths))
+
+    summary_path_value = raw_job.get("summary_path")
+    summary_path = (
+        _resolve_path(str(summary_path_value), base_dir)
+        if summary_path_value
+        else _infer_summary_path(mcap_paths)
+    )
+    if not summary_path.exists():
+        raise RuntimeError(f"Manifest referenced missing summary.json: {summary_path}")
+
+    return ExtractionJob(
+        output_dir=output_dir,
+        summary_path=summary_path,
+        mcap_paths=mcap_paths,
+    )
+
+
+def _load_jobs(args: argparse.Namespace) -> list[ExtractionJob]:
+    if args.episode_dir:
+        if not args.output_dir:
+            raise RuntimeError("--output-dir is required when using --episode-dir.")
+        return [ExtractionJob(output_dir=Path(args.output_dir), episode_dir=Path(args.episode_dir))]
+
+    manifest_path = Path(args.manifest_json).resolve()
+    with manifest_path.open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+
+    raw_jobs = payload.get("jobs") if isinstance(payload, dict) else payload
+    if not isinstance(raw_jobs, list) or not raw_jobs:
+        raise RuntimeError("Manifest JSON must be a non-empty list or an object with a non-empty jobs list.")
+
+    return [_normalize_job(raw_job, manifest_path.parent) for raw_job in raw_jobs]
 
 
 def _load_frames(mcap_paths: list[Path]) -> list[FrameRecord]:
@@ -176,20 +261,24 @@ def _record_to_json(
     }
 
 
-def main() -> None:
-    require_clean_git_worktree(Path(__file__).resolve().parent)
-    args = parse_args()
-    episode_dir = Path(args.episode_dir)
-    output_dir = Path(args.output_dir)
+def _extract_job(job: ExtractionJob, args: argparse.Namespace) -> dict:
+    output_dir = job.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     image_dir = output_dir / "images"
     image_dir.mkdir(parents=True, exist_ok=True)
 
-    record_hz = _read_episode_hz(episode_dir)
+    summary_path = (job.episode_dir / "summary.json") if job.episode_dir is not None else job.summary_path
+    if summary_path is None:
+        raise RuntimeError("Extraction job has neither episode_dir nor summary_path.")
+
+    record_hz = _read_record_hz(summary_path)
     future_stride = max(1, int(round(args.dt * record_hz)))
     sample_stride = args.sample_stride if args.sample_stride > 0 else future_stride
 
-    mcap_paths = _resolve_mcap_paths(episode_dir)
+    mcap_paths = _resolve_mcap_paths(job.episode_dir) if job.episode_dir is not None else job.mcap_paths
+    if not mcap_paths:
+        raise RuntimeError("Extraction job resolved no MCAP paths.")
+
     frames = _load_frames(mcap_paths)
     max_start = len(frames) - 1 - (args.k + 1) * future_stride
     if max_start < 0:
@@ -236,7 +325,8 @@ def main() -> None:
             f.write(json.dumps(sample, ensure_ascii=False) + "\n")
 
     summary = {
-        "episode_dir": str(episode_dir),
+        "episode_dir": str(job.episode_dir) if job.episode_dir is not None else None,
+        "summary_path": str(summary_path),
         "record_hz": record_hz,
         "dt": args.dt,
         "num_mcap_files": len(mcap_paths),
@@ -252,7 +342,20 @@ def main() -> None:
     with (output_dir / "extract_summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
 
-    print(json.dumps(summary, indent=2, ensure_ascii=False))
+    return summary
+
+
+def main() -> None:
+    require_clean_git_worktree(Path(__file__).resolve().parent)
+    args = parse_args()
+    jobs = _load_jobs(args)
+    summaries = [_extract_job(job, args) for job in jobs]
+
+    if len(summaries) == 1:
+        print(json.dumps(summaries[0], indent=2, ensure_ascii=False))
+        return
+
+    print(json.dumps({"jobs": summaries}, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":

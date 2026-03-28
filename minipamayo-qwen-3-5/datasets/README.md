@@ -34,10 +34,25 @@ Usage:
 - Extract Stage 1 training data under `datasets/processed/stage1/`.
 - Keep split JSONL files under `datasets/splits/stage1/` if you generate them.
 
-Example:
+Single episode example:
 
 ```bash
 PYTHONPATH=src python -m minipamayo_qwen35.data.mcap_stage1_extractor \
   --episode-dir datasets/raw/mcap/<episode_id> \
   --output-dir datasets/processed/stage1/<dataset_name>
 ```
+
+Batch manifest example:
+
+```bash
+PYTHONPATH=src python -m minipamayo_qwen35.data.mcap_stage1_extractor \
+  --manifest-json datasets/stage1_extract_manifest.example.json
+```
+
+Manifest format:
+
+- `episode_dir + output_dir`
+- or `mcap_paths + output_dir`
+- `summary_path` is optional when `mcap_paths` all live under the same `telemetry/` directory
+
+See `datasets/stage1_extract_manifest.example.json` for a concrete example.
