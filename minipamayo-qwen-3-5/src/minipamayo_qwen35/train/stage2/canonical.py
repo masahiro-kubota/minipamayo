@@ -38,6 +38,11 @@ from ...stage1.train import (
 )
 from ...utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
 from ...utils.json_config import normalize_optional_string_list, normalize_required_string_list
+from ...utils.image_budget import (
+    CANONICAL_IMAGE_MAX_PIXELS,
+    CANONICAL_IMAGE_MIN_PIXELS,
+    validate_canonical_image_budget,
+)
 from ...utils.preflight import enforce_training_prerequisites
 from ...utils.run_metadata import (
     collect_dataset_view_fingerprint,
@@ -81,8 +86,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--log-every", type=int, default=10)
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--image-min-pixels", type=int, default=0)
-    parser.add_argument("--image-max-pixels", type=int, default=0)
+    parser.add_argument("--image-min-pixels", type=int, default=CANONICAL_IMAGE_MIN_PIXELS)
+    parser.add_argument("--image-max-pixels", type=int, default=CANONICAL_IMAGE_MAX_PIXELS)
     parser.add_argument("--decoder-hidden-size", type=int, default=512)
     parser.add_argument("--decoder-num-layers", type=int, default=6)
     parser.add_argument("--decoder-num-attention-heads", type=int, default=8)
@@ -149,10 +154,7 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`early_stopping_patience` must be >= 0.")
     if args.early_stopping_min_delta < 0:
         raise RuntimeError("`early_stopping_min_delta` must be >= 0.")
-    if args.image_min_pixels < 0 or args.image_max_pixels < 0:
-        raise RuntimeError("`image_min_pixels` and `image_max_pixels` must be >= 0.")
-    if args.image_min_pixels > 0 and args.image_max_pixels > 0 and args.image_min_pixels > args.image_max_pixels:
-        raise RuntimeError("`image_min_pixels` must be <= `image_max_pixels` when both are set.")
+    validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
     if args.decoder_hidden_size % args.decoder_num_attention_heads != 0:
         raise RuntimeError("`decoder_hidden_size` must be divisible by `decoder_num_attention_heads`.")
     return args

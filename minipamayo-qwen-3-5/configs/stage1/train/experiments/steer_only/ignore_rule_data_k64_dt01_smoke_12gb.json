@@ -22,8 +22,8 @@
     "resume_from_checkpoint": "",
     "save_every_epochs": 0,
     "dtype": "bf16",
-    "image_min_pixels": 0,
-    "image_max_pixels": 0,
+    "image_min_pixels": 163840,
+    "image_max_pixels": 196608,
     "gradient_checkpointing": true,
     "wandb_project": "minipamayo-qwen35",
     "wandb_run_name": "stage1-steer-only-ignore-rule-k64-dt01-smoke-12gb-64tok"

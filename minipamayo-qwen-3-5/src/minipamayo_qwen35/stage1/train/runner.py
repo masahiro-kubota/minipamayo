@@ -38,6 +38,11 @@ from ...utils.json_config import (
     normalize_required_string_list,
     resolve_path_base,
 )
+from ...utils.image_budget import (
+    CANONICAL_IMAGE_MAX_PIXELS,
+    CANONICAL_IMAGE_MIN_PIXELS,
+    validate_canonical_image_budget,
+)
 from ...utils.preflight import collect_gpu_preflight_snapshot, enforce_training_prerequisites
 from ...utils.run_metadata import (
     collect_dataset_view_fingerprint,
@@ -100,8 +105,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--save-every-epochs", type=int, default=0)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--dtype", type=str, default="bf16", choices=["bf16", "fp16"])
-    parser.add_argument("--image-min-pixels", type=int, default=0)
-    parser.add_argument("--image-max-pixels", type=int, default=0)
+    parser.add_argument("--image-min-pixels", type=int, default=CANONICAL_IMAGE_MIN_PIXELS)
+    parser.add_argument("--image-max-pixels", type=int, default=CANONICAL_IMAGE_MAX_PIXELS)
     parser.add_argument("--question", type=str, default=DEFAULT_QUESTION)
     parser.add_argument("--wandb-project", type=str, default="minipamayo-qwen35")
     parser.add_argument("--wandb-entity", type=str, default="")
@@ -174,14 +179,7 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`early_stopping_patience` must be >= 0.")
     if args.early_stopping_min_delta < 0:
         raise RuntimeError("`early_stopping_min_delta` must be >= 0.")
-    if args.image_min_pixels < 0 or args.image_max_pixels < 0:
-        raise RuntimeError("`image_min_pixels` and `image_max_pixels` must be >= 0.")
-    if (
-        args.image_min_pixels > 0
-        and args.image_max_pixels > 0
-        and args.image_min_pixels > args.image_max_pixels
-    ):
-        raise RuntimeError("`image_min_pixels` must be <= `image_max_pixels` when both are set.")
+    validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
     return args
 
 

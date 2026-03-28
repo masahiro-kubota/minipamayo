@@ -35,6 +35,11 @@ from ...stage1.train import (
     write_run_config,
 )
 from ...utils.dynamics import forward_dynamics_batch
+from ...utils.image_budget import (
+    CANONICAL_IMAGE_MAX_PIXELS,
+    CANONICAL_IMAGE_MIN_PIXELS,
+    validate_canonical_image_budget,
+)
 from ...utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
 from ...utils.preflight import enforce_training_prerequisites
 from ...utils.run_metadata import collect_dataset_view_fingerprint, collect_git_metadata, collect_gpu_info
@@ -75,8 +80,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--flow-steps", type=int, default=10)
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--image-min-pixels", type=int, default=0)
-    parser.add_argument("--image-max-pixels", type=int, default=0)
+    parser.add_argument("--image-min-pixels", type=int, default=CANONICAL_IMAGE_MIN_PIXELS)
+    parser.add_argument("--image-max-pixels", type=int, default=CANONICAL_IMAGE_MAX_PIXELS)
     parser.add_argument("--log-every", type=int, default=10)
     parser.add_argument("--gradient-checkpointing", action="store_true", default=True)
     parser.add_argument("--wandb-project", type=str, default="minipamayo-qwen35")
@@ -137,6 +142,7 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`max_gen_tokens` must be > 0.")
     if args.flow_steps <= 0:
         raise RuntimeError("`flow_steps` must be > 0.")
+    validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
     return args
 
 

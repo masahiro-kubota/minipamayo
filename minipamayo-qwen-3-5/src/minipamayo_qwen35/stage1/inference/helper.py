@@ -8,8 +8,10 @@ from typing import Any
 import torch
 from transformers import AutoProcessor
 
-MIN_PIXELS = 163840
-MAX_PIXELS = 196608
+from ...utils.image_budget import CANONICAL_IMAGE_MAX_PIXELS, CANONICAL_IMAGE_MIN_PIXELS
+
+MIN_PIXELS = CANONICAL_IMAGE_MIN_PIXELS
+MAX_PIXELS = CANONICAL_IMAGE_MAX_PIXELS
 SYSTEM_PROMPT = "You are a driving assistant that generates safe and accurate actions."
 
 

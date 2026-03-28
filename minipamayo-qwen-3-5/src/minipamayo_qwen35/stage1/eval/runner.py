@@ -41,6 +41,11 @@ from ..train import (
     stage1_collate,
 )
 from ...utils.dynamics import forward_dynamics_batch
+from ...utils.image_budget import (
+    CANONICAL_IMAGE_MAX_PIXELS,
+    CANONICAL_IMAGE_MIN_PIXELS,
+    validate_canonical_image_budget,
+)
 from ...utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
 from ...utils.run_metadata import (
     collect_dataset_view_fingerprint,
@@ -68,8 +73,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--show-samples", type=int, default=10)
-    parser.add_argument("--image-min-pixels", type=int, default=0)
-    parser.add_argument("--image-max-pixels", type=int, default=0)
+    parser.add_argument("--image-min-pixels", type=int, default=CANONICAL_IMAGE_MIN_PIXELS)
+    parser.add_argument("--image-max-pixels", type=int, default=CANONICAL_IMAGE_MAX_PIXELS)
     parser.add_argument("--output-json", type=str, default="")
     parser.add_argument("--output-mcap", type=str, default="")
     return parser
@@ -121,10 +126,7 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`checkpoint` must be defined in the config JSON.")
     if not args.test_jsonl:
         raise RuntimeError("`test_jsonl` must be defined in the config JSON.")
-    if args.image_min_pixels < 0 or args.image_max_pixels < 0:
-        raise RuntimeError("`image_min_pixels` and `image_max_pixels` must be >= 0.")
-    if args.image_min_pixels > 0 and args.image_max_pixels > 0 and args.image_min_pixels > args.image_max_pixels:
-        raise RuntimeError("`image_min_pixels` must be <= `image_max_pixels` when both are set.")
+    validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
     return args
 
 

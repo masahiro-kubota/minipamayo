@@ -99,8 +99,8 @@
 
 ### 4. 画像 token budget は Alpamayo 寄りを canonical default にする
 
-- [ ] canonical default は `min_pixels=163840`, `max_pixels=196608`
-- [ ] 無制限画像 token は experiment 扱いにする
+- [x] canonical default は `min_pixels=163840`, `max_pixels=196608`
+- [x] 無制限画像 token は experiment 扱いにする
 
 ## 推奨する最終レイアウト
 

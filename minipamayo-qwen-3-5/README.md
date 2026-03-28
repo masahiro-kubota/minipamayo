@@ -48,8 +48,8 @@ Stage 1 train configs now support:
   Each value may be either a single path string or a JSON array of path strings.
 - `resume_from_checkpoint` for epoch-level resume from `last.pt`
 - `early_stopping_patience` and `early_stopping_min_delta`
-- `image_min_pixels` and `image_max_pixels` to control the Qwen processor image-token budget
-  `0` keeps the processor default, and smaller `image_max_pixels` reduces image tokens for tighter VRAM budgets
+- fixed Alpamayo-style image budget: `image_min_pixels=163840`, `image_max_pixels=196608`
+  Canonical paths reject any other values so unlimited image tokens never slip in by accident.
 
 Stage 1 eval configs use `test_jsonl` explicitly so the evaluation split is named separately from train/val.
 
