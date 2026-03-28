@@ -37,6 +37,7 @@ from ...stage1.train import (
     write_run_config,
 )
 from ...utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
+from ...utils.json_config import normalize_optional_string_list, normalize_required_string_list
 from ...utils.preflight import enforce_training_prerequisites
 from ...utils.run_metadata import (
     collect_dataset_view_fingerprint,
@@ -53,6 +54,7 @@ CONFIG_PATH_KEYS = {
     "val_jsonl",
     "save_dir",
 }
+MULTI_VALUE_CONFIG_KEYS = {"train_jsonl", "val_jsonl"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -116,6 +118,7 @@ def _load_config_args(config_json: str, parser: argparse.ArgumentParser) -> tupl
         parser,
         exclude_dests={"help", "config_json"},
         path_keys=CONFIG_PATH_KEYS,
+        list_keys=MULTI_VALUE_CONFIG_KEYS,
         base_dir=base_dir,
     )
     return str(config_path), payload, config_args
@@ -138,10 +141,10 @@ def parse_args() -> argparse.Namespace:
     args.config_json = config_path
     args.config_payload = config_payload
     args.config_args = config_args
+    args.train_jsonl = normalize_required_string_list(args.train_jsonl, key_name="train_jsonl")
+    args.val_jsonl = normalize_optional_string_list(args.val_jsonl, key_name="val_jsonl")
     if not args.stage1_checkpoint:
         raise RuntimeError("`stage1_checkpoint` must be defined in the config JSON.")
-    if not args.train_jsonl:
-        raise RuntimeError("`train_jsonl` must be defined in the config JSON.")
     if args.early_stopping_patience < 0:
         raise RuntimeError("`early_stopping_patience` must be >= 0.")
     if args.early_stopping_min_delta < 0:
@@ -199,8 +202,8 @@ def build_stage2_metadata(dataset, args: argparse.Namespace, condition_dim: int)
     action = record["action"]
     return {
         "stage1_checkpoint": args.stage1_checkpoint,
-        "train_jsonl": args.train_jsonl,
-        "val_jsonl": args.val_jsonl or None,
+        "train_jsonl": list(args.train_jsonl),
+        "val_jsonl": list(args.val_jsonl) if args.val_jsonl is not None else None,
         "sample_format": "jsonl+images",
         "condition_source": "final_hidden_states",
         "reasoning_source": "synthetic_command_planner_state",

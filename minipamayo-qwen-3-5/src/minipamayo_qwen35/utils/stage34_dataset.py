@@ -8,25 +8,37 @@ import torch
 from torch.utils.data import Dataset
 
 from ..sequence.stage3_builder import build_reasoning_text, infer_driving_decision
-from ..stage1.data.dataset import read_jsonl
+from ..stage1.data.dataset import normalize_jsonl_paths, read_jsonl
 
 
 class Stage34JsonlDataset(Dataset):
     """Stage 1 JSONL records with synthetic reasoning targets."""
 
-    def __init__(self, jsonl_path: str | Path, max_samples: int = 0):
-        records = read_jsonl(jsonl_path)
+    def __init__(self, jsonl_path: str | Path | list[str] | list[Path], max_samples: int = 0):
+        self.jsonl_paths = normalize_jsonl_paths(jsonl_path, dataset_name="Stage34JsonlDataset")
+        if len(self.jsonl_paths) == 1:
+            self.jsonl_path = self.jsonl_paths[0]
+
+        records: list[dict] = []
+        record_root_dirs: list[Path] = []
+        for path in self.jsonl_paths:
+            source_records = read_jsonl(path)
+            records.extend(source_records)
+            record_root_dirs.extend([path.parent] * len(source_records))
+
         if max_samples > 0:
             records = records[:max_samples]
-        self.jsonl_path = Path(jsonl_path)
-        self.root_dir = self.jsonl_path.parent
+            record_root_dirs = record_root_dirs[:max_samples]
+
         self.records = records
+        self.record_root_dirs = record_root_dirs
 
     def __len__(self) -> int:
         return len(self.records)
 
     def __getitem__(self, index: int) -> dict:
         record = self.records[index]
+        root_dir = self.record_root_dirs[index]
         required_keys = [
             "sample_id",
             "image_path",
@@ -54,7 +66,7 @@ class Stage34JsonlDataset(Dataset):
         )
         return {
             "sample_id": str(record["sample_id"]),
-            "image_path": str(self.root_dir / str(record["image_path"])),
+            "image_path": str(root_dir / str(record["image_path"])),
             "action": torch.tensor(record["action"], dtype=torch.float32),
             "v0": torch.tensor(record["v0"], dtype=torch.float32),
             "gt_waypoints": torch.tensor(record["gt_waypoints"], dtype=torch.float32),
