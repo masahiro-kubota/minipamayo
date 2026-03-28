@@ -1,30 +1,21 @@
-"""Canonical Stage 1B action space aligned with Alpamayo's public API surface."""
+"""Canonical Stage 1B action space aligned with Alpamayo's public numerics."""
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import torch
 from torch import nn
 
 from ..tokenization.history import canonicalize_history_batch_tensors
-
-
-def _yaw_from_rot(rot: torch.Tensor) -> torch.Tensor:
-    return torch.atan2(rot[..., 1, 0], rot[..., 0, 0])
-
-
-def _yaw_to_rotmat(yaw: torch.Tensor) -> torch.Tensor:
-    cos_yaw = torch.cos(yaw)
-    sin_yaw = torch.sin(yaw)
-    rot = torch.zeros((*yaw.shape, 3, 3), device=yaw.device, dtype=yaw.dtype)
-    rot[..., 0, 0] = cos_yaw
-    rot[..., 0, 1] = -sin_yaw
-    rot[..., 1, 0] = sin_yaw
-    rot[..., 1, 1] = cos_yaw
-    rot[..., 2, 2] = 1.0
-    return rot
+from .action_space_utils import (
+    dxy_theta_to_v,
+    dxy_theta_to_v_without_v0,
+    solve_xs_eq_y,
+    theta_smooth,
+    unwrap_angle,
+)
+from .rotation import rot_2d_to_3d, rotation_matrix_torch, so3_to_yaw_torch
 
 
 def _canonicalize_traj_group_tensor(name: str, value: torch.Tensor) -> torch.Tensor:
@@ -42,7 +33,7 @@ def _canonicalize_traj_group_tensor(name: str, value: torch.Tensor) -> torch.Ten
 
 
 class UnicycleAccelCurvatureActionSpace(nn.Module):
-    """Unicycle action space with Alpamayo-like API and canonical single-group support."""
+    """Unicycle action space ported from Alpamayo with canonical single-group wrappers."""
 
     def __init__(
         self,
@@ -56,6 +47,14 @@ class UnicycleAccelCurvatureActionSpace(nn.Module):
         curvature_std: float = 1.0,
         accel_bounds: tuple[float, float] = (-9.8, 9.8),
         curvature_bounds: tuple[float, float] = (-0.2, 0.2),
+        theta_lambda: float = 1e-6,
+        theta_ridge: float = 1e-8,
+        v_lambda: float = 1e-6,
+        v_ridge: float = 1e-4,
+        a_lambda: float = 1e-4,
+        a_ridge: float = 1e-4,
+        kappa_lambda: float = 1e-4,
+        kappa_ridge: float = 1e-4,
     ):
         super().__init__()
         resolved_k = int(n_waypoints if n_waypoints is not None else (k if k is not None else 64))
@@ -71,6 +70,14 @@ class UnicycleAccelCurvatureActionSpace(nn.Module):
         self.dt = float(dt)
         self.accel_bounds = tuple(float(v) for v in accel_bounds)
         self.curvature_bounds = tuple(float(v) for v in curvature_bounds)
+        self.theta_lambda = float(theta_lambda)
+        self.theta_ridge = float(theta_ridge)
+        self.v_lambda = float(v_lambda)
+        self.v_ridge = float(v_ridge)
+        self.a_lambda = float(a_lambda)
+        self.a_ridge = float(a_ridge)
+        self.kappa_lambda = float(kappa_lambda)
+        self.kappa_ridge = float(kappa_ridge)
         self.register_buffer("accel_mean", torch.tensor(float(accel_mean), dtype=torch.float32))
         self.register_buffer("accel_std", torch.tensor(float(accel_std), dtype=torch.float32))
         self.register_buffer(
@@ -100,36 +107,68 @@ class UnicycleAccelCurvatureActionSpace(nn.Module):
         )
         return torch.all(accel_ok & curvature_ok, dim=-1)
 
+    @torch.no_grad()
+    @torch.amp.autocast(device_type="cuda", enabled=False)
+    def _v_to_a(self, v: torch.Tensor) -> torch.Tensor:
+        dv = (v[..., 1:] - v[..., :-1]) / self.dt
+        return solve_xs_eq_y(
+            s=torch.ones_like(dv),
+            y=dv,
+            dt=self.dt,
+            lam=self.a_lambda,
+            ridge=self.a_ridge,
+            w_smooth1=None,
+            w_smooth2=1.0,
+            w_smooth3=None,
+        )
+
+    @torch.no_grad()
+    @torch.amp.autocast(device_type="cuda", enabled=False)
+    def _theta_v_a_to_kappa(
+        self,
+        theta: torch.Tensor,
+        v: torch.Tensor,
+        a: torch.Tensor,
+    ) -> torch.Tensor:
+        dtheta = theta[..., 1:] - theta[..., :-1]
+        s = self.dt * v[..., :-1] + (self.dt**2) / 2.0 * a
+        w = torch.ones_like(dtheta)
+        return solve_xs_eq_y(
+            s=s,
+            y=dtheta,
+            w_data=w,
+            w_smooth1=None,
+            w_smooth2=1.0,
+            w_smooth3=None,
+            lam=self.kappa_lambda,
+            ridge=self.kappa_ridge,
+            dt=self.dt,
+        )
+
+    @torch.no_grad()
+    @torch.amp.autocast(device_type="cuda", enabled=False)
     def estimate_t0_states(
         self,
         traj_history_xyz: torch.Tensor,
         traj_history_rot: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
-        history_xyz, history_rot = canonicalize_history_batch_tensors(traj_history_xyz, traj_history_rot)
+        history_xyz, history_rot = canonicalize_history_batch_tensors(
+            traj_history_xyz, traj_history_rot
+        )
         hist_xyz = history_xyz[:, 0]
         hist_rot = history_rot[:, 0]
-        if hist_xyz.shape[1] < 2:
-            raise RuntimeError("Need at least two history steps to estimate t0 state.")
-        current_xy = hist_xyz[:, -1, :2]
-        prev_xy = hist_xyz[:, -2, :2]
-        speed = torch.linalg.norm(current_xy - prev_xy, dim=-1) / self.dt
-        yaw = _yaw_from_rot(hist_rot[:, -1])
-        return {"v": speed, "yaw": yaw}
-
-    def _denormalize_action(self, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        accel = action[..., 0] * self.accel_std.to(action.device) + self.accel_mean.to(action.device)
-        curvature = (
-            action[..., 1] * self.curvature_std.to(action.device)
-            + self.curvature_mean.to(action.device)
+        full_xy = hist_xyz[..., :2]
+        dxy = full_xy[..., 1:, :] - full_xy[..., :-1, :]
+        theta = so3_to_yaw_torch(hist_rot)
+        theta = unwrap_angle(theta)
+        v = dxy_theta_to_v_without_v0(
+            dxy=dxy,
+            theta=theta,
+            dt=self.dt,
+            v_lambda=self.v_lambda,
+            v_ridge=self.v_ridge,
         )
-        return accel, curvature
-
-    def _normalize_action(self, accel: torch.Tensor, curvature: torch.Tensor) -> torch.Tensor:
-        accel = (accel - self.accel_mean.to(accel.device)) / self.accel_std.to(accel.device)
-        curvature = (
-            curvature - self.curvature_mean.to(curvature.device)
-        ) / self.curvature_std.to(curvature.device)
-        return torch.stack([accel, curvature], dim=-1)
+        return {"v": v[..., -1]}
 
     def traj_to_action(
         self,
@@ -143,7 +182,11 @@ class UnicycleAccelCurvatureActionSpace(nn.Module):
         **kwargs: Any,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         del args, kwargs
-        history_xyz, history_rot = canonicalize_history_batch_tensors(traj_history_xyz, traj_history_rot)
+        history_xyz, history_rot = canonicalize_history_batch_tensors(
+            traj_history_xyz, traj_history_rot
+        )
+        history_xyz = history_xyz[:, 0]
+        history_rot = history_rot[:, 0]
         future_xyz = _canonicalize_traj_group_tensor("traj_future_xyz", traj_future_xyz)
         future_rot = _canonicalize_traj_group_tensor("traj_future_rot", traj_future_rot)
         if future_xyz.shape[1] != self.k:
@@ -155,26 +198,34 @@ class UnicycleAccelCurvatureActionSpace(nn.Module):
         if t0_states is None:
             t0_states = self.estimate_t0_states(history_xyz, history_rot)
 
-        full_xy = torch.cat([history_xyz[:, 0, -1:, :2], future_xyz[:, :, :2]], dim=1)
-        delta_xy = full_xy[:, 1:] - full_xy[:, :-1]
-        step_speed = torch.linalg.norm(delta_xy, dim=-1) / self.dt
-        prev_speed = torch.cat([t0_states["v"].unsqueeze(1), step_speed[:, :-1]], dim=1)
-        accel = (step_speed - prev_speed) / self.dt
-
-        future_yaw = _yaw_from_rot(future_rot)
-        prev_yaw = t0_states["yaw"].unsqueeze(1)
-        yaw_seq = torch.cat([prev_yaw, future_yaw], dim=1)
-        delta_yaw = torch.atan2(
-            torch.sin(yaw_seq[:, 1:] - yaw_seq[:, :-1]),
-            torch.cos(yaw_seq[:, 1:] - yaw_seq[:, :-1]),
+        full_xy = torch.cat([history_xyz[..., -1:, :], future_xyz], dim=-2)[..., :2]
+        dxy = full_xy[..., 1:, :] - full_xy[..., :-1, :]
+        theta = theta_smooth(
+            traj_future_rot=future_rot,
+            dt=self.dt,
+            theta_lambda=self.theta_lambda,
+            theta_ridge=self.theta_ridge,
         )
-        distance = torch.linalg.norm(delta_xy, dim=-1).clamp_min(1e-4)
-        curvature = delta_yaw / distance
+        v0 = t0_states["v"]
+        v = dxy_theta_to_v(
+            dxy=dxy,
+            theta=theta,
+            v0=v0,
+            dt=self.dt,
+            v_lambda=self.v_lambda,
+            v_ridge=self.v_ridge,
+        )
+        accel = self._v_to_a(v)
+        kappa = self._theta_v_a_to_kappa(theta, v, accel)
 
-        action = self._normalize_action(accel, curvature)
+        accel = (accel - self.accel_mean.to(accel.device)) / self.accel_std.to(accel.device)
+        kappa = (kappa - self.curvature_mean.to(kappa.device)) / self.curvature_std.to(
+            kappa.device
+        )
+        action = torch.stack([accel, kappa], dim=-1)
         if not output_all_states:
             return action
-        states = torch.stack([prev_speed, accel, yaw_seq[:, :-1]], dim=-1)
+        states = torch.stack([v[:, :-1], accel, theta[:, :-1]], dim=-1)
         return action, states
 
     def action_to_traj(
@@ -187,7 +238,11 @@ class UnicycleAccelCurvatureActionSpace(nn.Module):
         **kwargs: Any,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         del args, kwargs
-        history_xyz, history_rot = canonicalize_history_batch_tensors(traj_history_xyz, traj_history_rot)
+        history_xyz, history_rot = canonicalize_history_batch_tensors(
+            traj_history_xyz, traj_history_rot
+        )
+        history_xyz = history_xyz[:, 0]
+        history_rot = history_rot[:, 0]
         if action.dim() == 2:
             action = action.unsqueeze(0)
         if action.dim() == 4 and action.shape[1] == 1:
@@ -201,33 +256,78 @@ class UnicycleAccelCurvatureActionSpace(nn.Module):
         if t0_states is None:
             t0_states = self.estimate_t0_states(history_xyz, history_rot)
 
-        accel, curvature = self._denormalize_action(action.to(torch.float32))
-        batch_size = accel.shape[0]
-        device = accel.device
-        dtype = accel.dtype
+        accel = action[..., 0]
+        kappa = action[..., 1]
 
-        x = torch.zeros((batch_size, self.k), device=device, dtype=dtype)
-        y = torch.zeros((batch_size, self.k), device=device, dtype=dtype)
-        theta = torch.zeros((batch_size, self.k + 1), device=device, dtype=dtype)
-        theta[:, 0] = t0_states["yaw"].to(device=device, dtype=dtype)
-        v = t0_states["v"].to(device=device, dtype=dtype)
+        accel_mean = self.accel_mean.to(accel.device)
+        accel_std = self.accel_std.to(accel.device)
+        kappa_mean = self.curvature_mean.to(kappa.device)
+        kappa_std = self.curvature_std.to(kappa.device)
+        accel = accel * accel_std + accel_mean
+        kappa = kappa * kappa_std + kappa_mean
 
-        for step_idx in range(self.k):
-            prev_v = v
-            ds = prev_v * self.dt + 0.5 * accel[:, step_idx] * (self.dt**2)
-            theta[:, step_idx + 1] = theta[:, step_idx] + curvature[:, step_idx] * ds
-            if step_idx == 0:
-                x[:, step_idx] = ds * torch.cos(theta[:, step_idx])
-                y[:, step_idx] = ds * torch.sin(theta[:, step_idx])
-            else:
-                x[:, step_idx] = x[:, step_idx - 1] + ds * torch.cos(theta[:, step_idx])
-                y[:, step_idx] = y[:, step_idx - 1] + ds * torch.sin(theta[:, step_idx])
-            v = torch.clamp(prev_v + accel[:, step_idx] * self.dt, min=0.0)
+        if t0_states is None:
+            t0_states = self.estimate_t0_states(history_xyz, history_rot)
 
-        pred_xyz = torch.zeros((batch_size, 1, self.k, 3), device=device, dtype=dtype)
-        pred_xyz[:, 0, :, 0] = x
-        pred_xyz[:, 0, :, 1] = y
-        pred_xyz[:, 0, :, 2] = history_xyz[:, 0, -1:, 2].expand(-1, self.k)
+        v0 = t0_states["v"]
+        dt = self.dt
+        dt_2_term = 0.5 * (self.dt**2)
+        velocity = torch.cat(
+            [v0.unsqueeze(-1), (v0.unsqueeze(-1) + torch.cumsum(accel * dt, dim=-1))],
+            dim=-1,
+        )
+        initial_yaw = torch.zeros_like(v0)
+        theta = torch.cat(
+            [
+                initial_yaw.unsqueeze(-1),
+                (
+                    initial_yaw.unsqueeze(-1)
+                    + torch.cumsum(kappa * velocity[..., :-1] * dt, dim=-1)
+                    + torch.cumsum(kappa * accel * dt_2_term, dim=-1)
+                ),
+            ],
+            dim=-1,
+        )
+        half_dt_term = 0.5 * dt
+        initial_x = torch.zeros_like(v0)
+        initial_y = torch.zeros_like(v0)
+        x = (
+            initial_x.unsqueeze(-1)
+            + torch.cumsum(
+                velocity[..., :-1] * torch.cos(theta[..., :-1]) * half_dt_term,
+                dim=-1,
+            )
+            + torch.cumsum(
+                velocity[..., 1:] * torch.cos(theta[..., 1:]) * half_dt_term,
+                dim=-1,
+            )
+        )
+        y = (
+            initial_y.unsqueeze(-1)
+            + torch.cumsum(
+                velocity[..., :-1] * torch.sin(theta[..., :-1]) * half_dt_term,
+                dim=-1,
+            )
+            + torch.cumsum(
+                velocity[..., 1:] * torch.sin(theta[..., 1:]) * half_dt_term,
+                dim=-1,
+            )
+        )
 
-        pred_rot = _yaw_to_rotmat(theta[:, 1:]).unsqueeze(1)
+        batch_dim = history_xyz.shape[:-2]
+        pred_xyz = torch.zeros(
+            *batch_dim,
+            self.n_waypoints,
+            3,
+            device=history_xyz.device,
+            dtype=history_xyz.dtype,
+        )
+        pred_xyz[..., 0] = x.to(dtype=pred_xyz.dtype)
+        pred_xyz[..., 1] = y.to(dtype=pred_xyz.dtype)
+        pred_xyz[..., 2] = history_xyz[..., -1:, 2]
+        pred_rot = rot_2d_to_3d(rotation_matrix_torch(theta[..., 1:])).to(
+            dtype=history_rot.dtype
+        )
+        pred_xyz = pred_xyz.unsqueeze(1)
+        pred_rot = pred_rot.unsqueeze(1)
         return pred_xyz, pred_rot
