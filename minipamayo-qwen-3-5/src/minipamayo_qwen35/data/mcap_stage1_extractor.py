@@ -12,6 +12,7 @@ import numpy as np
 from mcap.reader import make_reader
 
 from ..utils.dynamics import interleave_action, inverse_dynamics_np, to_ego_centric
+from ..utils.preflight import require_clean_git_worktree
 
 
 @dataclass
@@ -50,34 +51,73 @@ def _read_episode_hz(episode_dir: Path) -> float:
     return float(summary["record_hz"])
 
 
-def _load_frames(mcap_path: Path) -> list[FrameRecord]:
+def _resolve_mcap_paths(episode_dir: Path) -> list[Path]:
+    legacy_mcap_path = episode_dir / "telemetry.mcap"
+    if legacy_mcap_path.exists():
+        return [legacy_mcap_path]
+
+    telemetry_dir = episode_dir / "telemetry"
+    if not telemetry_dir.exists():
+        raise RuntimeError(
+            "Could not find telemetry input. Expected either "
+            f"{legacy_mcap_path} or a telemetry/ directory under {episode_dir}."
+        )
+
+    index_path = telemetry_dir / "index.json"
+    if index_path.exists():
+        with index_path.open("r", encoding="utf-8") as f:
+            index = json.load(f)
+        segments = index.get("segments", [])
+        if not segments:
+            raise RuntimeError(f"Telemetry index exists but contains no segments: {index_path}")
+
+        mcap_paths = [telemetry_dir / str(segment["path"]) for segment in segments]
+        missing_paths = [str(path) for path in mcap_paths if not path.exists()]
+        if missing_paths:
+            raise RuntimeError(
+                "Telemetry index referenced missing segment files:\n" + "\n".join(missing_paths)
+            )
+        return mcap_paths
+
+    mcap_paths = sorted(telemetry_dir.glob("segment_*.mcap"))
+    if mcap_paths:
+        return mcap_paths
+
+    raise RuntimeError(
+        "Could not find any MCAP telemetry files. Expected telemetry.mcap, "
+        "telemetry/index.json, or telemetry/segment_*.mcap."
+    )
+
+
+def _load_frames(mcap_paths: list[Path]) -> list[FrameRecord]:
     topics = {
         "/camera/front/compressed",
         "/ego/state",
         "/ego/planning",
     }
     raw_frames: dict[tuple[int, int], dict] = {}
-    with mcap_path.open("rb") as f:
-        reader = make_reader(f)
-        for _, channel, message in reader.iter_messages(topics=topics):
-            payload = json.loads(message.data)
-            timestamp = payload["timestamp"]
-            ts_key = (int(timestamp["sec"]), int(timestamp["nsec"]))
-            frame = raw_frames.setdefault(ts_key, {})
-            if channel.topic == "/camera/front/compressed":
-                frame["image_b64"] = payload["data"]
-                frame["image_format"] = payload.get("format", "jpeg")
-            elif channel.topic == "/ego/state":
-                frame["frame_id"] = int(payload["frame_id"])
-                pose = payload["pose"]
-                frame["speed_mps"] = float(payload["speed_mps"])
-                frame["x"] = float(pose["x"])
-                frame["y"] = float(pose["y"])
-                frame["yaw_deg"] = float(pose["yaw_deg"])
-            elif channel.topic == "/ego/planning":
-                frame["frame_id"] = int(payload["frame_id"])
-                frame["command"] = str(payload.get("behavior", "lanefollow"))
-                frame["planner_state"] = str(payload.get("planner_state", "unknown"))
+    for mcap_path in mcap_paths:
+        with mcap_path.open("rb") as f:
+            reader = make_reader(f)
+            for _, channel, message in reader.iter_messages(topics=topics):
+                payload = json.loads(message.data)
+                timestamp = payload["timestamp"]
+                ts_key = (int(timestamp["sec"]), int(timestamp["nsec"]))
+                frame = raw_frames.setdefault(ts_key, {})
+                if channel.topic == "/camera/front/compressed":
+                    frame["image_b64"] = payload["data"]
+                    frame["image_format"] = payload.get("format", "jpeg")
+                elif channel.topic == "/ego/state":
+                    frame["frame_id"] = int(payload["frame_id"])
+                    pose = payload["pose"]
+                    frame["speed_mps"] = float(payload["speed_mps"])
+                    frame["x"] = float(pose["x"])
+                    frame["y"] = float(pose["y"])
+                    frame["yaw_deg"] = float(pose["yaw_deg"])
+                elif channel.topic == "/ego/planning":
+                    frame["frame_id"] = int(payload["frame_id"])
+                    frame["command"] = str(payload.get("behavior", "lanefollow"))
+                    frame["planner_state"] = str(payload.get("planner_state", "unknown"))
 
     frames: list[FrameRecord] = []
     for ts_key in sorted(raw_frames):
@@ -137,6 +177,7 @@ def _record_to_json(
 
 
 def main() -> None:
+    require_clean_git_worktree(Path(__file__).resolve().parent)
     args = parse_args()
     episode_dir = Path(args.episode_dir)
     output_dir = Path(args.output_dir)
@@ -148,7 +189,8 @@ def main() -> None:
     future_stride = max(1, int(round(args.dt * record_hz)))
     sample_stride = args.sample_stride if args.sample_stride > 0 else future_stride
 
-    frames = _load_frames(episode_dir / "telemetry.mcap")
+    mcap_paths = _resolve_mcap_paths(episode_dir)
+    frames = _load_frames(mcap_paths)
     max_start = len(frames) - 1 - (args.k + 1) * future_stride
     if max_start < 0:
         raise RuntimeError("Not enough frames in the episode for the requested horizon.")
@@ -197,6 +239,8 @@ def main() -> None:
         "episode_dir": str(episode_dir),
         "record_hz": record_hz,
         "dt": args.dt,
+        "num_mcap_files": len(mcap_paths),
+        "mcap_paths": [str(path) for path in mcap_paths],
         "future_stride_frames": future_stride,
         "sample_stride_frames": sample_stride,
         "k": args.k,

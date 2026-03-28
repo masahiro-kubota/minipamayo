@@ -1,6 +1,6 @@
 {
   "model_path": "/home/masa/minipamayo/shared_checkpoints/hf_models/Qwen3.5-0.8B",
-  "dataset_jsonl": "minipamayo-qwen-3-5/data/processed/town01_loop_stage1/samples.jsonl",
+  "dataset_jsonl": "minipamayo-qwen-3-5/datasets/processed/stage1/town01_loop_stage1/samples.jsonl",
   "num_optimizer_steps": 4,
   "num_samples_seen": 4,
   "dataset_size": 16,

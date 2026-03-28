@@ -1,6 +1,6 @@
 {
   "checkpoint": "checkpoints/stage1_action_only_smoke/best.pt",
-  "dataset_jsonl": "data/processed/town01_loop_stage1/samples.jsonl",
+  "dataset_jsonl": "datasets/processed/stage1/town01_loop_stage1/samples.jsonl",
   "num_samples": 2,
   "teacher_forced_loss": 11.49385929107666,
   "teacher_forced_token_accuracy": 0.0,
