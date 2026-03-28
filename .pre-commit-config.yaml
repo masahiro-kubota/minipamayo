@@ -34,7 +34,7 @@ repos:
         name: minipamayo-qwen35 no silent fallbacks
         entry: python scripts/check_minipamayo_qwen35_no_silent_fallbacks.py
         language: system
-        files: ^minipamayo-qwen-3-5/src/minipamayo_qwen35/(data|train|eval|utils)/.*\.py$
+        files: ^minipamayo-qwen-3-5/src/minipamayo_qwen35/.*\.py$
         types: [python]
       - id: conventional-commit-message
         name: conventional commit message
