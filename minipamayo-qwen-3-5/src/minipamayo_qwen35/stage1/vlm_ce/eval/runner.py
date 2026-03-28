@@ -254,8 +254,14 @@ def load_components(
         dtype=model_dtype,
         trust_remote_code=True,
     )
-    model.resize_token_embeddings(len(processor.tokenizer))
+    checkpoint_embed_rows = int(
+        checkpoint["model_state_dict"]["model.language_model.embed_tokens.weight"].shape[0]
+    )
+    target_embed_rows = len(processor.tokenizer)
+    model.resize_token_embeddings(checkpoint_embed_rows)
     model.load_state_dict(checkpoint["model_state_dict"])
+    if target_embed_rows != checkpoint_embed_rows:
+        model.resize_token_embeddings(target_embed_rows)
     model.config.use_cache = True
     model.eval()
     return (
