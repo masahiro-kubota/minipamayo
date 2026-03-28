@@ -6,15 +6,12 @@ import collections.abc
 from typing import Any
 
 import torch
-from transformers import AutoProcessor, AutoTokenizer
+from transformers import AutoProcessor
 
 from ....utils.image_budget import CANONICAL_IMAGE_MAX_PIXELS, CANONICAL_IMAGE_MIN_PIXELS
 
 MIN_PIXELS = CANONICAL_IMAGE_MIN_PIXELS
 MAX_PIXELS = CANONICAL_IMAGE_MAX_PIXELS
-BASE_PROCESSOR_NAME = "Qwen/Qwen3-VL-2B-Instruct"
-
-
 def create_message(frames: torch.Tensor):
     """Construct the Alpamayo-style message using images and CoT prefill."""
     if frames.ndim != 4:
@@ -61,14 +58,14 @@ def create_message(frames: torch.Tensor):
     ]
 
 
-def get_processor(tokenizer: AutoTokenizer) -> AutoProcessor:
-    """Get the processor following Alpamayo's helper contract."""
+def get_processor(processor_path: str) -> AutoProcessor:
+    """Load the saved canonical processor with Alpamayo-style pixel settings."""
     processor = AutoProcessor.from_pretrained(
-        BASE_PROCESSOR_NAME,
+        processor_path,
+        trust_remote_code=True,
         min_pixels=MIN_PIXELS,
         max_pixels=MAX_PIXELS,
     )
-    processor.tokenizer = tokenizer
     return processor
 
 

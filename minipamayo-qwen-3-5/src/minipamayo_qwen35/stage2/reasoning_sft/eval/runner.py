@@ -110,8 +110,6 @@ def main() -> None:
         raise RuntimeError(
             "Stage 2 checkpoint is missing canonical `stage1a_checkpoint` args metadata."
         )
-    if "action_loss_weight" not in checkpoint_args:
-        raise RuntimeError("Stage 2 checkpoint args are missing canonical `action_loss_weight`.")
     if "model_state_dict" not in checkpoint:
         raise RuntimeError("Stage 2 checkpoint is missing canonical `model_state_dict`.")
 
@@ -138,10 +136,10 @@ def main() -> None:
         stage1_checkpoint,
         model,
         processor,
-        registry,
+        _registry,
         history_registry,
         history_quantizer,
-        quantizer,
+        _quantizer,
         model_dtype,
     ) = load_components(stage1_args)
     model.load_state_dict(checkpoint["model_state_dict"])
@@ -153,13 +151,11 @@ def main() -> None:
         model=model,
         dataloader=eval_loader,
         processor=processor,
-        registry=registry,
         history_registry=history_registry,
         history_quantizer=history_quantizer,
-        quantizer=quantizer,
         device=device,
         model_dtype=model_dtype,
-        action_loss_weight=float(checkpoint_args["action_loss_weight"]),
+        handoff_loss_weight=float(checkpoint_args["handoff_loss_weight"]),
     )
 
     summary = {

@@ -83,7 +83,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--image-min-pixels", type=int, default=CANONICAL_IMAGE_MIN_PIXELS)
     parser.add_argument("--image-max-pixels", type=int, default=CANONICAL_IMAGE_MAX_PIXELS)
-    parser.add_argument("--action-loss-weight", type=float, default=2.0)
     parser.add_argument("--handoff-loss-weight", type=float, default=8.0)
     parser.add_argument("--gradient-checkpointing", action="store_true", default=True)
     parser.add_argument("--wandb-project", type=str, default="minipamayo-qwen35")
@@ -141,8 +140,6 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`stage1a_checkpoint` must be defined in the config JSON.")
     if not args.train_jsonl:
         raise RuntimeError("`train_jsonl` must be defined in the config JSON.")
-    if args.action_loss_weight <= 0.0:
-        raise RuntimeError("`action_loss_weight` must be > 0.")
     if args.handoff_loss_weight <= 0.0:
         raise RuntimeError("`handoff_loss_weight` must be > 0.")
     if args.early_stopping_patience < 0:
@@ -207,15 +204,13 @@ def build_stage2_metadata(dataset, args: argparse.Namespace) -> dict:
         "k": int(gt_waypoints.shape[0]),
         "action_dim": int(action.shape[0]),
         "dt": float(sample["dt"]),
-        "action_loss_weight": args.action_loss_weight,
         "handoff_loss_weight": args.handoff_loss_weight,
     }
 
 
 def _build_target_rows(
-    tokenizer, registry, quantizer, batch: dict
-) -> tuple[list[list[int]], list[list[int]]]:
-    del registry, quantizer
+    tokenizer, batch: dict
+) -> list[list[int]]:
     if tokenizer.eos_token_id is None:
         raise RuntimeError("Tokenizer is missing `eos_token_id`, which Stage 2 requires.")
     cot_end_token_id = int(tokenizer.convert_tokens_to_ids(COT_END_TOKEN))
@@ -225,7 +220,6 @@ def _build_target_rows(
     if traj_future_start_token_id < 0:
         raise RuntimeError("Tokenizer is missing canonical `<|traj_future_start|>`.")
     target_rows: list[list[int]] = []
-    action_mask_rows: list[list[int]] = []
     for reasoning_text in batch["reasoning_text"]:
         reasoning_prefix = tokenizer(reasoning_text, add_special_tokens=False)
         reasoning_ids = reasoning_prefix["input_ids"]
@@ -236,24 +230,19 @@ def _build_target_rows(
             traj_future_start_token_id,
             int(tokenizer.eos_token_id),
         ]
-        action_mask = [0] * len(row)
         target_rows.append(row)
-        action_mask_rows.append(action_mask)
-    return target_rows, action_mask_rows
+    return target_rows
 
 
 def prepare_stage2_batch(
     model,
     batch: dict,
     processor,
-    registry,
     history_registry,
     history_quantizer,
-    quantizer,
     device: torch.device,
-    action_loss_weight: float,
     handoff_loss_weight: float,
-) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[dict, torch.Tensor, torch.Tensor]:
     images = [Image.open(path).convert("RGB") for path in batch["image_path"]]
     try:
         prompt_texts = [
@@ -279,10 +268,8 @@ def prepare_stage2_batch(
             history_xyz=batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
             history_rot=batch["ego_history_rot"].to(device=device, dtype=torch.float32),
         )
-        target_rows, action_mask_rows = _build_target_rows(
+        target_rows = _build_target_rows(
             processor.tokenizer,
-            registry,
-            quantizer,
             batch,
         )
         if processor.tokenizer.pad_token_id is None:
@@ -301,7 +288,6 @@ def prepare_stage2_batch(
             device=device,
         )
         weight_tensor = torch.ones((batch_size, max_len), dtype=torch.float32, device=device)
-        action_mask_tensor = torch.zeros((batch_size, max_len), dtype=torch.bool, device=device)
         cot_end_token_id = int(processor.tokenizer.convert_tokens_to_ids(COT_END_TOKEN))
         traj_future_start_token_id = int(
             processor.tokenizer.convert_tokens_to_ids(TRAJ_FUTURE_START_TOKEN)
@@ -318,12 +304,9 @@ def prepare_stage2_batch(
             row_len = len(row)
             target_ids[row_idx, :row_len] = torch.tensor(row, dtype=torch.long, device=device)
             target_mask[row_idx, :row_len] = 1
-            for token_idx, is_action in enumerate(action_mask_rows[row_idx]):
+            for token_idx, token_id in enumerate(row):
                 token_id = int(row[token_idx])
-                action_mask_tensor[row_idx, token_idx] = bool(is_action)
-                if bool(is_action):
-                    weight_tensor[row_idx, token_idx] = action_loss_weight
-                elif token_id in handoff_token_ids:
+                if token_id in handoff_token_ids:
                     weight_tensor[row_idx, token_idx] = handoff_loss_weight
                 else:
                     weight_tensor[row_idx, token_idx] = 1.0
@@ -358,8 +341,6 @@ def prepare_stage2_batch(
         offset = prompt_inputs["input_ids"].shape[1]
         labels[:, offset:] = target_ids
 
-        full_action_mask = torch.zeros_like(labels, dtype=torch.bool)
-        full_action_mask[:, offset:] = action_mask_tensor
         full_loss_weights = torch.ones_like(labels, dtype=torch.float32)
         full_loss_weights[:, offset:] = weight_tensor
 
@@ -367,7 +348,6 @@ def prepare_stage2_batch(
             full_inputs,
             labels,
             full_loss_weights,
-            full_action_mask,
         )
     finally:
         for image in images:
@@ -399,24 +379,16 @@ def compute_weighted_loss(
 def compute_token_metrics(
     logits: torch.Tensor,
     labels: torch.Tensor,
-    action_mask: torch.Tensor,
 ) -> dict[str, int]:
     shifted_preds = logits[:, :-1, :].argmax(dim=-1)
     shifted_labels = labels[:, 1:]
-    shifted_action_mask = action_mask[:, 1:]
     valid_mask = shifted_labels != -100
 
     total = int(valid_mask.sum().item())
     correct = int(((shifted_preds == shifted_labels) & valid_mask).sum().item())
-
-    valid_action_mask = valid_mask & shifted_action_mask
-    action_total = int(valid_action_mask.sum().item())
-    action_correct = int(((shifted_preds == shifted_labels) & valid_action_mask).sum().item())
     return {
         "correct": correct,
         "total": total,
-        "action_correct": action_correct,
-        "action_total": action_total,
     }
 
 
@@ -425,13 +397,10 @@ def evaluate(
     model,
     dataloader: DataLoader,
     processor,
-    registry,
     history_registry,
     history_quantizer,
-    quantizer,
     device: torch.device,
     model_dtype: torch.dtype,
-    action_loss_weight: float,
     handoff_loss_weight: float,
 ) -> dict:
     model.eval()
@@ -439,39 +408,31 @@ def evaluate(
     total_batches = 0
     total_correct = 0
     total_tokens = 0
-    total_action_correct = 0
-    total_action_tokens = 0
 
     for batch in dataloader:
-        full_inputs, labels, loss_weights, action_mask = prepare_stage2_batch(
+        full_inputs, labels, loss_weights = prepare_stage2_batch(
             model=model,
             batch=batch,
             processor=processor,
-            registry=registry,
             history_registry=history_registry,
             history_quantizer=history_quantizer,
-            quantizer=quantizer,
             device=device,
-            action_loss_weight=action_loss_weight,
             handoff_loss_weight=handoff_loss_weight,
         )
         with torch.autocast("cuda", dtype=model_dtype):
             outputs = model(**model_forward_inputs(full_inputs))
             loss = compute_weighted_loss(outputs.logits, labels, loss_weights)
 
-        metrics = compute_token_metrics(outputs.logits, labels, action_mask)
+        metrics = compute_token_metrics(outputs.logits, labels)
         total_loss += float(loss.detach().cpu())
         total_batches += 1
         total_correct += metrics["correct"]
         total_tokens += metrics["total"]
-        total_action_correct += metrics["action_correct"]
-        total_action_tokens += metrics["action_total"]
 
     model.train()
     return {
         "loss": total_loss / max(total_batches, 1),
         "token_accuracy": total_correct / max(total_tokens, 1),
-        "action_token_accuracy": total_action_correct / max(total_action_tokens, 1),
     }
 
 
@@ -610,13 +571,10 @@ def main() -> None:
             model=model,
             dataloader=initial_eval_loader,
             processor=processor,
-            registry=registry,
             history_registry=history_registry,
             history_quantizer=history_quantizer,
-            quantizer=action_quantizer,
             device=device,
             model_dtype=model_dtype,
-            action_loss_weight=args.action_loss_weight,
             handoff_loss_weight=args.handoff_loss_weight,
         )
         release_cuda_memory()
@@ -665,7 +623,6 @@ def main() -> None:
                     "split": initial_eval_split,
                     "loss": initial_eval["loss"],
                     "token_accuracy": initial_eval["token_accuracy"],
-                    "action_token_accuracy": initial_eval["action_token_accuracy"],
                 },
                 ensure_ascii=False,
             )
@@ -679,9 +636,6 @@ def main() -> None:
                 "setup/grad_accum_steps": args.grad_accum_steps,
                 f"baseline/{initial_eval_split}_loss": initial_eval["loss"],
                 f"baseline/{initial_eval_split}_token_accuracy": initial_eval["token_accuracy"],
-                f"baseline/{initial_eval_split}_action_token_accuracy": initial_eval[
-                    "action_token_accuracy"
-                ],
             },
             step=0,
         )
@@ -695,22 +649,17 @@ def main() -> None:
             train_batches = 0
             train_correct = 0
             train_tokens = 0
-            train_action_correct = 0
-            train_action_tokens = 0
             optimizer_steps_this_epoch = 0
 
             optimizer.zero_grad(set_to_none=True)
             for batch_idx, batch in enumerate(train_loader, start=1):
-                full_inputs, labels, loss_weights, action_mask = prepare_stage2_batch(
+                full_inputs, labels, loss_weights = prepare_stage2_batch(
                     model=model,
                     batch=batch,
                     processor=processor,
-                    registry=registry,
                     history_registry=history_registry,
                     history_quantizer=history_quantizer,
-                    quantizer=action_quantizer,
                     device=device,
-                    action_loss_weight=args.action_loss_weight,
                     handoff_loss_weight=args.handoff_loss_weight,
                 )
                 with torch.autocast("cuda", dtype=model_dtype):
@@ -718,13 +667,11 @@ def main() -> None:
                     loss = compute_weighted_loss(outputs.logits, labels, loss_weights)
 
                 (loss / args.grad_accum_steps).backward()
-                metrics = compute_token_metrics(outputs.logits.detach(), labels, action_mask)
+                metrics = compute_token_metrics(outputs.logits.detach(), labels)
                 train_loss_total += float(loss.detach().cpu())
                 train_batches += 1
                 train_correct += metrics["correct"]
                 train_tokens += metrics["total"]
-                train_action_correct += metrics["action_correct"]
-                train_action_tokens += metrics["action_total"]
 
                 should_step = batch_idx % args.grad_accum_steps == 0 or batch_idx == len(
                     train_loader
@@ -758,31 +705,25 @@ def main() -> None:
 
             train_loss = train_loss_total / max(train_batches, 1)
             train_token_accuracy = train_correct / max(train_tokens, 1)
-            train_action_accuracy = train_action_correct / max(train_action_tokens, 1)
 
             if val_loader is not None:
                 val_metrics = evaluate(
                     model=model,
                     dataloader=val_loader,
                     processor=processor,
-                    registry=registry,
                     history_registry=history_registry,
                     history_quantizer=history_quantizer,
-                    quantizer=action_quantizer,
                     device=device,
                     model_dtype=model_dtype,
-                    action_loss_weight=args.action_loss_weight,
                     handoff_loss_weight=args.handoff_loss_weight,
                 )
                 release_cuda_memory()
                 val_loss = val_metrics["loss"]
                 val_token_accuracy = val_metrics["token_accuracy"]
-                val_action_accuracy = val_metrics["action_token_accuracy"]
                 metric_to_track = val_loss
             else:
                 val_loss = None
                 val_token_accuracy = None
-                val_action_accuracy = None
                 metric_to_track = train_loss
 
             improved = metric_improved(metric_to_track, best_metric, args.early_stopping_min_delta)
@@ -798,10 +739,8 @@ def main() -> None:
                 "global_step": global_step,
                 "train_loss": train_loss,
                 "train_token_accuracy": train_token_accuracy,
-                "train_action_token_accuracy": train_action_accuracy,
                 "val_loss": val_loss,
                 "val_token_accuracy": val_token_accuracy,
-                "val_action_token_accuracy": val_action_accuracy,
                 "metric_name": best_metric_name,
                 "metric_to_track": metric_to_track,
                 "improved": improved,
@@ -817,7 +756,6 @@ def main() -> None:
             wandb_payload = {
                 "train/epoch_loss": train_loss,
                 "train/token_accuracy": train_token_accuracy,
-                "train/action_token_accuracy": train_action_accuracy,
                 "train/epoch_elapsed_s": epoch_metrics["epoch_elapsed_s"],
                 "summary/best_metric_so_far": best_metric,
                 "summary/epochs_without_improvement": epochs_without_improvement,
@@ -825,7 +763,6 @@ def main() -> None:
             if val_loss is not None:
                 wandb_payload["val/loss"] = val_loss
                 wandb_payload["val/token_accuracy"] = val_token_accuracy
-                wandb_payload["val/action_token_accuracy"] = val_action_accuracy
             maybe_wandb_log(wandb_run, wandb_payload, step=global_step)
 
             if improved:
@@ -931,7 +868,6 @@ def main() -> None:
                 "split": initial_eval_split,
                 "loss": initial_eval["loss"],
                 "token_accuracy": initial_eval["token_accuracy"],
-                "action_token_accuracy": initial_eval["action_token_accuracy"],
             },
             "history": metrics_history,
         }

@@ -20,12 +20,13 @@ from pathlib import Path
 import numpy as np
 import torch
 from PIL import Image
-from transformers import AutoModelForImageTextToText, AutoTokenizer
+from transformers import AutoModelForImageTextToText
 
 from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
 from ....utils.preflight import require_expected_cuda_toolkit
 from ....utils.run_metadata import collect_processor_settings
 from ... import CanonicalStage1Spec, KappaOnlyStage1Spec, Stage1TaskSpec
+from ...common.prompt import add_prompt_special_tokens
 from ...data.canonical_action import rollout_waypoints_from_action_tensor
 from ...data.dataset import Stage1JsonlDataset
 from ..eval.runner import (
@@ -177,7 +178,9 @@ def main() -> None:
     processor_path = resolve_processor_path(checkpoint_path)
     model_path = str(checkpoint_args["model_path"])
     model_dtype = resolve_dtype(str(checkpoint_args["dtype"]))
-    tokenizer = AutoTokenizer.from_pretrained(processor_path, trust_remote_code=True)
+    processor = get_processor(processor_path)
+    tokenizer = processor.tokenizer
+    add_prompt_special_tokens(tokenizer)
 
     if "history_registry" not in checkpoint or not isinstance(checkpoint["history_registry"], dict):
         raise RuntimeError("Checkpoint is missing canonical `history_registry` metadata.")
@@ -195,8 +198,6 @@ def main() -> None:
         start_index=int(history_cfg.get("start_index", 0)),
     )
     history_registry.add_to_tokenizer(tokenizer)
-
-    processor = get_processor(tokenizer)
     processor_settings = collect_processor_settings(
         processor,
         requested_min_pixels=MIN_PIXELS,
