@@ -17,6 +17,7 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import torch
 from PIL import Image
 from transformers import AutoModelForImageTextToText, AutoTokenizer
@@ -33,7 +34,6 @@ from ..eval.runner import (
     resolve_dtype,
     resolve_processor_path,
 )
-from ...prompt import build_history_placeholder
 from ...tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ...tokenization.registry import Stage1TokenRegistry
 from ..train import (
@@ -45,7 +45,6 @@ from ..train import (
 from .helper import (
     MAX_PIXELS,
     MIN_PIXELS,
-    SYSTEM_PROMPT,
     create_message,
     get_processor,
     to_device,
@@ -180,20 +179,21 @@ def main() -> None:
     if "history_registry" not in checkpoint or not isinstance(checkpoint["history_registry"], dict):
         raise RuntimeError("Checkpoint is missing canonical `history_registry` metadata.")
     history_cfg = checkpoint["history_registry"]
+    token_cfg = checkpoint["token_registry"]
+    registry = Stage1TokenRegistry(
+        n_bins=int(token_cfg["n_bins"]),
+        token_prefix=str(token_cfg["token_prefix"]),
+        start_index=int(token_cfg.get("start_index", 0)),
+    )
+    registry.add_to_tokenizer(tokenizer)
     history_registry = HistoryTokenRegistry(
         n_bins=int(history_cfg["n_bins"]),
         token_prefix=str(history_cfg["token_prefix"]),
+        start_index=int(history_cfg.get("start_index", 0)),
     )
     history_registry.add_to_tokenizer(tokenizer)
 
-    token_cfg = checkpoint["token_registry"]
-    registry = Stage1TokenRegistry(
-        n_bins=token_cfg["n_bins"],
-        token_prefix=token_cfg["token_prefix"],
-    )
-    registry.add_to_tokenizer(tokenizer)
-
-    processor = get_processor(tokenizer, processor_name=processor_path)
+    processor = get_processor(tokenizer)
     processor_settings = collect_processor_settings(
         processor,
         requested_min_pixels=MIN_PIXELS,
@@ -243,15 +243,15 @@ def main() -> None:
     record = dataset.records[args.sample_index]
 
     image_path = Path(sample["image_path"])
-    history_prefix = build_history_placeholder(history_quantizer.token_count)
-    user_text = f"{history_prefix}\n{stage1_metadata['question']}"
+    user_text = (
+        f"<|traj_history_start|>{'<|traj_history|>' * history_quantizer.token_count}"
+        f"<|traj_history_end|>{stage1_metadata['question']}"
+    )
     with Image.open(image_path).convert("RGB") as image:
-        messages = create_message(
-            [image],
-            user_text,
-            history_token_count=history_quantizer.token_count,
-            include_assistant_prefill=False,
-        )
+        frame_tensor = torch.from_numpy(np.asarray(image)).permute(2, 0, 1).unsqueeze(0)
+        messages = create_message(frame_tensor)
+        messages[1]["content"][-1]["text"] = user_text
+        messages = messages[:2]
         inputs = processor.apply_chat_template(
             messages,
             tokenize=True,
@@ -323,7 +323,7 @@ def main() -> None:
         "image_path": str(image_path),
         "message_style": "alpamayo_like_stage1",
         "message": {
-            "system_text": SYSTEM_PROMPT,
+            "system_text": messages[0]["content"][0]["text"],
             "user_text": user_text,
             "num_images": 1,
             "history_steps": int(stage1_metadata["history_steps"]),

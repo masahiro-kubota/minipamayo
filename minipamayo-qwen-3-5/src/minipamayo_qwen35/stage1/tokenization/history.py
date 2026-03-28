@@ -130,6 +130,10 @@ class HistoryTrajectoryQuantizer:
     def token_count(self) -> int:
         return self.history_steps * 3
 
+    @property
+    def vocab_size(self) -> int:
+        return self.n_bins
+
     def encode_bin_ids(self, history_xyz: np.ndarray, history_rot: np.ndarray) -> list[int]:
         xyz, rot = canonicalize_history_sample_numpy(
             history_xyz,
@@ -162,6 +166,69 @@ class HistoryTrajectoryQuantizer:
                 )
         return bin_ids
 
+    def encode(
+        self,
+        hist_xyz: torch.Tensor,
+        hist_rot: torch.Tensor,
+        fut_xyz: torch.Tensor,
+        fut_rot: torch.Tensor,
+        hist_tstamp: torch.Tensor | None = None,
+        fut_tstamp: torch.Tensor | None = None,
+    ) -> torch.LongTensor:
+        del hist_xyz, hist_rot, hist_tstamp, fut_tstamp
+        future_xyz = fut_xyz.detach().cpu().numpy()
+        future_rot = fut_rot.detach().cpu().numpy()
+        batch_size = future_xyz.shape[0]
+        rows: list[list[int]] = []
+        for batch_idx in range(batch_size):
+            rows.append(self.encode_bin_ids(future_xyz[batch_idx], future_rot[batch_idx]))
+        return torch.tensor(rows, dtype=torch.long, device=fut_xyz.device)
+
+    def decode(
+        self,
+        hist_xyz: torch.Tensor,
+        hist_rot: torch.Tensor,
+        tokens: torch.LongTensor,
+        hist_tstamp: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+        del hist_tstamp
+        history_xyz, history_rot = canonicalize_history_batch_tensors(hist_xyz, hist_rot)
+        if tokens.dim() != 2 or tokens.shape[1] != self.token_count:
+            raise RuntimeError(
+                "HistoryTrajectoryQuantizer.decode expects tokens shaped (batch, token_count).\n"
+                f"expected_token_count={self.token_count}\n"
+                f"found={tuple(tokens.shape)!r}"
+            )
+        batch_size = tokens.shape[0]
+        device = hist_xyz.device
+        dtype = hist_xyz.dtype
+        components = tokens.reshape(batch_size, self.history_steps, 3).to(torch.float32)
+        ranges = self.canonical_scalar_ranges()
+        decoded_components: list[torch.Tensor] = []
+        for dim_idx, value_range in enumerate(ranges):
+            lower, upper = float(value_range[0]), float(value_range[1])
+            values = lower + (components[:, :, dim_idx] + 0.5) * (upper - lower) / self.n_bins
+            decoded_components.append(values)
+        if self.quantization_mode == "delta_xyz":
+            delta_xyz = torch.stack(decoded_components, dim=-1).to(device=device, dtype=dtype)
+            fut_xyz = torch.cumsum(delta_xyz, dim=1)
+            fut_rot = history_rot[:, :, : self.history_steps].clone()
+        else:
+            x_vals, y_vals, yaw_vals = decoded_components
+            fut_xyz = torch.zeros((batch_size, self.history_steps, 3), device=device, dtype=dtype)
+            fut_xyz[:, :, 0] = x_vals.to(device=device, dtype=dtype)
+            fut_xyz[:, :, 1] = y_vals.to(device=device, dtype=dtype)
+            fut_rot = torch.eye(3, device=device, dtype=dtype).view(1, 1, 3, 3).repeat(
+                batch_size, self.history_steps, 1, 1
+            )
+            cos_yaw = torch.cos(yaw_vals).to(device=device, dtype=dtype)
+            sin_yaw = torch.sin(yaw_vals).to(device=device, dtype=dtype)
+            fut_rot[:, :, 0, 0] = cos_yaw
+            fut_rot[:, :, 0, 1] = -sin_yaw
+            fut_rot[:, :, 1, 0] = sin_yaw
+            fut_rot[:, :, 1, 1] = cos_yaw
+        return fut_xyz.unsqueeze(1), fut_rot.unsqueeze(1), None
+
     def metadata(self) -> dict:
         return {
             "history_steps": self.history_steps,
@@ -191,6 +258,7 @@ class HistoryTokenRegistry:
 
     n_bins: int = 256
     token_prefix: str = "i"
+    start_index: int = 256
     token_strings: list[str] = field(init=False)
     token_ids: list[int] = field(default_factory=list)
     id_to_bin: dict[int, int] = field(default_factory=dict)
@@ -199,7 +267,10 @@ class HistoryTokenRegistry:
     end_token_id: int | None = None
 
     def __post_init__(self) -> None:
-        self.token_strings = [format_stage1_token(self.token_prefix, i) for i in range(self.n_bins)]
+        self.token_strings = [
+            format_stage1_token(self.token_prefix, self.start_index + i)
+            for i in range(self.n_bins)
+        ]
 
     def add_to_tokenizer(self, tokenizer) -> int:
         existing_vocab = tokenizer.get_vocab()
@@ -256,6 +327,7 @@ class HistoryTokenRegistry:
         return {
             "n_bins": self.n_bins,
             "token_prefix": self.token_prefix,
+            "start_index": self.start_index,
             "token_strings": self.token_strings,
             "special_tokens": list(HISTORY_SPECIAL_TOKENS),
         }

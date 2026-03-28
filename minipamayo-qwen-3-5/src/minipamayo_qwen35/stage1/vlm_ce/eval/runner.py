@@ -204,18 +204,19 @@ def load_components(
     history_cfg = checkpoint["history_registry"]
     if "token_prefix" not in history_cfg or "n_bins" not in history_cfg:
         raise RuntimeError("Checkpoint history_registry is missing `token_prefix` or `n_bins`.")
+    token_cfg = checkpoint["token_registry"]
+    registry = Stage1TokenRegistry(
+        n_bins=int(token_cfg["n_bins"]),
+        token_prefix=str(token_cfg["token_prefix"]),
+        start_index=int(token_cfg.get("start_index", 0)),
+    )
+    registry.add_to_tokenizer(processor.tokenizer)
     history_registry = HistoryTokenRegistry(
         n_bins=int(history_cfg["n_bins"]),
         token_prefix=str(history_cfg["token_prefix"]),
+        start_index=int(history_cfg.get("start_index", 0)),
     )
     history_registry.add_to_tokenizer(processor.tokenizer)
-
-    token_cfg = checkpoint["token_registry"]
-    registry = Stage1TokenRegistry(
-        n_bins=token_cfg["n_bins"],
-        token_prefix=token_cfg["token_prefix"],
-    )
-    registry.add_to_tokenizer(processor.tokenizer)
 
     if "history_quantizer" not in checkpoint or not isinstance(
         checkpoint["history_quantizer"], dict

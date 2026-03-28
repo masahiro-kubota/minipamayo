@@ -20,7 +20,7 @@ from PIL import Image
 from torch.utils.data import DataLoader, random_split
 
 from ....sequence.stage3_builder import build_stage2_prompt_text
-from ....stage1.prompt import COT_END_TOKEN, TRAJ_FUTURE_END_TOKEN, TRAJ_FUTURE_START_TOKEN
+from ....stage1.prompt import COT_END_TOKEN, TRAJ_FUTURE_START_TOKEN
 from ....stage1.vlm_ce.eval import load_components
 from ....stage1.vlm_ce.train import (
     first_record_from_dataset,
@@ -213,10 +213,7 @@ def build_stage2_metadata(dataset, args: argparse.Namespace) -> dict:
         "val_jsonl": args.val_jsonl or None,
         "sample_format": "jsonl+images",
         "reasoning_source": "provided_reasoning_text",
-        "target_layout": (
-            "reasoning_then_cot_end_then_traj_future_start_"
-            "then_action_tokens_then_traj_future_end"
-        ),
+        "target_layout": "reasoning_then_cot_end_then_traj_future_start_then_eos",
         "prompt_contract": "alpamayo_like_reasoning_with_cot_prefill",
         "k": len(gt_waypoints) if gt_waypoints else len(action) // 2,
         "action_dim": len(action),
@@ -228,28 +225,28 @@ def build_stage2_metadata(dataset, args: argparse.Namespace) -> dict:
 def _build_target_rows(
     tokenizer, registry, quantizer, batch: dict
 ) -> tuple[list[list[int]], list[list[int]]]:
+    del registry, quantizer
     if tokenizer.eos_token_id is None:
         raise RuntimeError("Tokenizer is missing `eos_token_id`, which Stage 2 requires.")
-    traj_future_end_token_id = int(tokenizer.convert_tokens_to_ids(TRAJ_FUTURE_END_TOKEN))
-    if traj_future_end_token_id < 0:
-        raise RuntimeError("Tokenizer is missing canonical `<|traj_future_end|>`.")
+    cot_end_token_id = int(tokenizer.convert_tokens_to_ids(COT_END_TOKEN))
+    if cot_end_token_id < 0:
+        raise RuntimeError("Tokenizer is missing canonical `<|cot_end|>`.")
+    traj_future_start_token_id = int(tokenizer.convert_tokens_to_ids(TRAJ_FUTURE_START_TOKEN))
+    if traj_future_start_token_id < 0:
+        raise RuntimeError("Tokenizer is missing canonical `<|traj_future_start|>`.")
     target_rows: list[list[int]] = []
     action_mask_rows: list[list[int]] = []
-    for reasoning_text, action in zip(batch["reasoning_text"], batch["action"], strict=False):
-        reasoning_prefix = tokenizer(
-            f"{reasoning_text}{COT_END_TOKEN}{TRAJ_FUTURE_START_TOKEN}",
-            add_special_tokens=False,
-        )
+    for reasoning_text in batch["reasoning_text"]:
+        reasoning_prefix = tokenizer(reasoning_text, add_special_tokens=False)
         reasoning_ids = reasoning_prefix["input_ids"]
         if not isinstance(reasoning_ids, list):
             raise RuntimeError("Tokenizer returned a non-list `input_ids` payload for Stage 2.")
-        action_ids = registry.encode_action_token_ids(action.cpu().numpy(), quantizer)
-        row = (
-            list(reasoning_ids)
-            + list(action_ids)
-            + [traj_future_end_token_id, int(tokenizer.eos_token_id)]
-        )
-        action_mask = [0] * len(reasoning_ids) + [1] * len(action_ids) + [0, 0]
+        row = list(reasoning_ids) + [
+            cot_end_token_id,
+            traj_future_start_token_id,
+            int(tokenizer.eos_token_id),
+        ]
+        action_mask = [0] * len(row)
         target_rows.append(row)
         action_mask_rows.append(action_mask)
     return target_rows, action_mask_rows

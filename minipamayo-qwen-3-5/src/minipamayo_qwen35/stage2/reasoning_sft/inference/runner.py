@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 import torch
-import torch.nn.functional as F
+from transformers import LogitsProcessor, LogitsProcessorList, StoppingCriteria, StoppingCriteriaList
 
 from ....sequence.stage3_builder import build_stage2_prompt_text
 from ....stage1.expert_cfm.action_space import UnicycleAccelCurvatureActionSpace
@@ -17,9 +17,7 @@ from ....stage1.expert_cfm.model import load_action_expert_from_checkpoint
 from ....stage1.prompt import COT_END_TOKEN, TRAJ_FUTURE_START_TOKEN
 from ....stage1.vlm_ce.eval import load_components
 from ....stage1.vlm_ce.train import (
-    append_token_to_model_inputs,
     load_checkpoint,
-    model_forward_inputs,
     prepare_prompt_inputs_with_history,
 )
 from ....utils.image_budget import (
@@ -121,76 +119,96 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def _apply_top_k_top_p_filter(
-    logits: torch.Tensor,
-    *,
-    top_k: int,
-    top_p: float,
-) -> torch.Tensor:
-    filtered = logits.clone()
-    if top_k > 0:
-        kth_values = torch.topk(filtered, k=min(top_k, filtered.shape[-1]), dim=-1).values[:, -1]
-        filtered[filtered < kth_values.unsqueeze(-1)] = torch.finfo(filtered.dtype).min
-    if top_p < 1.0:
-        sorted_logits, sorted_indices = torch.sort(filtered, descending=True, dim=-1)
-        sorted_probs = F.softmax(sorted_logits, dim=-1)
-        cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
-        sorted_remove_mask = cumulative_probs > top_p
-        sorted_remove_mask[:, 1:] = sorted_remove_mask[:, :-1].clone()
-        sorted_remove_mask[:, 0] = False
-        remove_mask = torch.zeros_like(sorted_remove_mask)
-        remove_mask.scatter_(1, sorted_indices, sorted_remove_mask)
-        filtered[remove_mask] = torch.finfo(filtered.dtype).min
-    return filtered
+class TrajectoryLogitsProcessor(LogitsProcessor):
+    """Mask discrete trajectory token logits during reasoning rollout."""
+
+    def __init__(self, traj_token_offset: int, traj_vocab_size: int):
+        super().__init__()
+        self.traj_token_offset = int(traj_token_offset)
+        self.traj_vocab_size = int(traj_vocab_size)
+
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
+        scores[:, self.traj_token_offset : self.traj_token_offset + self.traj_vocab_size] = float(
+            "-inf"
+        )
+        return scores
 
 
-def sample_next_token(
-    logits: torch.Tensor,
-    *,
-    traj_registry,
-    temperature: float,
-    top_p: float,
-    top_k: int,
-) -> torch.Tensor:
-    filtered = traj_registry.mask_logits(logits)
-    filtered = filtered / temperature
-    filtered = _apply_top_k_top_p_filter(filtered, top_k=top_k, top_p=top_p)
-    probs = F.softmax(filtered, dim=-1)
-    return torch.multinomial(probs, num_samples=1).squeeze(-1)
+class StopAfterEOS(StoppingCriteria):
+    """Stop one token after the first `<|traj_future_start|>` generation."""
+
+    def __init__(self, eos_token_id: int):
+        self.eos_token_id = int(eos_token_id)
+        self.eos_found = None
+
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
+        batch_size = input_ids.shape[0]
+        if self.eos_found is None:
+            self.eos_found = torch.zeros(batch_size, dtype=torch.bool, device=input_ids.device)
+        if self.eos_found.all():
+            return True
+        last_tokens = input_ids[:, -1]
+        current_has_eos = last_tokens == self.eos_token_id
+        self.eos_found = self.eos_found | current_has_eos
+        return False
 
 
-def greedy_generate_until_token(
+def generate_reasoning_handoff(
     *,
     model,
+    tokenizer,
     prompt_inputs: dict,
     traj_registry,
     stop_token_id: int,
     max_new_tokens: int,
-    model_dtype: torch.dtype,
     temperature: float,
     top_p: float,
     top_k: int,
-) -> tuple[torch.Tensor, dict]:
-    current_inputs = dict(prompt_inputs)
-    generated: list[torch.Tensor] = []
-    for _ in range(max_new_tokens):
-        with torch.autocast("cuda", dtype=model_dtype):
-            outputs = model(**model_forward_inputs(current_inputs))
-        next_token = sample_next_token(
-            outputs.logits[:, -1, :],
-            traj_registry=traj_registry,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-        )
-        generated.append(next_token)
-        append_token_to_model_inputs(model, current_inputs, next_token)
-        if torch.all(next_token == stop_token_id):
-            return torch.stack(generated, dim=1), current_inputs
-    raise RuntimeError(
-        "Stage 2 reasoning rollout did not emit `<|traj_future_start|>` within the token budget.\n"
-        f"max_reasoning_tokens={max_new_tokens}"
+):
+    generation_config = model.generation_config
+    generation_config.top_p = top_p
+    generation_config.temperature = temperature
+    generation_config.do_sample = True
+    generation_config.num_return_sequences = 1
+    generation_config.max_new_tokens = max_new_tokens
+    generation_config.output_logits = True
+    generation_config.return_dict_in_generate = True
+    generation_config.top_k = top_k if top_k > 0 else None
+    generation_config.pad_token_id = tokenizer.pad_token_id
+
+    stopping_criteria = StoppingCriteriaList([StopAfterEOS(eos_token_id=stop_token_id)])
+    logits_processor = LogitsProcessorList(
+        [
+            TrajectoryLogitsProcessor(
+                traj_token_offset=traj_registry.start_index,
+                traj_vocab_size=traj_registry.n_bins,
+            )
+        ]
     )
+    outputs = model.generate(
+        **prompt_inputs,
+        generation_config=generation_config,
+        stopping_criteria=stopping_criteria,
+        logits_processor=logits_processor,
+    )
+    if not hasattr(outputs, "past_key_values") or outputs.past_key_values is None:
+        raise RuntimeError("Stage 2 generation did not return `past_key_values` for expert handoff.")
+
+    prompt_len = int(prompt_inputs["input_ids"].shape[1])
+    generated_ids = outputs.sequences[:, prompt_len:]
+    stop_mask = generated_ids == stop_token_id
+    has_stop = stop_mask.any(dim=1)
+    if not torch.all(has_stop):
+        raise RuntimeError(
+            "Stage 2 reasoning rollout did not emit `<|traj_future_start|>` within the token budget.\n"
+            f"max_reasoning_tokens={max_new_tokens}"
+        )
+    stop_positions = stop_mask.int().argmax(dim=1)
+    handoff_attention_mask = torch.ones_like(outputs.sequences, dtype=prompt_inputs["attention_mask"].dtype)
+    for row_idx, stop_pos in enumerate(stop_positions.tolist()):
+        cutoff = prompt_len + stop_pos + 1
+        handoff_attention_mask[row_idx, cutoff:] = 0
+    return outputs, generated_ids, handoff_attention_mask, stop_positions
 
 
 def main() -> None:
@@ -221,7 +239,7 @@ def main() -> None:
         history_registry,
         history_quantizer,
         _quantizer,
-        model_dtype,
+        _model_dtype,
     ) = load_components(stage1_args)
     stage2_embed_rows = int(
         checkpoint["model_state_dict"]["model.language_model.embed_tokens.weight"].shape[0]
@@ -272,19 +290,18 @@ def main() -> None:
     stop_token_id = int(processor.tokenizer.convert_tokens_to_ids(TRAJ_FUTURE_START_TOKEN))
     if stop_token_id < 0:
         raise RuntimeError("Tokenizer is missing canonical `<|traj_future_start|>`.")
-    reasoning_token_ids, handed_off_inputs = greedy_generate_until_token(
+    generation_outputs, reasoning_token_ids, prompt_attention_mask, stop_positions = generate_reasoning_handoff(
         model=model,
+        tokenizer=processor.tokenizer,
         prompt_inputs=prompt_inputs,
         traj_registry=registry,
         stop_token_id=stop_token_id,
         max_new_tokens=args.max_reasoning_tokens,
-        model_dtype=model_dtype,
         temperature=args.temperature,
         top_p=args.top_p,
         top_k=args.top_k,
     )
-    stop_mask = reasoning_token_ids != stop_token_id
-    decoded_reasoning_ids = reasoning_token_ids[0][stop_mask[0]].detach().cpu().tolist()
+    decoded_reasoning_ids = reasoning_token_ids[0, : int(stop_positions[0].item())].detach().cpu().tolist()
     cot_end_token_id = int(processor.tokenizer.convert_tokens_to_ids(COT_END_TOKEN))
     if decoded_reasoning_ids and decoded_reasoning_ids[-1] == cot_end_token_id:
         decoded_reasoning_ids = decoded_reasoning_ids[:-1]
@@ -293,15 +310,7 @@ def main() -> None:
         skip_special_tokens=False,
     )
 
-    with torch.no_grad():
-        prompt_outputs = model(
-            **model_forward_inputs(handed_off_inputs),
-            use_cache=True,
-            output_hidden_states=False,
-            return_dict=True,
-        )
-    prompt_cache = prompt_outputs.past_key_values
-    prompt_attention_mask = handed_off_inputs["attention_mask"]
+    prompt_cache = generation_outputs.past_key_values
 
     expert, expert_checkpoint = load_action_expert_from_checkpoint(args.stage1b_checkpoint, device)
     if "stage1b_metadata" not in expert_checkpoint or not isinstance(

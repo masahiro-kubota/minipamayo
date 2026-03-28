@@ -472,8 +472,10 @@ def build_stage1_metadata(
         "dt": record["dt"],
         "action_token_scheme": "alpamayo_like_discrete_tokens",
         "token_prefix": registry.token_prefix,
+        "token_start_index": registry.start_index,
         "history_token_scheme": "placeholder_input_ids_discrete_tokens",
         "history_token_prefix": history_registry.token_prefix,
+        "history_token_start_index": history_registry.start_index,
         "history_steps": int(ego_history_xyz.shape[-2]),
         "history_token_count": history_quantizer.token_count,
         "history_layout": "ego_frame_xyz_rot_local_single_traj_group",
@@ -778,6 +780,7 @@ def checkpoint_payload(
         "token_registry": {
             "n_bins": registry.n_bins,
             "token_prefix": registry.token_prefix,
+            "start_index": registry.start_index,
             "token_strings": registry.token_strings,
         },
         "history_registry": history_registry.metadata(),
@@ -956,11 +959,14 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
 
         history_quantizer = HistoryTrajectoryQuantizer()
         add_prompt_special_tokens(processor.tokenizer)
-        history_registry = HistoryTokenRegistry(n_bins=history_quantizer.n_bins)
-        history_added = history_registry.add_to_tokenizer(processor.tokenizer)
         quantizer = task_spec.build_quantizer(train_loader.dataset)
-        registry = Stage1TokenRegistry(n_bins=quantizer.n_bins)
+        registry = Stage1TokenRegistry(n_bins=quantizer.n_bins, start_index=0)
         added = registry.add_to_tokenizer(processor.tokenizer)
+        history_registry = HistoryTokenRegistry(
+            n_bins=history_quantizer.n_bins,
+            start_index=registry.start_index + registry.n_bins,
+        )
+        history_added = history_registry.add_to_tokenizer(processor.tokenizer)
         stage1_metadata = build_stage1_metadata(
             train_loader.dataset,
             args,

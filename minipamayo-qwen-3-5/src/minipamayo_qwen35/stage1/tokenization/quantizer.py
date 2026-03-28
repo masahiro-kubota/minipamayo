@@ -15,6 +15,18 @@ class ActionQuantizer:
     a_range: tuple[float, float] = (-6.0, 6.0)
     kappa_range: tuple[float, float] = (-0.2, 0.2)
 
+    @property
+    def vocab_size(self) -> int:
+        return self.n_bins
+
+    @property
+    def dims_min(self) -> list[float]:
+        return [float(self.a_range[0]), float(self.kappa_range[0])]
+
+    @property
+    def dims_max(self) -> list[float]:
+        return [float(self.a_range[1]), float(self.kappa_range[1])]
+
     def quantize_bin(self, value: float, v_min: float, v_max: float) -> int:
         clamped = max(v_min, min(v_max - 1e-8, float(value)))
         bin_idx = int((clamped - v_min) / (v_max - v_min) * self.n_bins)

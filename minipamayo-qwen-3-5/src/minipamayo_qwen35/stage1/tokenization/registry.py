@@ -19,12 +19,16 @@ class Stage1TokenRegistry:
 
     n_bins: int = 256
     token_prefix: str = "i"
+    start_index: int = 0
     token_strings: list[str] = field(init=False)
     token_ids: list[int] = field(default_factory=list)
     id_to_bin: dict[int, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        self.token_strings = [format_stage1_token(self.token_prefix, i) for i in range(self.n_bins)]
+        self.token_strings = [
+            format_stage1_token(self.token_prefix, self.start_index + i)
+            for i in range(self.n_bins)
+        ]
 
     def add_to_tokenizer(self, tokenizer) -> int:
         existing_vocab = tokenizer.get_vocab()
