@@ -316,6 +316,12 @@ def prepare_stage2_batch(
         )
         weight_tensor = torch.ones((batch_size, max_len), dtype=torch.float32, device=device)
         action_mask_tensor = torch.zeros((batch_size, max_len), dtype=torch.bool, device=device)
+        cot_end_token_id = int(processor.tokenizer.convert_tokens_to_ids(COT_END_TOKEN))
+        traj_future_start_token_id = int(
+            processor.tokenizer.convert_tokens_to_ids(TRAJ_FUTURE_START_TOKEN)
+        )
+        if processor.tokenizer.eos_token_id is None:
+            raise RuntimeError("Tokenizer is missing `eos_token_id`, which Stage 2 requires.")
         handoff_token_ids = {
             int(processor.tokenizer.eos_token_id),
             cot_end_token_id,
