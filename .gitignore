@@ -75,3 +75,5 @@ shared_checkpoints/*
 !shared_checkpoints/vlm_gui/**
 shared_checkpoints/__pycache__/
 shared_checkpoints/vlm_gui/__pycache__/
+
+alpamayo/
