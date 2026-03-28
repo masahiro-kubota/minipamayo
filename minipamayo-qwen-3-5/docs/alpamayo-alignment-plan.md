@@ -336,7 +336,12 @@ configs/
 
 - [x] reasoning token / action token の系列契約確認
 - [x] checkpoint metadata 契約確認
-- [ ] eval path が train 契約と一致していることを確認
+- [x] eval path が train 契約と一致していることを確認
+
+注記:
+- 2026-03-29 に canonical Stage1A `best.pt` を土台にした Stage2 smoke train/eval を確認した。
+- smoke train は `1 epoch / 12 samples` で `best val_loss = 3.6542`, `val_action_token_accuracy = 0.2617`。
+- smoke eval は `4 samples` で `loss = 1.6006`, `token_accuracy = 0.7155`, `action_token_accuracy = 0.6758`。
 
 ### Stage3
 
