@@ -17,8 +17,9 @@
     "early_stopping_patience": 0,
     "early_stopping_min_delta": 0.0,
     "val_fraction": 0.2,
+    "max_samples": 128,
     "num_workers": 0,
-    "log_every": 50,
+    "log_every": 10,
     "resume_from_checkpoint": "",
     "save_every_epochs": 0,
     "seed": 7,
@@ -27,6 +28,6 @@
     "image_max_pixels": 196608,
     "gradient_checkpointing": true,
     "wandb_project": "minipamayo-qwen35",
-    "wandb_run_name": "stage1-vlm-ce-ignore-rule-probe-12gb"
+    "wandb_run_name": "stage1-vlm-ce-ignore-rule-probe128-12gb"
   }
 }
