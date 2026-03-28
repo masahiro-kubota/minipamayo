@@ -187,7 +187,16 @@ def _load_policy_components(args: argparse.Namespace, stage2_checkpoint: dict):
         image_min_pixels=args.image_min_pixels,
         image_max_pixels=args.image_max_pixels,
     )
-    _stage1_checkpoint, model, processor, registry, quantizer, model_dtype = load_components(base_args)
+    (
+        _stage1_checkpoint,
+        model,
+        processor,
+        registry,
+        _history_registry,
+        _history_quantizer,
+        quantizer,
+        model_dtype,
+    ) = load_components(base_args)
     model.load_state_dict(stage2_checkpoint["model_state_dict"])
     return model, processor, registry, quantizer, model_dtype
 

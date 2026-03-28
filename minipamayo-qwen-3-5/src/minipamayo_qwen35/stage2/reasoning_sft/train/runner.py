@@ -470,7 +470,16 @@ def main() -> None:
             image_min_pixels=args.image_min_pixels,
             image_max_pixels=args.image_max_pixels,
         )
-        checkpoint, model, processor, registry, action_quantizer, model_dtype = load_components(stage1_args)
+        (
+            checkpoint,
+            model,
+            processor,
+            registry,
+            _history_registry,
+            _history_quantizer,
+            action_quantizer,
+            model_dtype,
+        ) = load_components(stage1_args)
         processor_settings = collect_processor_settings(
             processor,
             requested_min_pixels=args.image_min_pixels or None,

@@ -123,7 +123,16 @@ def main() -> None:
         image_min_pixels=args.image_min_pixels,
         image_max_pixels=args.image_max_pixels,
     )
-    stage1_checkpoint, model, processor, registry, quantizer, model_dtype = load_components(stage1_args)
+    (
+        stage1_checkpoint,
+        model,
+        processor,
+        registry,
+        _history_registry,
+        _history_quantizer,
+        quantizer,
+        model_dtype,
+    ) = load_components(stage1_args)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.config.use_cache = False
     model.to(device)
