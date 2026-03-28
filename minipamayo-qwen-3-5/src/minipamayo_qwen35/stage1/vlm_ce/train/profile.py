@@ -31,6 +31,7 @@ from ...prompt import DEFAULT_QUESTION, add_prompt_special_tokens, build_prompt_
 from ...tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ...tokenization.registry import Stage1TokenRegistry
 from .runner import format_gib, model_forward_inputs, prepare_batch, stage1_collate
+from .runner import build_model_load_kwargs
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {"train_jsonl", "model_path", "output_json"}
@@ -205,8 +206,7 @@ def main() -> None:
     model_dtype = torch.bfloat16 if args.dtype == "bf16" else torch.float16
     model = AutoModelForImageTextToText.from_pretrained(
         args.model_path,
-        dtype=model_dtype,
-        trust_remote_code=True,
+        **build_model_load_kwargs(model_dtype),
     )
 
     task_spec = CanonicalStage1Spec()

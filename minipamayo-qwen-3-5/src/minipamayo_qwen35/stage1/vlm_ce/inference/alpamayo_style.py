@@ -40,6 +40,7 @@ from ...tokenization.registry import Stage1TokenRegistry
 from ..train import (
     CHECKPOINT_KIND_FULL,
     CHECKPOINT_KIND_MODEL_ONLY,
+    build_model_load_kwargs,
     inject_history_inputs_embeds,
     load_checkpoint,
 )
@@ -227,8 +228,7 @@ def main() -> None:
 
     model = AutoModelForImageTextToText.from_pretrained(
         model_path,
-        dtype=model_dtype,
-        trust_remote_code=True,
+        **build_model_load_kwargs(model_dtype),
     )
     model.resize_token_embeddings(len(processor.tokenizer))
     model.load_state_dict(checkpoint["model_state_dict"])

@@ -48,6 +48,7 @@ from ..train import (
     CHECKPOINT_KIND_MODEL_ONLY,
     append_token_to_model_inputs,
     build_processor_kwargs,
+    build_model_load_kwargs,
     build_prompt_text,
     compute_token_accuracy,
     format_gib,
@@ -258,8 +259,7 @@ def load_components(
 
     model = AutoModelForImageTextToText.from_pretrained(
         model_path,
-        dtype=model_dtype,
-        trust_remote_code=True,
+        **build_model_load_kwargs(model_dtype),
     )
     checkpoint_embed_rows = int(
         checkpoint["model_state_dict"]["model.language_model.embed_tokens.weight"].shape[0]

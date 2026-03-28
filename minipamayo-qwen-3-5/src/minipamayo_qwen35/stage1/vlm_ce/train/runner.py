@@ -72,6 +72,7 @@ MULTI_VALUE_CONFIG_KEYS = {"train_jsonl", "val_jsonl"}
 
 CHECKPOINT_KIND_FULL = "full"
 CHECKPOINT_KIND_MODEL_ONLY = "model_only"
+CANONICAL_ATTN_IMPLEMENTATION = "flash_attention_2"
 
 # Practical Stage 1 VRAM notes for Qwen3.5-0.8B on this repo's CARLA-derived data:
 # - Current dataset images are 1280x720. With full image tokens, 12 GB class GPUs still OOM
@@ -210,6 +211,14 @@ def build_processor_kwargs(image_min_pixels: int, image_max_pixels: int) -> dict
     if image_max_pixels > 0:
         kwargs["max_pixels"] = image_max_pixels
     return kwargs
+
+
+def build_model_load_kwargs(model_dtype: torch.dtype) -> dict:
+    return {
+        "dtype": model_dtype,
+        "trust_remote_code": True,
+        "attn_implementation": CANONICAL_ATTN_IMPLEMENTATION,
+    }
 
 
 def move_inputs_to_device(batch: dict, device: torch.device) -> dict:
@@ -953,8 +962,7 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
         model_dtype = torch.bfloat16 if args.dtype == "bf16" else torch.float16
         model = AutoModelForImageTextToText.from_pretrained(
             args.model_path,
-            dtype=model_dtype,
-            trust_remote_code=True,
+            **build_model_load_kwargs(model_dtype),
         )
 
         history_quantizer = HistoryTrajectoryQuantizer()
