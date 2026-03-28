@@ -19,6 +19,13 @@ uv sync --locked
 
 If you use `direnv`, the tracked `.envrc` applies the same repo-local CUDA settings.
 
+Attention backend policy:
+
+- Canonical runs require `flash-attn` and explicitly request `attn_implementation="flash_attention_2"`.
+- `flash-linear-attention` and `causal-conv1d` are not locked repo dependencies.
+- Reason: `causal-conv1d` source builds are brittle across CUDA / PyTorch combinations, and this repo does not require the Qwen3.5 linear-attention fast path for canonical train/eval/inference.
+- If you want to experiment with that extra Qwen3.5 fast path, install those packages manually in a disposable env and treat them as optional local optimization, not part of the recorded canonical setup.
+
 Current workflow:
 
 1. Convert episodes under `datasets/raw/<collection_name>/` into `jsonl + images/` with a data config
