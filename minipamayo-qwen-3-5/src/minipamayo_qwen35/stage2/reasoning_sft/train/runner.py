@@ -109,6 +109,7 @@ def _load_config_args(config_json: str, parser: argparse.ArgumentParser) -> tupl
         parser,
         exclude_dests={"help", "config_json"},
         path_keys=CONFIG_PATH_KEYS,
+        list_keys={"train_jsonl", "val_jsonl"},
         base_dir=base_dir,
     )
     return str(config_path), payload, config_args
