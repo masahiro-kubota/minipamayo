@@ -1,8 +1,12 @@
-"""Steer-only experimental Stage 1A eval entrypoint."""
+"""Steer-only Stage 1 eval entrypoint."""
 
-from ....eval.experiments.steer_only import main
+from .... import KappaOnlyStage1Spec
+from ..runner import main as run_stage1_eval
+
+
+def main() -> None:
+    run_stage1_eval(KappaOnlyStage1Spec())
 
 
 if __name__ == "__main__":
     main()
-

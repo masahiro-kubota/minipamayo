@@ -21,11 +21,11 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader
 
-from ...stage1.eval import load_components
+from ...stage1.vlm_ce.eval import load_components
 from ...models.trajectory_decoder import cfm_sample, load_decoder_from_checkpoint
 from ...sequence.rollout_parser import parse_generated_sequence
 from ...sequence.stage3_builder import build_stage3_prompt_text, build_reasoning_text
-from ...stage1.train import (
+from ...stage1.vlm_ce.train import (
     format_gib,
     log_gpu_preflight,
     maybe_wandb_finish,

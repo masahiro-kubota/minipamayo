@@ -1,4 +1,5 @@
-"""Canonical Stage 1A evaluation entrypoints."""
+"""Stage 1 evaluation entrypoints and shared helpers."""
 
-from ...eval import *  # noqa: F403
+from .runner import load_components, main
 
+__all__ = ["load_components", "main"]

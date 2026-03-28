@@ -112,10 +112,11 @@ src/minipamayo_qwen35/
     vlm_ce/
       train/
       eval/
+      inference/
     expert_cfm/
       train/
       eval/
-    inference/
+      inference/
   stage2/
     reasoning_sft/
       train/
@@ -133,14 +134,25 @@ configs/
   stage1/
     data/
     vlm_ce/
-      canonical/
-      experiments/
+      train/
+        canonical/
+        experiments/
+      eval/
+        canonical/
+        experiments/
+      inference/
+        canonical/
+        experiments/
     expert_cfm/
-      canonical/
-      experiments/
-    inference/
-      canonical/
-      experiments/
+      train/
+        canonical/
+        experiments/
+      eval/
+        canonical/
+        experiments/
+      inference/
+        canonical/
+        experiments/
   stage2/
     reasoning_sft/
       canonical/

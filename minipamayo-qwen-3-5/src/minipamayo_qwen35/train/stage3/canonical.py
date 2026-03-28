@@ -18,9 +18,9 @@ import torch.nn.functional as F
 from PIL import Image
 from torch.utils.data import DataLoader, random_split
 
-from ...stage1.eval import load_components
+from ...stage1.vlm_ce.eval import load_components
 from ...sequence.stage3_builder import ACTION_SECTION_HEADER, build_stage3_prompt_text
-from ...stage1.train import (
+from ...stage1.vlm_ce.train import (
     first_record_from_dataset,
     format_gib,
     log_gpu_preflight,

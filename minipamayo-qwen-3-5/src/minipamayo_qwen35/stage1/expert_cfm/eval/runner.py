@@ -11,7 +11,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from ....stage1.data.dataset import Stage1JsonlDataset
-from ....stage1.train import stage1_collate
+from ....stage1.vlm_ce.train import stage1_collate
 from ....utils.dynamics import forward_dynamics_batch
 from ....utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,

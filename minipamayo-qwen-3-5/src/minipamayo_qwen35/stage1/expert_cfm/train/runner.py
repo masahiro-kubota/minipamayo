@@ -14,7 +14,7 @@ import torch
 from torch.utils.data import DataLoader, random_split
 
 from ....stage1.data.dataset import Stage1JsonlDataset
-from ....stage1.train import (
+from ....stage1.vlm_ce.train import (
     format_gib,
     log_gpu_preflight,
     maybe_wandb_finish,

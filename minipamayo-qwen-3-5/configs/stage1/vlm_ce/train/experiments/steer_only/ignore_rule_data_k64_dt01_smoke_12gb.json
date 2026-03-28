@@ -26,6 +26,6 @@
     "image_max_pixels": 196608,
     "gradient_checkpointing": true,
     "wandb_project": "minipamayo-qwen35",
-    "wandb_run_name": "stage1-vlm-ce-steer-only-k64-dt01-smoke-12gb"
+    "wandb_run_name": "stage1-steer-only-ignore-rule-k64-dt01-smoke-12gb-64tok"
   }
 }

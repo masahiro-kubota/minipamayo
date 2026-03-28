@@ -1,8 +1,12 @@
-"""Canonical Stage 1A train entrypoint."""
+"""Canonical Stage 1 train entrypoint."""
 
-from ...train.canonical import main
+from ... import CanonicalStage1Spec
+from .runner import main as run_stage1_training
+
+
+def main() -> None:
+    run_stage1_training(CanonicalStage1Spec())
 
 
 if __name__ == "__main__":
     main()
-

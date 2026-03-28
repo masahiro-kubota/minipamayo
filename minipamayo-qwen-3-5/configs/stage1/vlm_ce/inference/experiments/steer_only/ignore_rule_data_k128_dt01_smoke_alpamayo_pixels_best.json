@@ -1,0 +1,10 @@
+{
+  "path_base": "project_root",
+  "args": {
+    "checkpoint": "checkpoints/stage1/vlm_ce/experiments/steer_only/ignore_rule_data_k128_dt01_smoke_alpamayo_pixels_12gb/best.pt",
+    "test_jsonl": "datasets/processed/stage1/ignore_rule_data_k128_dt01_smoke/20260327_231917_town01_intersection_weave_cw_expert_eval_0025824a9fa8/samples.jsonl",
+    "sample_index": 0,
+    "device": "cuda",
+    "output_json": "artifacts/inference/stage1/vlm_ce/experiments/steer_only/ignore_rule_data_k128_dt01_smoke_alpamayo_pixels_best_sample000.json"
+  }
+}

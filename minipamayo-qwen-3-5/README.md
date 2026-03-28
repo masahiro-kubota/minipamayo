@@ -18,7 +18,8 @@ Recommended repo layout:
 - Data configs: `configs/stage1/data/*.json`
 - Stage1A train configs: `configs/stage1/vlm_ce/train/**`
 - Stage1A eval configs: `configs/stage1/vlm_ce/eval/**`
-- Stage1B configs: `configs/stage1/expert_cfm/**`
+- Stage1A inference configs: `configs/stage1/vlm_ce/inference/**`
+- Stage1B train/eval/inference configs: `configs/stage1/expert_cfm/**`
 - Stage2 configs: `configs/stage2/reasoning_sft/**`
 - Stage3 configs: `configs/stage3/post_training/**`
 
@@ -30,6 +31,7 @@ Canonical entrypoints are:
 - `minipamayo_qwen35.stage1.vlm_ce.train.profile`
 - `minipamayo_qwen35.stage1.vlm_ce.train`
 - `minipamayo_qwen35.stage1.vlm_ce.eval`
+- `minipamayo_qwen35.stage1.vlm_ce.inference`
 - `minipamayo_qwen35.stage1.expert_cfm.train`
 - `minipamayo_qwen35.stage1.expert_cfm.eval`
 - `minipamayo_qwen35.stage1.expert_cfm.inference`
@@ -47,7 +49,8 @@ Recorded-entrypoint examples:
 - `uv run python -m minipamayo_qwen35.stage1.vlm_ce.train.profile --config-json configs/stage1/vlm_ce/profile/canonical/ignore_rule_data_k64_dt01_smoke_12gb_forward_only.json`
 - `uv run python -m minipamayo_qwen35.stage1.vlm_ce.train --config-json configs/stage1/vlm_ce/train/canonical/ignore_rule_data_k64_dt01_12gb.json`
 - `uv run python -m minipamayo_qwen35.stage1.vlm_ce.eval --config-json configs/stage1/vlm_ce/eval/canonical/ignore_rule_data_k64_dt01_12gb.json`
-- `uv run python -m minipamayo_qwen35.stage1.expert_cfm.train --config-json configs/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_smoke_12gb.json`
+- `uv run python -m minipamayo_qwen35.stage1.vlm_ce.inference --config-json configs/stage1/vlm_ce/inference/canonical/ignore_rule_data_k64_dt01_sample.json`
+- `uv run python -m minipamayo_qwen35.stage1.expert_cfm.train --config-json configs/stage1/expert_cfm/train/canonical/ignore_rule_data_k64_dt01_smoke_12gb.json`
 - `uv run python -m minipamayo_qwen35.stage1.vlm_ce.train.experiments.steer_only --config-json configs/stage1/vlm_ce/train/experiments/steer_only/ignore_rule_data_k64_dt01_smoke_12gb.json`
 
 The data, train, eval, profile, and inference entrypoints intentionally reject CLI overrides so the JSON files remain the full run record.
