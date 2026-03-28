@@ -308,6 +308,8 @@ def _record_to_json(
     history_pose_frames: list[FrameRecord],
     ego_history_xyz: np.ndarray,
     ego_history_rot: np.ndarray,
+    ego_future_xyz: np.ndarray,
+    ego_future_rot: np.ndarray,
     future_pose_frames: list[FrameRecord],
     gt_waypoints: np.ndarray,
     action: np.ndarray,
@@ -329,6 +331,8 @@ def _record_to_json(
         },
         "ego_history_xyz": np.expand_dims(ego_history_xyz, axis=0).tolist(),
         "ego_history_rot": np.expand_dims(ego_history_rot, axis=0).tolist(),
+        "ego_future_xyz": np.expand_dims(ego_future_xyz, axis=0).tolist(),
+        "ego_future_rot": np.expand_dims(ego_future_rot, axis=0).tolist(),
         "history_poses_global": [
             {
                 "frame_id": frame.frame_id,
@@ -466,6 +470,18 @@ def _extract_job(job: ExtractionJob, args: argparse.Namespace, *, job_index: int
             [_rotation_matrix_from_yaw(float(yaw)) for yaw in ego_history_yaw],
             axis=0,
         )
+        ego_future_xyz = np.concatenate(
+            [gt_waypoints.astype(np.float32), np.zeros((args.k, 1), dtype=np.float32)],
+            axis=1,
+        )
+        ego_future_yaw = np.arctan2(
+            np.sin(headings[1 : args.k + 1] - headings[0]),
+            np.cos(headings[1 : args.k + 1] - headings[0]),
+        ).astype(np.float32)
+        ego_future_rot = np.stack(
+            [_rotation_matrix_from_yaw(float(yaw)) for yaw in ego_future_yaw],
+            axis=0,
+        )
 
         image_rel_path = f"images/{source_frame.frame_id:06d}.{source_frame.image_format}"
         image_path = output_dir / image_rel_path
@@ -478,6 +494,8 @@ def _extract_job(job: ExtractionJob, args: argparse.Namespace, *, job_index: int
             history_pose_frames=history_pose_frames,
             ego_history_xyz=ego_history_xyz,
             ego_history_rot=ego_history_rot,
+            ego_future_xyz=ego_future_xyz,
+            ego_future_rot=ego_future_rot,
             future_pose_frames=pose_window[1:],
             gt_waypoints=gt_waypoints,
             action=action,

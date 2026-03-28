@@ -124,6 +124,18 @@ class Stage1TaskSpec(ABC):
             **self.quantizer_metadata(quantizer),
         }
 
+    def encode_target_token_rows_from_batch(
+        self,
+        batch: dict,
+        registry,
+        quantizer,
+    ) -> list[list[int]]:
+        rows: list[list[int]] = []
+        for action in batch["action"]:
+            target = self.target_from_action_tensor(action).cpu().numpy()
+            rows.append(registry.encode_target_token_ids(target, quantizer))
+        return rows
+
 
 @dataclass(frozen=True)
 class CanonicalStage1Spec(Stage1TaskSpec):
@@ -170,6 +182,22 @@ class CanonicalStage1Spec(Stage1TaskSpec):
             "a_range": list(quantizer.a_range),
             "kappa_range": list(quantizer.kappa_range),
         }
+
+    def encode_target_token_rows_from_batch(
+        self,
+        batch: dict,
+        registry,
+        quantizer: ActionQuantizer,
+    ) -> list[list[int]]:
+        if "ego_future_xyz" not in batch or "ego_future_rot" not in batch:
+            return super().encode_target_token_rows_from_batch(batch, registry, quantizer)
+        token_rows = quantizer.encode(
+            hist_xyz=batch["ego_history_xyz"].to(dtype=torch.float32),
+            hist_rot=batch["ego_history_rot"].to(dtype=torch.float32),
+            fut_xyz=batch["ego_future_xyz"].to(dtype=torch.float32),
+            fut_rot=batch["ego_future_rot"].to(dtype=torch.float32),
+        )
+        return [registry.encode_bin_token_ids(row.tolist()) for row in token_rows.detach().cpu()]
 
 
 @dataclass(frozen=True)

@@ -1041,10 +1041,11 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                     model_dtype=model_dtype,
                 )
 
-                gt_token_rows = []
-                for action in batch["action"]:
-                    target = task_spec.target_from_action_tensor(action).cpu().numpy()
-                    gt_token_rows.append(registry.encode_target_token_ids(target, quantizer))
+                gt_token_rows = task_spec.encode_target_token_rows_from_batch(
+                    batch,
+                    registry,
+                    quantizer,
+                )
                 gt_token_ids = torch.tensor(gt_token_rows, device=device, dtype=torch.long)
                 ar_matches = generated_token_ids == gt_token_ids
                 ar_correct += int(ar_matches.sum().item())

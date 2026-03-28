@@ -14,56 +14,7 @@
 
 ## 未整合の一覧
 
-### 1. history trajectory tokenization の中身
-
-history の shape と `input_ids` への fuse 方式は Alpamayo 側に寄せたが、
-**history をどの `<i*>` 列に変換するか** の中身はまだ一致していない。
-
-- Alpamayo:
-  - `models.base_model.tokenize_history_trajectory(...)`
-  - `hist_traj_tokenizer.encode(...)`
-- こちら:
-  - `stage1/tokenization/history.py`
-  - `HistoryTrajectoryQuantizer`
-
-残っている差分:
-
-- history token の bin の切り方
-- `hist_xyz / hist_rot -> token` の変換規約
-- `tokenize_history_trajectory(...)` と同じ trajectory tokenizer を使っていない
-
-影響:
-
-- 同じ `ego_history_xyz / ego_history_rot` を入れても、
-  VLM が見る history token 列の意味空間が Alpamayo と一致しない。
-
-### 2. future discrete trajectory tokenization の中身
-
-future token は `<i*>` 系に揃えたが、
-**future trajectory をどの bin に量子化するか** はまだ Alpamayo の
-`DiscreteTrajectoryTokenizer` と同一ではない。
-
-- Alpamayo:
-  - `action_space.traj_to_action(...)`
-  - `DiscreteTrajectoryTokenizer.encode(...)`
-  - `dims_min / dims_max / num_bins`
-- こちら:
-  - `ActionQuantizer`
-  - 固定 `a_range / kappa_range`
-  - Stage1A では `ActionQuantizer.encode_bin_ids(...)`
-
-残っている差分:
-
-- `traj_to_action` を通した tokenization ではなく、独自 quantizer を使っている
-- `dims_min / dims_max` 契約が Alpamayo の tokenizer 設定と一致していない
-- future trajectory token の「値の意味」が完全一致ではない
-
-影響:
-
-- `stage1A` の CE 教師信号を Alpamayo と 1 対 1 で比較できない。
-- token loss / token accuracy の比較にも離散化仕様差が混ざる。
-
-### 3. `stage2` の free-running handoff 成立性
+### 1. `stage2` の free-running handoff 成立性
 
 `stage2 -> expert_cfm` の code path 自体はある。  
 また `stage2` の target も、いまは
@@ -92,7 +43,7 @@ future token は `<i*>` 系に揃えたが、
 - ただし Alpamayo 推論コードと同じ「reasoning rollout のあと expert に handoff」が、
   いまの smoke 学習済み重みで安定成立するところまではまだ確認できていない
 
-### 4. `expert_cfm` 本体の exact 同型性
+### 2. `expert_cfm` 本体の exact 同型性
 
 `expert_cfm` は API と大枠構造を Alpamayo 側に寄せたが、
 **公開実装と exact 同型** とまではまだ言えない。
@@ -118,7 +69,7 @@ future token は `<i*>` 系に揃えたが、
 - 役割は近いが、expert そのものの capacity と数値特性が一致している保証はない
 - trajectory 品質差が出たときに、data/recipe 以外に expert 本体差も候補に残る
 
-### 5. `action_space` の数値契約
+### 3. `action_space` の数値契約
 
 `action_space` の API surface 自体はかなり揃ったが、
 **数値の中身** はまだ Alpamayo の `UnicycleAccelCurvatureActionSpace` と一致していない。
@@ -143,37 +94,33 @@ future token は `<i*>` 系に揃えたが、
 - 同じ future trajectory から得る `(a, kappa)` が Alpamayo と完全一致しない
 - 同じ predicted action を rollout しても、ADE / FDE に action-space 由来の差が混じる
 
-### 6. 依存ライブラリ stack
+### 4. 依存ライブラリ stack
 
 まだ一致していない主要差分:
 
-- `torch`
-  - Alpamayo: `2.8.0`
-  - こちら: `2.10.0+cu128`
 - `transformers`
   - Alpamayo: `4.57.1`
-  - こちら: `5.5.0.dev0`
-- attention 実装
-  - Alpamayo: `flash-attn`
-  - こちら: なし
-- dataset / AV 周辺
-  - Alpamayo: `physical_ai_av` あり
-  - こちら: なし
+  - こちら: `5.4.0`
+- build backend
+  - Alpamayo: `uv_build`
+  - こちら: `setuptools`
 
 補足:
 
-- `hydra`, `einops`, `av` は導入済み
+- `torch==2.8.0`, `torchvision>=0.23.0`, `flash-attn>=2.8.3`, `physical_ai_av>=0.2.0`,
+  `hydra-core`, `hydra-colorlog`, `einops`, `av` は揃った
+- `transformers` 差分は、現在の `Qwen3.5-0.8B` 読み込み要件に引っ張られている
 
 影響:
 
-- generation / KV-cache / attention / memory usage の挙動差
-- Alpamayo 公開実装と完全同条件の runtime 比較ができない
+- `transformers` 差分により generation / KV-cache / attention / memory usage の挙動差が残る
+- build backend 差分により environment 再現性の条件が完全一致ではない
+- その結果、Alpamayo 公開実装と完全同条件の runtime 比較ができない
 
 ## 優先度順
 
 ### 優先度 A
 
-- history / future trajectory tokenization を Alpamayo tokenizer 契約へさらに寄せる
 - `stage2` が free-running で `<|traj_future_start|>` を安定して出すところまで確認する
 
 ### 優先度 B
@@ -183,7 +130,7 @@ future token は `<i*>` 系に揃えたが、
 
 ### 優先度 C
 
-- `torch`, `transformers`, `flash-attn`, `physical_ai_av` を含む依存 stack を揃える
+- `transformers` と build backend を含む依存 stack をさらに揃える
 
 ## ひとことで言うと
 
@@ -192,7 +139,6 @@ future token は `<i*>` 系に揃えたが、
 
 いま残っているのは主にこの 4 つである。
 
-- history / future tokenization の中身
 - `stage2` free-running handoff の成立性
 - expert / action-space の exact 数値契約
 - 依存ライブラリ stack

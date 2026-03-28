@@ -510,10 +510,11 @@ def prepare_batch(
 ) -> tuple[dict, torch.Tensor]:
     images = [Image.open(path).convert("RGB") for path in batch["image_path"]]
     try:
-        target_token_id_rows = []
-        for action in batch["action"]:
-            target = task_spec.target_from_action_tensor(action).cpu().numpy()
-            target_token_id_rows.append(registry.encode_target_token_ids(target, quantizer))
+        target_token_id_rows = task_spec.encode_target_token_rows_from_batch(
+            batch,
+            registry,
+            quantizer,
+        )
 
         prompt_inputs = processor(
             text=[prompt_text] * len(images),

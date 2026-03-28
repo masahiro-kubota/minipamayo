@@ -5,11 +5,36 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+import torch
+
+from ..expert_cfm.action_space import UnicycleAccelCurvatureActionSpace
+
+
+def _canonicalize_future_xyz(value: torch.Tensor) -> torch.Tensor:
+    if value.dim() == 3:
+        return value
+    if value.dim() == 4 and value.shape[1] == 1:
+        return value[:, 0]
+    raise RuntimeError(
+        "Expected `fut_xyz` shape (batch, T, 3) or (batch, 1, T, 3), "
+        f"got {tuple(value.shape)!r}."
+    )
+
+
+def _canonicalize_future_rot(value: torch.Tensor) -> torch.Tensor:
+    if value.dim() == 4:
+        return value
+    if value.dim() == 5 and value.shape[1] == 1:
+        return value[:, 0]
+    raise RuntimeError(
+        "Expected `fut_rot` shape (batch, T, 3, 3) or (batch, 1, T, 3, 3), "
+        f"got {tuple(value.shape)!r}."
+    )
 
 
 @dataclass(frozen=True)
 class ActionQuantizer:
-    """Shared-bin quantizer for interleaved (a, kappa) controls."""
+    """Alpamayo-like discrete tokenizer over interleaved (a, kappa) controls."""
 
     n_bins: int = 256
     a_range: tuple[float, float] = (-6.0, 6.0)
@@ -26,6 +51,9 @@ class ActionQuantizer:
     @property
     def dims_max(self) -> list[float]:
         return [float(self.a_range[1]), float(self.kappa_range[1])]
+
+    def _build_action_space(self, *, k: int) -> UnicycleAccelCurvatureActionSpace:
+        return UnicycleAccelCurvatureActionSpace(k=int(k))
 
     def quantize_bin(self, value: float, v_min: float, v_max: float) -> int:
         clamped = max(v_min, min(v_max - 1e-8, float(value)))
@@ -54,3 +82,52 @@ class ActionQuantizer:
                 v_min, v_max = self.kappa_range
             values.append(self.dequantize_bin(int(bin_idx), v_min, v_max))
         return np.asarray(values, dtype=np.float32)
+
+    def encode(
+        self,
+        hist_xyz: torch.Tensor,
+        hist_rot: torch.Tensor,
+        fut_xyz: torch.Tensor,
+        fut_rot: torch.Tensor,
+        hist_tstamp: torch.Tensor | None = None,
+        fut_tstamp: torch.Tensor | None = None,
+    ) -> torch.LongTensor:
+        del hist_tstamp, fut_tstamp
+        future_xyz = _canonicalize_future_xyz(fut_xyz)
+        future_rot = _canonicalize_future_rot(fut_rot)
+        action_space = self._build_action_space(k=int(future_xyz.shape[1]))
+        action = action_space.traj_to_action(
+            traj_history_xyz=hist_xyz,
+            traj_history_rot=hist_rot,
+            traj_future_xyz=future_xyz,
+            traj_future_rot=future_rot,
+        )
+        dims_min = torch.tensor(self.dims_min, device=action.device, dtype=action.dtype)
+        dims_max = torch.tensor(self.dims_max, device=action.device, dtype=action.dtype)
+        action = (action - dims_min) / (dims_max - dims_min)
+        action = (action * float(self.n_bins - 1)).round().long()
+        action = action.clamp(0, self.n_bins - 1)
+        return action.reshape(action.shape[0], -1)
+
+    def decode(
+        self,
+        hist_xyz: torch.Tensor,
+        hist_rot: torch.Tensor,
+        tokens: torch.LongTensor,
+        hist_tstamp: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+        del hist_tstamp
+        if tokens.dim() != 2 or tokens.shape[1] % 2 != 0:
+            raise RuntimeError(
+                "ActionQuantizer.decode expects tokens shaped (batch, 2*k).\n"
+                f"found={tuple(tokens.shape)!r}"
+            )
+        k = tokens.shape[1] // 2
+        action = tokens.reshape(-1, k, 2).to(hist_xyz.dtype)
+        dims_min = torch.tensor(self.dims_min, device=action.device, dtype=action.dtype)
+        dims_max = torch.tensor(self.dims_max, device=action.device, dtype=action.dtype)
+        action = action / float(self.n_bins - 1)
+        action = action * (dims_max - dims_min) + dims_min
+        action_space = self._build_action_space(k=k)
+        fut_xyz, fut_rot = action_space.action_to_traj(action, hist_xyz, hist_rot)
+        return fut_xyz, fut_rot, None

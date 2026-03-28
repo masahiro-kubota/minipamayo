@@ -30,7 +30,11 @@ def _yaw_to_rotmat(yaw: torch.Tensor) -> torch.Tensor:
 def _canonicalize_traj_group_tensor(name: str, value: torch.Tensor) -> torch.Tensor:
     if value.dim() == 3:
         return value
+    if value.dim() == 4 and value.shape[-2:] == (3, 3):
+        return value
     if value.dim() == 4 and value.shape[1] == 1:
+        return value[:, 0]
+    if value.dim() == 5 and value.shape[1] == 1:
         return value[:, 0]
     raise RuntimeError(
         f"Expected `{name}` shape (batch, T, ...) or (batch, 1, T, ...), got {tuple(value.shape)!r}."
