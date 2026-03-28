@@ -22,12 +22,6 @@ This file defines repository-specific implementation rules for `minipamayo-qwen-
 - Prefer `require_*` helpers or typed schema objects over ad hoc field access.
 - In `src/minipamayo_qwen35/data`, `src/minipamayo_qwen35/train`, `src/minipamayo_qwen35/eval`, and related utils, required schema fields must be accessed strictly.
 
-## Stage 1 Expectations
-
-- `train.stage1` expects canonical checkpoint metadata for resume and a saved `processor/` directory inside the run directory.
-- `eval.stage1` expects canonical checkpoint metadata, canonical sample records, `images/`, and `extract_summary.json`.
-- `data.stage1` should fail on malformed MCAP payloads instead of filling defaults such as placeholder planner states or commands.
-
 ## Change Policy
 
 - When tightening schemas, prefer making failures explicit over preserving old broken artifacts.
