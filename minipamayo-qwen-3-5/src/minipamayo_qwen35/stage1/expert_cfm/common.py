@@ -51,7 +51,32 @@ def load_stage1_condition_components(args):
             "image_max_pixels": int(args.image_max_pixels),
         },
     )()
-    return load_components(stage1_args, task_spec=CanonicalStage1Spec())
+    (
+        checkpoint,
+        model,
+        processor,
+        registry,
+        history_registry,
+        history_quantizer,
+        quantizer,
+        model_dtype,
+    ) = load_components(stage1_args, task_spec=CanonicalStage1Spec())
+    device_name = getattr(args, "device", None)
+    if device_name:
+        device = torch.device(
+            device_name if device_name != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
+        )
+        model = model.to(device)
+    return (
+        checkpoint,
+        model,
+        processor,
+        registry,
+        history_registry,
+        history_quantizer,
+        quantizer,
+        model_dtype,
+    )
 
 
 def prepare_condition_inputs(
