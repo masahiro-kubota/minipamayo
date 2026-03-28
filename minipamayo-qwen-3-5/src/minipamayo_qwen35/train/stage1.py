@@ -43,10 +43,14 @@ DEFAULT_QUESTION = (
     "Output only the action tokens in order."
 )
 
-# Practical presets measured with Qwen3.5-0.8B on this repo's CARLA-derived data:
-# - 12 GB class GPU: `--batch-size 1 --gradient-checkpointing`
-# - 24 GB class GPU: `--batch-size 2 --no-gradient-checkpointing`
-# Keep the defaults conservative, then opt into the 24 GB setting explicitly.
+# Practical Stage 1 VRAM notes for Qwen3.5-0.8B on this repo's CARLA-derived data:
+# - Current dataset images are 1280x720. With full image tokens, 12 GB class GPUs still OOM
+#   on the first backward even with `batch-size 1` and gradient checkpointing enabled.
+# - For 12 GB class GPUs, treat `batch-size 1` + gradient checkpointing as the floor and
+#   expect that image-token reduction or smaller input images may still be required.
+# - For 24 GB class GPUs, the preferred target is to keep full image tokens and start from
+#   `batch-size 2` + `--no-gradient-checkpointing`.
+# Update this block whenever VRAM measurements change so the 24 GB path stays documented here.
 
 
 def build_parser() -> argparse.ArgumentParser:
