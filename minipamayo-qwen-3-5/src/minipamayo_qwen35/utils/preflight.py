@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import os
+import re
 import subprocess
 from io import StringIO
 from pathlib import Path
@@ -11,6 +12,9 @@ from typing import Any
 
 GPU_OTHER_USED_WARN_MIB = 1024
 GPU_FREE_WARN_MIB = 4096
+EXPECTED_CUDA_TOOLKIT_VERSION = "12.8"
+EXPECTED_CUDA_HOME = Path("/usr/local/cuda-12.8")
+EXPECTED_CUDA_SYMLINK = Path("/usr/local/cuda")
 
 
 def resolve_git_repo_root(cwd: str | Path | None = None) -> Path:
@@ -100,6 +104,7 @@ def enforce_training_prerequisites(
     name: str = "",
     git_cwd: str | Path | None = None,
 ):
+    require_expected_cuda_toolkit()
     require_clean_git_worktree(git_cwd)
     return init_required_online_wandb(
         project=project,
@@ -212,4 +217,101 @@ def collect_gpu_preflight_snapshot(
     except Exception as exc:
         snapshot["query_error"] = str(exc)
         snapshot["warning_reasons"] = [f"Could not inspect GPU state before training: {exc}"]
+    return snapshot
+
+
+def _parse_nvcc_release(stdout: str) -> str | None:
+    match = re.search(r"release\s+(\d+\.\d+)", stdout)
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def collect_cuda_toolkit_snapshot() -> dict[str, Any]:
+    snapshot: dict[str, Any] = {
+        "query_ok": False,
+        "expected_toolkit_version": EXPECTED_CUDA_TOOLKIT_VERSION,
+        "expected_cuda_home": str(EXPECTED_CUDA_HOME),
+    }
+    try:
+        result = subprocess.run(
+            ["nvcc", "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        snapshot["error"] = f"`nvcc` is not available: {exc}"
+        return snapshot
+    if result.returncode != 0:
+        stderr = result.stderr.strip() or "unknown nvcc error"
+        snapshot["error"] = f"`nvcc --version` failed: {stderr}"
+        return snapshot
+
+    nvcc_release = _parse_nvcc_release(result.stdout)
+    cuda_home_env = os.environ.get("CUDA_HOME", "")
+    symlink_target = ""
+    if EXPECTED_CUDA_SYMLINK.exists():
+        symlink_target = str(EXPECTED_CUDA_SYMLINK.resolve())
+
+    torch_cuda = ""
+    try:
+        import torch
+
+        torch_cuda = str(torch.version.cuda or "")
+    except Exception:
+        torch_cuda = ""
+
+    snapshot.update(
+        {
+            "query_ok": True,
+            "nvcc_release": nvcc_release,
+            "cuda_home_env": cuda_home_env,
+            "cuda_symlink_target": symlink_target,
+            "torch_cuda": torch_cuda,
+            "nvcc_output": result.stdout.strip(),
+        }
+    )
+    return snapshot
+
+
+def require_expected_cuda_toolkit() -> dict[str, Any]:
+    snapshot = collect_cuda_toolkit_snapshot()
+    if not snapshot["query_ok"]:
+        raise RuntimeError(
+            "Canonical runtime requires CUDA toolkit 12.8, but CUDA preflight failed.\n"
+            f"{snapshot.get('error', 'unknown CUDA preflight error')}"
+        )
+
+    problems: list[str] = []
+    nvcc_release = snapshot.get("nvcc_release")
+    if nvcc_release != EXPECTED_CUDA_TOOLKIT_VERSION:
+        problems.append(
+            f"`nvcc --version` reported {nvcc_release!r}, expected {EXPECTED_CUDA_TOOLKIT_VERSION!r}."
+        )
+
+    cuda_home_env = snapshot.get("cuda_home_env", "")
+    if cuda_home_env != str(EXPECTED_CUDA_HOME):
+        problems.append(
+            f"`CUDA_HOME` is {cuda_home_env!r}, expected {str(EXPECTED_CUDA_HOME)!r}."
+        )
+
+    cuda_symlink_target = snapshot.get("cuda_symlink_target", "")
+    if cuda_symlink_target and cuda_symlink_target != str(EXPECTED_CUDA_HOME):
+        problems.append(
+            f"`/usr/local/cuda` resolves to {cuda_symlink_target!r}, expected {str(EXPECTED_CUDA_HOME)!r}."
+        )
+
+    torch_cuda = snapshot.get("torch_cuda", "")
+    if torch_cuda and torch_cuda != EXPECTED_CUDA_TOOLKIT_VERSION:
+        problems.append(
+            f"`torch.version.cuda` is {torch_cuda!r}, expected {EXPECTED_CUDA_TOOLKIT_VERSION!r}."
+        )
+
+    if problems:
+        raise RuntimeError(
+            "Canonical runtime requires CUDA toolkit 12.8 alignment for flash-attn.\n"
+            + "\n".join(problems)
+            + "\nFix shell exports so PATH / LD_LIBRARY_PATH / CUDA_HOME point to /usr/local/cuda-12.8."
+        )
     return snapshot

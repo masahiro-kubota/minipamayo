@@ -16,6 +16,7 @@ from ....utils.image_budget import (
     validate_canonical_image_budget,
 )
 from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
+from ....utils.preflight import require_expected_cuda_toolkit
 from ..common import (
     extract_prompt_cache,
     freeze_module,
@@ -97,6 +98,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     device = torch.device(args.device)
+    if device.type != "cuda":
+        raise RuntimeError("Canonical Stage 1B inference currently expects CUDA.")
+    require_expected_cuda_toolkit()
     dataset = Stage1JsonlDataset(args.sample_jsonl)
     if args.sample_index >= len(dataset):
         raise RuntimeError(

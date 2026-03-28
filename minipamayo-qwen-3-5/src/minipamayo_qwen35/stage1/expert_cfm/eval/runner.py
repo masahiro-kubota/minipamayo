@@ -23,6 +23,7 @@ from ....utils.json_config import (
     normalize_required_string_list,
     resolve_path_base,
 )
+from ....utils.preflight import require_expected_cuda_toolkit
 from ..common import (
     extract_prompt_cache,
     freeze_module,
@@ -108,6 +109,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     device = torch.device(args.device)
+    if device.type != "cuda":
+        raise RuntimeError("Canonical Stage 1B evaluation currently expects CUDA.")
+    require_expected_cuda_toolkit()
 
     dataset = Stage1JsonlDataset(args.eval_jsonl)
     dataloader = DataLoader(

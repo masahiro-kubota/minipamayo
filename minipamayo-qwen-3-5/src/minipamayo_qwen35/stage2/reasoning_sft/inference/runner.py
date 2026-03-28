@@ -26,6 +26,7 @@ from ....utils.image_budget import (
     validate_canonical_image_budget,
 )
 from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
+from ....utils.preflight import require_expected_cuda_toolkit
 from ....utils.run_metadata import collect_processor_settings
 from ..dataset import ReasoningSftJsonlDataset
 
@@ -218,6 +219,7 @@ def main() -> None:
     )
     if device.type != "cuda":
         raise RuntimeError("Canonical Stage 2 inference currently expects CUDA.")
+    require_expected_cuda_toolkit()
 
     checkpoint = load_checkpoint(Path(args.checkpoint))
     checkpoint_args = checkpoint.get("args")

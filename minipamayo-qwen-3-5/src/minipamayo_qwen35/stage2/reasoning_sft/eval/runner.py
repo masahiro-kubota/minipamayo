@@ -19,6 +19,7 @@ from ....utils.image_budget import (
     validate_canonical_image_budget,
 )
 from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
+from ....utils.preflight import require_expected_cuda_toolkit
 from ....utils.run_metadata import collect_dataset_view_fingerprint, collect_processor_settings
 from ..dataset import ReasoningSftJsonlDataset, reasoning_sft_collate
 from ..train.runner import evaluate
@@ -101,6 +102,7 @@ def main() -> None:
     )
     if device.type != "cuda":
         raise RuntimeError("This Stage 2 evaluator is intended to run on CUDA.")
+    require_expected_cuda_toolkit()
 
     checkpoint = load_checkpoint(Path(args.checkpoint))
     checkpoint_args = checkpoint.get("args")

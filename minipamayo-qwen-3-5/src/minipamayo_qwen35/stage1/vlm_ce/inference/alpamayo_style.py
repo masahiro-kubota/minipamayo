@@ -24,6 +24,7 @@ from transformers import AutoModelForImageTextToText, AutoTokenizer
 
 from ....utils.dynamics import forward_dynamics_batch
 from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
+from ....utils.preflight import require_expected_cuda_toolkit
 from ....utils.run_metadata import collect_processor_settings
 from ... import CanonicalStage1Spec, KappaOnlyStage1Spec, Stage1TaskSpec
 from ...data.dataset import Stage1JsonlDataset
@@ -162,6 +163,7 @@ def main() -> None:
     )
     if device.type != "cuda":
         raise RuntimeError("Stage 1 Alpamayo-style inference currently expects CUDA.")
+    require_expected_cuda_toolkit()
 
     checkpoint_path = Path(args.checkpoint)
     checkpoint = load_checkpoint(checkpoint_path)
