@@ -7,7 +7,7 @@ Recommended layout:
 ```text
 datasets/
   raw/
-    mcap/
+    <collection_name>/
       <episode_id>/
         summary.json
         telemetry/
@@ -20,56 +20,49 @@ datasets/
       <dataset_name>/
         samples.jsonl
         extract_summary.json
+        run_config.json
         images/
 
   splits/
     stage1/
       train.jsonl
       val.jsonl
-
-  manifests/
-    stage1/
-      ignore_rule_data.json
 ```
 
 Usage:
 
-- Place raw CARLA telemetry episodes under `datasets/raw/mcap/`.
+- Place raw CARLA telemetry episodes under `datasets/raw/<collection_name>/`.
 - Extract Stage 1 training data under `datasets/processed/stage1/`.
 - Keep split JSONL files under `datasets/splits/stage1/` if you generate them.
+- Keep extraction configs under `configs/data/stage1/`.
+- Stage 1 extraction is config-only. Pass `--config-json` and keep all extraction settings inside the config.
 
-Single episode example:
-
-```bash
-PYTHONPATH=src python -m minipamayo_qwen35.data.mcap_stage1_extractor \
-  --episode-dir datasets/raw/mcap/<episode_id> \
-  --output-dir datasets/processed/stage1/<dataset_name>
-```
-
-Batch manifest example:
+Batch extraction example:
 
 ```bash
-PYTHONPATH=src python -m minipamayo_qwen35.data.mcap_stage1_extractor \
-  --manifest-json datasets/manifests/stage1/ignore_rule_data.json
+uv run python -m minipamayo_qwen35.data.extract_stage1 \
+  --config-json configs/data/stage1/ignore_rule_data.json
 ```
 
 Progress logging:
 
 - progress events are emitted to `stderr`
 - the final extraction summary remains JSON on `stdout`
-- use `--log-every 0` to disable periodic progress logs
+- set `"log_every": 0` in the config `extract` block to disable periodic progress logs
 
-Manifest format:
+Extraction config format:
 
-- top-level `path_base` defaults to `datasets_root`
+- top-level `path_base` defaults to `project_root`
+- top-level `extract` holds shared extraction settings such as `k`, `dt`, `sample_stride`, `max_samples`, and `log_every`
 - `episode_dir + output_dir`
 - or `mcap_paths + output_dir`
 - `summary_path` is optional when `mcap_paths` all live under the same `telemetry/` directory
+- CLI overrides are intentionally disabled so the config remains the full execution record
 
 Available `path_base` values:
 
-- `datasets_root`
 - `project_root`
-- `manifest_dir`
+- `datasets_root`
+- `config_dir`
 
-See `datasets/manifests/stage1/ignore_rule_data.json` for a concrete example.
+See `configs/data/stage1/ignore_rule_data.json` for a concrete example.
