@@ -30,8 +30,13 @@ from ....utils.image_budget import (
     CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
-from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
-from ....utils.json_config import normalize_optional_string_list, normalize_required_string_list
+from ....utils.json_config import (
+    load_json_payload,
+    normalize_arg_config,
+    normalize_optional_string_list,
+    normalize_required_string_list,
+    resolve_path_base,
+)
 from ....utils.preflight import enforce_training_prerequisites
 from ....utils.run_metadata import (
     collect_dataset_view_fingerprint,
@@ -135,7 +140,9 @@ def parse_args() -> argparse.Namespace:
     pre_parser.add_argument("--config-json", type=str, required=True)
     pre_args, remaining = pre_parser.parse_known_args()
     if remaining:
-        raise RuntimeError("Stage 1B training accepts only --config-json. Put all settings in the JSON file.")
+        raise RuntimeError(
+            "Stage 1B training accepts only --config-json. Put all settings in the JSON file."
+        )
 
     parser = build_parser()
     config_path, config_payload, config_args = _load_config_args(pre_args.config_json, parser)
@@ -154,7 +161,9 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`early_stopping_min_delta` must be >= 0.")
     validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
     if args.decoder_hidden_size % args.decoder_num_attention_heads != 0:
-        raise RuntimeError("`decoder_hidden_size` must be divisible by `decoder_num_attention_heads`.")
+        raise RuntimeError(
+            "`decoder_hidden_size` must be divisible by `decoder_num_attention_heads`."
+        )
     return args
 
 
@@ -172,7 +181,9 @@ def build_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader 
         val_size = min(val_size, len(train_dataset) - 1)
         train_size = len(train_dataset) - val_size
         generator = torch.Generator().manual_seed(args.seed)
-        train_dataset, val_dataset = random_split(train_dataset, [train_size, val_size], generator=generator)
+        train_dataset, val_dataset = random_split(
+            train_dataset, [train_size, val_size], generator=generator
+        )
     else:
         val_dataset = None
 
@@ -187,7 +198,12 @@ def build_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader 
     val_loader = None
     if val_dataset is not None:
         val_loader = DataLoader(val_dataset, shuffle=False, drop_last=False, **loader_kwargs)
-    return train_loader, val_loader, len(train_dataset), len(val_dataset) if val_dataset is not None else 0
+    return (
+        train_loader,
+        val_loader,
+        len(train_dataset),
+        len(val_dataset) if val_dataset is not None else 0,
+    )
 
 
 @torch.no_grad()
@@ -206,6 +222,7 @@ def evaluate(
     total_batches = 0
     for batch in dataloader:
         prompt_inputs = prepare_condition_inputs(
+            model=model,
             batch=batch,
             processor=processor,
             history_registry=history_registry,
@@ -244,7 +261,9 @@ def save_checkpoint(
             "epoch": epoch,
             "global_step": global_step,
             "args": vars(args),
-            "decoder_state_dict": {key: value.detach().cpu() for key, value in decoder.state_dict().items()},
+            "decoder_state_dict": {
+                key: value.detach().cpu() for key, value in decoder.state_dict().items()
+            },
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
             "decoder_config": vars(decoder.export_config()),
@@ -306,6 +325,7 @@ def main() -> None:
 
         first_batch = next(iter(train_loader))
         first_prompt_inputs = prepare_condition_inputs(
+            model=model,
             batch=first_batch,
             processor=processor,
             history_registry=history_registry,
@@ -340,7 +360,9 @@ def main() -> None:
             math.ceil(len(train_loader) / max(1, args.grad_accum_steps)) * max(1, args.max_epochs),
         )
         warmup_steps = int(round(total_optimizer_steps * args.warmup_ratio))
-        optimizer = torch.optim.AdamW(decoder.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        optimizer = torch.optim.AdamW(
+            decoder.parameters(), lr=args.lr, weight_decay=args.weight_decay
+        )
 
         def lr_lambda(current_step: int) -> float:
             if warmup_steps > 0 and current_step < warmup_steps:
@@ -360,7 +382,9 @@ def main() -> None:
                 requested_max_pixels=args.image_max_pixels,
             ),
             "train_dataset": collect_dataset_view_fingerprint(train_loader.dataset),
-            "val_dataset": collect_dataset_view_fingerprint(val_loader.dataset) if val_loader else None,
+            "val_dataset": collect_dataset_view_fingerprint(val_loader.dataset)
+            if val_loader
+            else None,
             "gpu_preflight": gpu_preflight,
         }
         write_run_config(save_dir, args, run_metadata)
@@ -386,6 +410,7 @@ def main() -> None:
 
             for batch_idx, batch in enumerate(train_loader, start=1):
                 prompt_inputs = prepare_condition_inputs(
+                    model=model,
                     batch=batch,
                     processor=processor,
                     history_registry=history_registry,
@@ -394,7 +419,9 @@ def main() -> None:
                     device=device,
                 )
                 with torch.no_grad():
-                    condition_context, condition_mask = extract_last_layer_kv_cache(model, prompt_inputs)
+                    condition_context, condition_mask = extract_last_layer_kv_cache(
+                        model, prompt_inputs
+                    )
                 gt_action = batch["action"].to(device=device, dtype=torch.float32)
                 loss = cfm_loss(
                     decoder=decoder,
@@ -415,8 +442,12 @@ def main() -> None:
                     optimizer_steps_this_epoch += 1
 
                     if device.type == "cuda":
-                        peak_allocated_bytes = max(peak_allocated_bytes, torch.cuda.max_memory_allocated(device))
-                        peak_reserved_bytes = max(peak_reserved_bytes, torch.cuda.max_memory_reserved(device))
+                        peak_allocated_bytes = max(
+                            peak_allocated_bytes, torch.cuda.max_memory_allocated(device)
+                        )
+                        peak_reserved_bytes = max(
+                            peak_reserved_bytes, torch.cuda.max_memory_reserved(device)
+                        )
 
                     if args.log_every > 0 and global_step % args.log_every == 0:
                         maybe_wandb_log(
@@ -448,7 +479,9 @@ def main() -> None:
                     device=device,
                 )
                 epoch_log["val_cfm_loss"] = val_metrics["cfm_loss"]
-                improved = metric_improved(val_metrics["cfm_loss"], best_val_loss, args.early_stopping_min_delta)
+                improved = metric_improved(
+                    val_metrics["cfm_loss"], best_val_loss, args.early_stopping_min_delta
+                )
                 if improved:
                     best_val_loss = val_metrics["cfm_loss"]
                     best_epoch = epoch
@@ -492,10 +525,28 @@ def main() -> None:
             )
 
             history.append(epoch_log)
-            history_path.write_text(json.dumps(history, indent=2, ensure_ascii=False), encoding="utf-8")
-            maybe_wandb_log(wandb_run, {f"train/{k}" if k.startswith("train_") else f"val/{k[4:]}" if k.startswith("val_") else k: v for k, v in epoch_log.items() if k != "epoch"}, step=global_step)
+            history_path.write_text(
+                json.dumps(history, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            maybe_wandb_log(
+                wandb_run,
+                {
+                    f"train/{k}"
+                    if k.startswith("train_")
+                    else f"val/{k[4:]}"
+                    if k.startswith("val_")
+                    else k: v
+                    for k, v in epoch_log.items()
+                    if k != "epoch"
+                },
+                step=global_step,
+            )
 
-            if val_loader is not None and args.early_stopping_patience > 0 and stale_epochs >= args.early_stopping_patience:
+            if (
+                val_loader is not None
+                and args.early_stopping_patience > 0
+                and stale_epochs >= args.early_stopping_patience
+            ):
                 break
 
         summary = {

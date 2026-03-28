@@ -7,12 +7,15 @@ the dataset itself via `reasoning_text`.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import torch
 from torch.utils.data import Dataset
 
 from ...stage1.data.dataset import normalize_jsonl_paths, read_jsonl
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class ReasoningSftJsonlDataset(Dataset):
@@ -53,6 +56,8 @@ class ReasoningSftJsonlDataset(Dataset):
             "v0",
             "gt_waypoints",
             "dt",
+            "ego_history_xyz",
+            "ego_history_rot",
             "reasoning_text",
         ]
         missing_keys = [key for key in required_keys if key not in record]
@@ -69,6 +74,8 @@ class ReasoningSftJsonlDataset(Dataset):
             "v0": torch.tensor(record["v0"], dtype=torch.float32),
             "gt_waypoints": torch.tensor(record["gt_waypoints"], dtype=torch.float32),
             "dt": float(record["dt"]),
+            "ego_history_xyz": torch.tensor(record["ego_history_xyz"], dtype=torch.float32),
+            "ego_history_rot": torch.tensor(record["ego_history_rot"], dtype=torch.float32),
             "reasoning_text": str(record["reasoning_text"]),
         }
         if "command" in record:
@@ -89,6 +96,8 @@ def reasoning_sft_collate(samples: list[dict]) -> dict:
         "action": torch.stack([sample["action"] for sample in samples], dim=0),
         "v0": torch.stack([sample["v0"] for sample in samples], dim=0),
         "gt_waypoints": torch.stack([sample["gt_waypoints"] for sample in samples], dim=0),
+        "ego_history_xyz": torch.stack([sample["ego_history_xyz"] for sample in samples], dim=0),
+        "ego_history_rot": torch.stack([sample["ego_history_rot"] for sample in samples], dim=0),
         "dt": [sample["dt"] for sample in samples],
         "reasoning_text": [sample["reasoning_text"] for sample in samples],
     }

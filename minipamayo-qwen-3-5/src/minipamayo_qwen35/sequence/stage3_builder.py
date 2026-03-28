@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Final
 
+from ..stage1.prompt import build_history_placeholder
+
 ACTION_SECTION_HEADER: Final[str] = "[Action Tokens]"
 
 DEFAULT_STAGE2_USER_PROMPT: Final[str] = (
@@ -38,12 +40,7 @@ TRACE_TEMPLATES: Final[dict[tuple[str, str], str]] = {
 
 
 def normalize_label(value: str) -> str:
-    return (
-        value.strip()
-        .lower()
-        .replace("-", "_")
-        .replace(" ", "_")
-    )
+    return value.strip().lower().replace("-", "_").replace(" ", "_")
 
 
 def infer_driving_decision(command: str, planner_state: str) -> dict[str, str]:
@@ -52,9 +49,13 @@ def infer_driving_decision(command: str, planner_state: str) -> dict[str, str]:
     command_label = normalize_label(command)
     planner_label = normalize_label(planner_state)
 
-    if "lane_change_left" in command_label or ("change" in command_label and "left" in command_label):
+    if "lane_change_left" in command_label or (
+        "change" in command_label and "left" in command_label
+    ):
         lateral = "lane_change_left"
-    elif "lane_change_right" in command_label or ("change" in command_label and "right" in command_label):
+    elif "lane_change_right" in command_label or (
+        "change" in command_label and "right" in command_label
+    ):
         lateral = "lane_change_right"
     elif "left" in command_label:
         lateral = "turn_left"
@@ -136,8 +137,12 @@ def build_chat_prompt_text(processor, user_prompt: str) -> str:
     )
 
 
-def build_stage2_prompt_text(processor, v0: float) -> str:
-    return build_chat_prompt_text(processor, build_stage2_user_prompt(v0))
+def build_stage2_prompt_text(processor, v0: float, history_token_count: int = 0) -> str:
+    history_prefix = build_history_placeholder(history_token_count)
+    user_prompt = build_stage2_user_prompt(v0)
+    if history_prefix:
+        user_prompt = f"{history_prefix}\n{user_prompt}"
+    return build_chat_prompt_text(processor, user_prompt)
 
 
 def build_stage3_prompt_text(processor, v0: float) -> str:

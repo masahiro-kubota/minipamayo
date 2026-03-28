@@ -74,7 +74,9 @@ def parse_args() -> argparse.Namespace:
     pre_parser.add_argument("--config-json", type=str, required=True)
     pre_args, remaining = pre_parser.parse_known_args()
     if remaining:
-        raise RuntimeError("Stage 2 evaluation accepts only --config-json. Put all settings in the JSON file.")
+        raise RuntimeError(
+            "Stage 2 evaluation accepts only --config-json. Put all settings in the JSON file."
+        )
 
     parser = build_parser()
     config_path, config_payload, config_args = _load_config_args(pre_args.config_json, parser)
@@ -93,14 +95,20 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    device = torch.device(args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
+    device = torch.device(
+        args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
+    )
     if device.type != "cuda":
         raise RuntimeError("This Stage 2 evaluator is intended to run on CUDA.")
 
     checkpoint = torch.load(Path(args.checkpoint), map_location="cpu")
     checkpoint_args = checkpoint.get("args")
     if not isinstance(checkpoint_args, dict) or "stage1a_checkpoint" not in checkpoint_args:
-        raise RuntimeError("Stage 2 checkpoint is missing canonical `stage1a_checkpoint` args metadata.")
+        raise RuntimeError(
+            "Stage 2 checkpoint is missing canonical `stage1a_checkpoint` args metadata."
+        )
+    if "action_loss_weight" not in checkpoint_args:
+        raise RuntimeError("Stage 2 checkpoint args are missing canonical `action_loss_weight`.")
     if "model_state_dict" not in checkpoint:
         raise RuntimeError("Stage 2 checkpoint is missing canonical `model_state_dict`.")
 
@@ -128,8 +136,8 @@ def main() -> None:
         model,
         processor,
         registry,
-        _history_registry,
-        _history_quantizer,
+        history_registry,
+        history_quantizer,
         quantizer,
         model_dtype,
     ) = load_components(stage1_args)
@@ -143,10 +151,12 @@ def main() -> None:
         dataloader=eval_loader,
         processor=processor,
         registry=registry,
+        history_registry=history_registry,
+        history_quantizer=history_quantizer,
         quantizer=quantizer,
         device=device,
         model_dtype=model_dtype,
-        action_loss_weight=float(checkpoint_args.get("action_loss_weight", 2.0)),
+        action_loss_weight=float(checkpoint_args["action_loss_weight"]),
     )
 
     summary = {

@@ -73,7 +73,9 @@ def parse_args() -> argparse.Namespace:
     pre_parser.add_argument("--config-json", type=str, required=True)
     pre_args, remaining = pre_parser.parse_known_args()
     if remaining:
-        raise RuntimeError("Stage 1B inference accepts only --config-json. Put all settings in the JSON file.")
+        raise RuntimeError(
+            "Stage 1B inference accepts only --config-json. Put all settings in the JSON file."
+        )
     parser = build_parser()
     config_path, config_payload, config_args = _load_config_args(pre_args.config_json, parser)
     parser.set_defaults(**config_args, config_json=config_path)
@@ -96,7 +98,9 @@ def main() -> None:
     device = torch.device(args.device)
     dataset = Stage1JsonlDataset(args.sample_jsonl)
     if args.sample_index >= len(dataset):
-        raise RuntimeError(f"`sample_index` {args.sample_index} is out of range for dataset size {len(dataset)}.")
+        raise RuntimeError(
+            f"`sample_index` {args.sample_index} is out of range for dataset size {len(dataset)}."
+        )
     sample = dataset[args.sample_index]
     batch = {
         "sample_id": [sample["sample_id"]],
@@ -123,6 +127,7 @@ def main() -> None:
     freeze_module(model)
     prompt_text = infer_prompt_text(stage1_checkpoint, processor)
     prompt_inputs = prepare_condition_inputs(
+        model=model,
         batch=batch,
         processor=processor,
         history_registry=history_registry,
@@ -132,13 +137,18 @@ def main() -> None:
     )
     condition_context, condition_mask = extract_last_layer_kv_cache(model, prompt_inputs)
     decoder, checkpoint = load_decoder_from_checkpoint(args.checkpoint, device)
+    if "stage1b_metadata" not in checkpoint or not isinstance(checkpoint["stage1b_metadata"], dict):
+        raise RuntimeError("Stage 1B checkpoint is missing canonical `stage1b_metadata`.")
+    stage1b_metadata = checkpoint["stage1b_metadata"]
+    if "dt" not in stage1b_metadata:
+        raise RuntimeError("Stage 1B checkpoint metadata is missing canonical `dt`.")
     pred_action = cfm_sample(
         decoder=decoder,
         condition_hidden_states=condition_context,
         condition_mask=condition_mask,
         n_steps=args.flow_steps,
     ).reshape(1, -1, 2)
-    dt = float(checkpoint.get("stage1b_metadata", {}).get("dt") or sample["dt"].item())
+    dt = float(stage1b_metadata["dt"])
     pred_waypoints = forward_dynamics_batch(
         pred_action[:, :, 0],
         pred_action[:, :, 1],

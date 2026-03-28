@@ -9,7 +9,7 @@ import torch
 from .. import CanonicalStage1Spec
 from ..eval import load_components
 from ..prompt import DEFAULT_QUESTION, build_prompt_text
-from ..train import prepare_prompt_inputs_with_history
+from ..train import model_forward_inputs, prepare_prompt_inputs_with_history
 
 
 def freeze_module(module) -> None:
@@ -19,9 +19,21 @@ def freeze_module(module) -> None:
 
 
 def infer_prompt_text(checkpoint: dict, processor) -> str:
-    stage1_metadata = checkpoint.get("stage1_metadata", {})
-    question = str(stage1_metadata.get("question") or DEFAULT_QUESTION)
-    history_token_count = int(stage1_metadata.get("history_token_count") or 0)
+    if "stage1_metadata" not in checkpoint or not isinstance(checkpoint["stage1_metadata"], dict):
+        raise RuntimeError(
+            "Stage 1B requires canonical `stage1_metadata` in the Stage 1A checkpoint."
+        )
+    stage1_metadata = checkpoint["stage1_metadata"]
+    if "question" not in stage1_metadata:
+        raise RuntimeError("Stage 1A checkpoint metadata is missing canonical `question`.")
+    if "history_token_count" not in stage1_metadata:
+        raise RuntimeError(
+            "Stage 1A checkpoint metadata is missing canonical `history_token_count`."
+        )
+    question = str(stage1_metadata["question"])
+    if not question:
+        question = DEFAULT_QUESTION
+    history_token_count = int(stage1_metadata["history_token_count"])
     return build_prompt_text(
         processor=processor,
         question=question,
@@ -43,6 +55,7 @@ def load_stage1_condition_components(args):
 
 
 def prepare_condition_inputs(
+    model,
     batch: dict,
     processor,
     history_registry,
@@ -51,6 +64,7 @@ def prepare_condition_inputs(
     device: torch.device,
 ) -> dict:
     return prepare_prompt_inputs_with_history(
+        model=model,
         batch=batch,
         processor=processor,
         history_registry=history_registry,
@@ -65,7 +79,7 @@ def extract_last_layer_kv_cache(
     prompt_inputs: dict,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     outputs = model(
-        **prompt_inputs,
+        **model_forward_inputs(prompt_inputs),
         use_cache=True,
         output_hidden_states=False,
         return_dict=True,

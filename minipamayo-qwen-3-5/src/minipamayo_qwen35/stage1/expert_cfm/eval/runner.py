@@ -19,8 +19,12 @@ from ....utils.image_budget import (
     CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
-from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
-from ....utils.json_config import normalize_required_string_list
+from ....utils.json_config import (
+    load_json_payload,
+    normalize_arg_config,
+    normalize_required_string_list,
+    resolve_path_base,
+)
 from ..common import (
     extract_last_layer_kv_cache,
     freeze_module,
@@ -79,7 +83,9 @@ def parse_args() -> argparse.Namespace:
     pre_parser.add_argument("--config-json", type=str, required=True)
     pre_args, remaining = pre_parser.parse_known_args()
     if remaining:
-        raise RuntimeError("Stage 1B evaluation accepts only --config-json. Put all settings in the JSON file.")
+        raise RuntimeError(
+            "Stage 1B evaluation accepts only --config-json. Put all settings in the JSON file."
+        )
     parser = build_parser()
     config_path, config_payload, config_args = _load_config_args(pre_args.config_json, parser)
     parser.set_defaults(**config_args, config_json=config_path)
@@ -127,8 +133,19 @@ def main() -> None:
     freeze_module(model)
     prompt_text = infer_prompt_text(stage1_checkpoint, processor)
     decoder, decoder_checkpoint = load_decoder_from_checkpoint(args.checkpoint, device)
-    stage1b_metadata = decoder_checkpoint.get("stage1b_metadata", {})
-    dt = float(stage1b_metadata.get("dt") or dataset[0]["dt"].item())
+    if "stage1b_metadata" not in decoder_checkpoint or not isinstance(
+        decoder_checkpoint["stage1b_metadata"], dict
+    ):
+        raise RuntimeError("Stage 1B checkpoint is missing canonical `stage1b_metadata`.")
+    stage1b_metadata = decoder_checkpoint["stage1b_metadata"]
+    required_stage1b_keys = ["dt", "condition_source"]
+    missing_stage1b_keys = [key for key in required_stage1b_keys if key not in stage1b_metadata]
+    if missing_stage1b_keys:
+        raise RuntimeError(
+            "Stage 1B checkpoint metadata is missing canonical fields:\n"
+            + "\n".join(missing_stage1b_keys)
+        )
+    dt = float(stage1b_metadata["dt"])
 
     total_loss = 0.0
     total_batches = 0
@@ -139,6 +156,7 @@ def main() -> None:
     with torch.no_grad():
         for batch in dataloader:
             prompt_inputs = prepare_condition_inputs(
+                model=model,
                 batch=batch,
                 processor=processor,
                 history_registry=history_registry,
@@ -162,7 +180,9 @@ def main() -> None:
             ).reshape(gt_action.shape[0], -1, 2)
             gt_waypoints = batch["gt_waypoints"].to(device=device, dtype=torch.float32)
             v0 = batch["v0"].to(device=device, dtype=torch.float32)
-            pred_waypoints = forward_dynamics_batch(pred_action[:, :, 0], pred_action[:, :, 1], v0, dt=dt)
+            pred_waypoints = forward_dynamics_batch(
+                pred_action[:, :, 0], pred_action[:, :, 1], v0, dt=dt
+            )
             displacement = torch.norm(pred_waypoints - gt_waypoints, dim=2)
 
             batch_size = gt_action.shape[0]
@@ -180,7 +200,7 @@ def main() -> None:
         "ade_m": total_ade / max(1, total_samples),
         "fde_m": total_fde / max(1, total_samples),
         "flow_steps": args.flow_steps,
-        "condition_source": stage1b_metadata.get("condition_source", "last_layer_past_key_value"),
+        "condition_source": stage1b_metadata["condition_source"],
     }
     if args.output_json:
         output_path = Path(args.output_json).resolve()

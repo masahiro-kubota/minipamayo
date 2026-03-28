@@ -21,9 +21,11 @@ import torch
 from PIL import Image
 from transformers import AutoModelForImageTextToText
 
+from ...utils.dynamics import forward_dynamics_batch
+from ...utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
+from ...utils.run_metadata import collect_processor_settings
 from .. import CanonicalStage1Spec, KappaOnlyStage1Spec, Stage1TaskSpec
 from ..data.dataset import Stage1JsonlDataset
-from ..prompt import build_history_placeholder
 from ..eval.runner import (
     greedy_generate_action_tokens,
     require_record_field,
@@ -31,12 +33,15 @@ from ..eval.runner import (
     resolve_dtype,
     resolve_processor_path,
 )
+from ..prompt import build_history_placeholder
 from ..tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ..tokenization.registry import Stage1TokenRegistry
-from ..train import CHECKPOINT_KIND_FULL, CHECKPOINT_KIND_MODEL_ONLY, load_checkpoint
-from ...utils.dynamics import forward_dynamics_batch
-from ...utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
-from ...utils.run_metadata import collect_processor_settings
+from ..train import (
+    CHECKPOINT_KIND_FULL,
+    CHECKPOINT_KIND_MODEL_ONLY,
+    inject_history_inputs_embeds,
+    load_checkpoint,
+)
 from .helper import MAX_PIXELS, MIN_PIXELS, SYSTEM_PROMPT, create_message, get_processor, to_device
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -48,7 +53,9 @@ CONFIG_PATH_KEYS = {
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run Alpamayo-style Stage 1 inference on one sample.")
+    parser = argparse.ArgumentParser(
+        description="Run Alpamayo-style Stage 1 inference on one sample."
+    )
     parser.add_argument("--config-json", type=str, default="")
     parser.add_argument("--checkpoint", type=str, default="")
     parser.add_argument("--test-jsonl", type=str, default="")
@@ -91,7 +98,9 @@ def parse_args() -> argparse.Namespace:
     pre_parser.add_argument("--config-json", type=str, required=True)
     pre_args, remaining = pre_parser.parse_known_args()
     if remaining:
-        raise RuntimeError("Stage 1 inference accepts only --config-json. Put all settings in the JSON file.")
+        raise RuntimeError(
+            "Stage 1 inference accepts only --config-json. Put all settings in the JSON file."
+        )
 
     parser = build_parser()
     config_path, config_payload, config_args = _load_config_args(pre_args.config_json, parser)
@@ -142,7 +151,9 @@ def infer_vision_tokens(prompt_inputs: dict) -> tuple[list[int] | None, int | No
 
 def main() -> None:
     args = parse_args()
-    device = torch.device(args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
+    device = torch.device(
+        args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
+    )
     if device.type != "cuda":
         raise RuntimeError("Stage 1 Alpamayo-style inference currently expects CUDA.")
 
@@ -180,7 +191,9 @@ def main() -> None:
     )
     registry.add_to_tokenizer(processor.tokenizer)
 
-    if "history_quantizer" not in checkpoint or not isinstance(checkpoint["history_quantizer"], dict):
+    if "history_quantizer" not in checkpoint or not isinstance(
+        checkpoint["history_quantizer"], dict
+    ):
         raise RuntimeError("Checkpoint is missing canonical `history_quantizer` metadata.")
     history_quantizer_cfg = checkpoint["history_quantizer"]
     history_quantizer = HistoryTrajectoryQuantizer(
@@ -226,17 +239,15 @@ def main() -> None:
             return_dict=True,
             return_tensors="pt",
         )
-    history_token_ids = history_registry.encode_history_token_ids(
-        history_xyz=sample["ego_history_xyz"].cpu().numpy(),
-        history_rot=sample["ego_history_rot"].cpu().numpy(),
-        quantizer=history_quantizer,
-    )
-    inputs["input_ids"] = history_registry.replace_placeholder_ids(
-        inputs["input_ids"],
-        [history_token_ids],
-    )
-
     model_inputs = to_device(inputs, device=device)
+    model_inputs = inject_history_inputs_embeds(
+        model=model,
+        prompt_inputs=model_inputs,
+        history_registry=history_registry,
+        history_quantizer=history_quantizer,
+        history_xyz=sample["ego_history_xyz"].unsqueeze(0).to(device=device, dtype=torch.float32),
+        history_rot=sample["ego_history_rot"].unsqueeze(0).to(device=device, dtype=torch.float32),
+    )
     image_grid_thw, vision_tokens = infer_vision_tokens(model_inputs)
 
     generated_token_ids = greedy_generate_action_tokens(
@@ -259,19 +270,25 @@ def main() -> None:
     pred_accel = pred_full_action_tensor[0::2].unsqueeze(0).to(device)
     pred_kappa = pred_full_action_tensor[1::2].unsqueeze(0).to(device)
     v0 = sample["v0"].reshape(1).to(device)
-    pred_waypoints = forward_dynamics_batch(
-        pred_accel,
-        pred_kappa,
-        v0,
-        dt=float(stage1_metadata["dt"]),
-    )[0].detach().cpu()
+    pred_waypoints = (
+        forward_dynamics_batch(
+            pred_accel,
+            pred_kappa,
+            v0,
+            dt=float(stage1_metadata["dt"]),
+        )[0]
+        .detach()
+        .cpu()
+    )
 
     gt_target_tensor = task_spec.target_from_action_tensor(gt_action_tensor)
     gt_waypoints = sample["gt_waypoints"].reshape(-1, 2).to(torch.float32)
     pred_target_tensor_cpu = pred_target_tensor.detach().cpu()
     pred_full_action_tensor_cpu = pred_full_action_tensor.detach().cpu()
 
-    target_mae = float(torch.mean(torch.abs(pred_target_tensor_cpu - gt_target_tensor.cpu())).item())
+    target_mae = float(
+        torch.mean(torch.abs(pred_target_tensor_cpu - gt_target_tensor.cpu())).item()
+    )
     waypoint_errors = torch.norm(pred_waypoints - gt_waypoints.cpu(), dim=-1)
     ade_m = float(waypoint_errors.mean().item())
     fde_m = float(waypoint_errors[-1].item())
@@ -324,7 +341,9 @@ def main() -> None:
 
     output_path = Path(args.output_json)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(output_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    output_path.write_text(
+        json.dumps(output_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     print(
         json.dumps(

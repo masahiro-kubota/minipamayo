@@ -18,7 +18,6 @@ import random
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import torch
@@ -26,22 +25,17 @@ from PIL import Image
 from torch.utils.data import DataLoader, Subset, random_split
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
-from .. import CanonicalStage1Spec, Stage1TaskSpec
-from ..data.dataset import Stage1JsonlDataset
-from ..prompt import DEFAULT_QUESTION, build_prompt_text
-from ..tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
-from ..tokenization.registry import Stage1TokenRegistry
+from ...utils.image_budget import (
+    CANONICAL_IMAGE_MAX_PIXELS,
+    CANONICAL_IMAGE_MIN_PIXELS,
+    validate_canonical_image_budget,
+)
 from ...utils.json_config import (
     load_json_payload,
     normalize_arg_config,
     normalize_optional_string_list,
     normalize_required_string_list,
     resolve_path_base,
-)
-from ...utils.image_budget import (
-    CANONICAL_IMAGE_MAX_PIXELS,
-    CANONICAL_IMAGE_MIN_PIXELS,
-    validate_canonical_image_budget,
 )
 from ...utils.preflight import collect_gpu_preflight_snapshot, enforce_training_prerequisites
 from ...utils.run_metadata import (
@@ -50,6 +44,15 @@ from ...utils.run_metadata import (
     collect_gpu_info,
     collect_processor_settings,
 )
+from .. import CanonicalStage1Spec, Stage1TaskSpec
+from ..data.dataset import Stage1JsonlDataset
+from ..prompt import DEFAULT_QUESTION, build_prompt_text
+from ..tokenization.history import (
+    HistoryTokenRegistry,
+    HistoryTrajectoryQuantizer,
+    interpolate_history_token_embeddings,
+)
+from ..tokenization.registry import Stage1TokenRegistry
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_PATH_KEYS = {
@@ -209,6 +212,98 @@ def move_inputs_to_device(batch: dict, device: torch.device) -> dict:
     return out
 
 
+def model_forward_inputs(model_inputs: dict) -> dict:
+    if "inputs_embeds" not in model_inputs:
+        return model_inputs
+    return {key: value for key, value in model_inputs.items() if key != "input_ids"}
+
+
+def inject_history_inputs_embeds(
+    *,
+    model,
+    prompt_inputs: dict,
+    history_registry: HistoryTokenRegistry,
+    history_quantizer: HistoryTrajectoryQuantizer,
+    history_xyz: torch.Tensor,
+    history_rot: torch.Tensor,
+) -> dict:
+    if history_registry.placeholder_token_id is None:
+        raise RuntimeError("History token registry is not attached to a tokenizer yet.")
+    input_ids = prompt_inputs["input_ids"]
+    placeholder_mask = input_ids == history_registry.placeholder_token_id
+    placeholder_count = int(placeholder_mask[0].sum().item()) if input_ids.shape[0] > 0 else 0
+    if placeholder_count != history_quantizer.token_count:
+        raise RuntimeError(
+            "Prompt history placeholder count does not match the canonical history token count.\n"
+            f"prompt_placeholder_count={placeholder_count}\n"
+            f"history_token_count={history_quantizer.token_count}"
+        )
+    if history_xyz.shape[0] != input_ids.shape[0] or history_rot.shape[0] != input_ids.shape[0]:
+        raise RuntimeError(
+            "History batch size does not match prompt batch size.\n"
+            f"history_xyz.shape={tuple(history_xyz.shape)!r}\n"
+            f"history_rot.shape={tuple(history_rot.shape)!r}\n"
+            f"input_ids.shape={tuple(input_ids.shape)!r}"
+        )
+    embedding_weight = model.get_input_embeddings().weight
+    base_embeds = model.get_input_embeddings()(input_ids)
+    history_embeds = interpolate_history_token_embeddings(
+        embedding_weight=embedding_weight,
+        history_xyz=history_xyz,
+        history_rot=history_rot,
+        history_registry=history_registry,
+        history_quantizer=history_quantizer,
+    ).to(dtype=base_embeds.dtype)
+    fused_embeds = base_embeds.clone()
+    for row_idx in range(input_ids.shape[0]):
+        row_positions = torch.nonzero(placeholder_mask[row_idx], as_tuple=False).flatten()
+        if row_positions.numel() != history_quantizer.token_count:
+            raise RuntimeError(
+                "History placeholder count does not match canonical token count for one batch row.\n"
+                f"row_idx={row_idx}\n"
+                f"expected={history_quantizer.token_count}\n"
+                f"found={int(row_positions.numel())}"
+            )
+        fused_embeds[row_idx, row_positions] = history_embeds[row_idx]
+    fused_inputs = dict(prompt_inputs)
+    fused_inputs["inputs_embeds"] = fused_embeds
+    return fused_inputs
+
+
+def append_token_to_model_inputs(model, model_inputs: dict, next_token: torch.Tensor) -> None:
+    model_inputs["input_ids"] = torch.cat(
+        [model_inputs["input_ids"], next_token.unsqueeze(1)], dim=1
+    )
+    if "inputs_embeds" in model_inputs:
+        next_embed = model.get_input_embeddings()(next_token.unsqueeze(1))
+        model_inputs["inputs_embeds"] = torch.cat(
+            [model_inputs["inputs_embeds"], next_embed], dim=1
+        )
+    model_inputs["attention_mask"] = torch.cat(
+        [
+            model_inputs["attention_mask"],
+            torch.ones(
+                (next_token.shape[0], 1),
+                device=next_token.device,
+                dtype=model_inputs["attention_mask"].dtype,
+            ),
+        ],
+        dim=1,
+    )
+    if "mm_token_type_ids" in model_inputs:
+        model_inputs["mm_token_type_ids"] = torch.cat(
+            [
+                model_inputs["mm_token_type_ids"],
+                torch.zeros(
+                    (next_token.shape[0], 1),
+                    device=next_token.device,
+                    dtype=model_inputs["mm_token_type_ids"].dtype,
+                ),
+            ],
+            dim=1,
+        )
+
+
 def format_gib(num_bytes: int) -> float:
     return round(num_bytes / (1024**3), 3)
 
@@ -356,7 +451,6 @@ def build_stage1_metadata(
     gt_waypoints = record["gt_waypoints"]
     full_action = np.asarray(record["action"], dtype=np.float32)
     ego_history_xyz = np.asarray(record["ego_history_xyz"], dtype=np.float32)
-    ego_history_rot = np.asarray(record["ego_history_rot"], dtype=np.float32)
     target = task_spec.target_from_action_array(full_action)
     return {
         "train_jsonl": list(args.train_jsonl),
@@ -368,7 +462,7 @@ def build_stage1_metadata(
         "dt": record["dt"],
         "action_token_scheme": "add_tokens",
         "token_prefix": registry.token_prefix,
-        "history_token_scheme": "placeholder_replaced_scalar_bins",
+        "history_token_scheme": "placeholder_inputs_embeds_continuous_interpolation",
         "history_token_prefix": history_registry.token_prefix,
         "history_steps": int(ego_history_xyz.shape[0]),
         "history_token_count": history_quantizer.token_count,
@@ -380,6 +474,7 @@ def build_stage1_metadata(
 
 
 def prepare_batch(
+    model,
     batch: dict,
     processor,
     registry: Stage1TokenRegistry,
@@ -403,19 +498,17 @@ def prepare_batch(
             return_tensors="pt",
             padding=True,
         )
-        history_token_id_rows = [
-            history_registry.encode_history_token_ids(
-                history_xyz=history_xyz.cpu().numpy(),
-                history_rot=history_rot.cpu().numpy(),
-                quantizer=history_quantizer,
-            )
-            for history_xyz, history_rot in zip(batch["ego_history_xyz"], batch["ego_history_rot"])
-        ]
-        prompt_inputs["input_ids"] = history_registry.replace_placeholder_ids(
-            prompt_inputs["input_ids"],
-            history_token_id_rows,
+        prompt_inputs = move_inputs_to_device(prompt_inputs, device)
+        prompt_inputs = inject_history_inputs_embeds(
+            model=model,
+            prompt_inputs=prompt_inputs,
+            history_registry=history_registry,
+            history_quantizer=history_quantizer,
+            history_xyz=batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
+            history_rot=batch["ego_history_rot"].to(device=device, dtype=torch.float32),
         )
         target_token_ids = torch.tensor(target_token_id_rows, dtype=torch.long)
+        target_token_ids = target_token_ids.to(device)
 
         prompt_input_ids = prompt_inputs["input_ids"]
         prompt_attention_mask = prompt_inputs["attention_mask"]
@@ -426,7 +519,11 @@ def prepare_batch(
         attention_mask = torch.cat(
             [
                 prompt_attention_mask,
-                torch.ones((batch_size, target_len), dtype=prompt_attention_mask.dtype),
+                torch.ones(
+                    (batch_size, target_len),
+                    dtype=prompt_attention_mask.dtype,
+                    device=prompt_attention_mask.device,
+                ),
             ],
             dim=1,
         )
@@ -436,21 +533,27 @@ def prepare_batch(
         full_inputs = {
             key: value
             for key, value in prompt_inputs.items()
-            if key not in {"input_ids", "attention_mask"}
+            if key not in {"input_ids", "attention_mask", "inputs_embeds"}
         }
         full_inputs["input_ids"] = input_ids
         full_inputs["attention_mask"] = attention_mask
+        if "inputs_embeds" in prompt_inputs:
+            target_embeds = model.get_input_embeddings()(target_token_ids)
+            full_inputs["inputs_embeds"] = torch.cat(
+                [prompt_inputs["inputs_embeds"], target_embeds], dim=1
+            )
         if "mm_token_type_ids" in full_inputs:
             full_inputs["mm_token_type_ids"] = torch.cat(
                 [
                     full_inputs["mm_token_type_ids"],
                     torch.zeros(
-                        (batch_size, target_len), dtype=full_inputs["mm_token_type_ids"].dtype
+                        (batch_size, target_len),
+                        dtype=full_inputs["mm_token_type_ids"].dtype,
+                        device=full_inputs["mm_token_type_ids"].device,
                     ),
                 ],
                 dim=1,
             )
-        full_inputs = move_inputs_to_device(full_inputs, device)
         labels = labels.to(device)
         return full_inputs, labels
     finally:
@@ -459,6 +562,7 @@ def prepare_batch(
 
 
 def prepare_prompt_inputs_with_history(
+    model,
     batch: dict,
     processor,
     history_registry: HistoryTokenRegistry,
@@ -474,19 +578,16 @@ def prepare_prompt_inputs_with_history(
             return_tensors="pt",
             padding=True,
         )
-        history_token_id_rows = [
-            history_registry.encode_history_token_ids(
-                history_xyz=history_xyz.cpu().numpy(),
-                history_rot=history_rot.cpu().numpy(),
-                quantizer=history_quantizer,
-            )
-            for history_xyz, history_rot in zip(batch["ego_history_xyz"], batch["ego_history_rot"])
-        ]
-        prompt_inputs["input_ids"] = history_registry.replace_placeholder_ids(
-            prompt_inputs["input_ids"],
-            history_token_id_rows,
+        prompt_inputs = move_inputs_to_device(prompt_inputs, device)
+        prompt_inputs = inject_history_inputs_embeds(
+            model=model,
+            prompt_inputs=prompt_inputs,
+            history_registry=history_registry,
+            history_quantizer=history_quantizer,
+            history_xyz=batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
+            history_rot=batch["ego_history_rot"].to(device=device, dtype=torch.float32),
         )
-        return move_inputs_to_device(prompt_inputs, device)
+        return prompt_inputs
     finally:
         for image in images:
             image.close()
@@ -523,6 +624,7 @@ def evaluate(
 
     for batch in dataloader:
         full_inputs, labels = prepare_batch(
+            model,
             batch,
             processor,
             registry,
@@ -534,7 +636,7 @@ def evaluate(
             device,
         )
         with torch.autocast("cuda", dtype=model_dtype):
-            outputs = model(**full_inputs, labels=labels)
+            outputs = model(**model_forward_inputs(full_inputs), labels=labels)
         correct, token_total = compute_token_accuracy(outputs.logits, labels)
         total_loss += float(outputs.loss.detach().cpu())
         total_correct += correct
@@ -1053,6 +1155,7 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
             optimizer.zero_grad(set_to_none=True)
             for batch_idx, batch in enumerate(train_loader, start=1):
                 full_inputs, labels = prepare_batch(
+                    model,
                     batch,
                     processor,
                     registry,
@@ -1065,7 +1168,7 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                 )
 
                 with torch.autocast("cuda", dtype=model_dtype):
-                    outputs = model(**full_inputs, labels=labels)
+                    outputs = model(**model_forward_inputs(full_inputs), labels=labels)
                     loss = outputs.loss
 
                 (loss / args.grad_accum_steps).backward()

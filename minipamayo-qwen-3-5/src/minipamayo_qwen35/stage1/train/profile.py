@@ -10,25 +10,25 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import sys
 import time
 from pathlib import Path
-import sys
 
 import torch
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
-from .. import CanonicalStage1Spec
-from ..data.dataset import Stage1JsonlDataset
-from ..prompt import DEFAULT_QUESTION, build_prompt_text
-from ..tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
-from ..tokenization.registry import Stage1TokenRegistry
-from .runner import format_gib, prepare_batch, stage1_collate
 from ...utils.json_config import (
     load_json_payload,
     normalize_arg_config,
     normalize_required_string_list,
     resolve_path_base,
 )
+from .. import CanonicalStage1Spec
+from ..data.dataset import Stage1JsonlDataset
+from ..prompt import DEFAULT_QUESTION, build_prompt_text
+from ..tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
+from ..tokenization.registry import Stage1TokenRegistry
+from .runner import format_gib, model_forward_inputs, prepare_batch, stage1_collate
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_PATH_KEYS = {"train_jsonl", "model_path", "output_json"}
@@ -134,6 +134,7 @@ def set_seed(seed: int) -> None:
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
+
 def get_batch(dataset: Stage1JsonlDataset, start_index: int, batch_size: int) -> list[dict]:
     return [dataset[(start_index + i) % len(dataset)] for i in range(batch_size)]
 
@@ -161,12 +162,14 @@ def build_stage1_metadata(
         "train_jsonl": [str(path) for path in dataset.jsonl_paths],
         "sample_format": "jsonl+images",
         "k": len(gt_waypoints) if gt_waypoints else len(action) // 2,
-        "target_dim": int(task_spec.target_from_action_array(torch.tensor(action).numpy()).shape[0]),
+        "target_dim": int(
+            task_spec.target_from_action_array(torch.tensor(action).numpy()).shape[0]
+        ),
         "full_action_dim": len(action),
         "dt": record["dt"],
         "action_token_scheme": "add_tokens",
         "token_prefix": registry.token_prefix,
-        "history_token_scheme": "placeholder_replaced_scalar_bins",
+        "history_token_scheme": "placeholder_inputs_embeds_continuous_interpolation",
         "history_token_prefix": history_registry.token_prefix,
         "history_steps": len(ego_history_xyz),
         "history_token_count": history_quantizer.token_count,
@@ -243,10 +246,9 @@ def main() -> None:
 
     start_total = time.perf_counter()
     for step in range(total_steps):
-        batch_samples = stage1_collate(
-            get_batch(dataset, step * args.batch_size, args.batch_size)
-        )
+        batch_samples = stage1_collate(get_batch(dataset, step * args.batch_size, args.batch_size))
         full_inputs, labels = prepare_batch(
+            model,
             batch_samples,
             processor,
             registry,
@@ -264,7 +266,7 @@ def main() -> None:
         step_start = time.perf_counter()
 
         with torch.autocast("cuda", dtype=model_dtype):
-            outputs = model(**full_inputs, labels=labels)
+            outputs = model(**model_forward_inputs(full_inputs), labels=labels)
             loss = outputs.loss
 
         if not args.forward_only:

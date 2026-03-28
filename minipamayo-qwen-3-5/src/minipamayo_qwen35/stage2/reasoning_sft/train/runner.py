@@ -24,10 +24,12 @@ from ....stage1.eval import load_components
 from ....stage1.train import (
     first_record_from_dataset,
     format_gib,
+    inject_history_inputs_embeds,
     log_gpu_preflight,
     maybe_wandb_finish,
     maybe_wandb_log,
     metric_improved,
+    model_forward_inputs,
     move_inputs_to_device,
     release_cuda_memory,
     set_seed,
@@ -123,7 +125,9 @@ def parse_args() -> argparse.Namespace:
     pre_parser.add_argument("--config-json", type=str, required=True)
     pre_args, remaining = pre_parser.parse_known_args()
     if remaining:
-        raise RuntimeError("Stage 2 training accepts only --config-json. Put all settings in the JSON file.")
+        raise RuntimeError(
+            "Stage 2 training accepts only --config-json. Put all settings in the JSON file."
+        )
 
     parser = build_parser()
     config_path, config_payload, config_args = _load_config_args(pre_args.config_json, parser)
@@ -160,7 +164,9 @@ def build_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader 
         val_size = min(val_size, len(train_dataset) - 1)
         train_size = len(train_dataset) - val_size
         generator = torch.Generator().manual_seed(args.seed)
-        train_dataset, val_dataset = random_split(train_dataset, [train_size, val_size], generator=generator)
+        train_dataset, val_dataset = random_split(
+            train_dataset, [train_size, val_size], generator=generator
+        )
     else:
         val_dataset = None
 
@@ -175,12 +181,24 @@ def build_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader 
     val_loader = None
     if val_dataset is not None:
         val_loader = DataLoader(val_dataset, shuffle=False, drop_last=False, **loader_kwargs)
-    return train_loader, val_loader, len(train_dataset), len(val_dataset) if val_dataset is not None else 0
+    return (
+        train_loader,
+        val_loader,
+        len(train_dataset),
+        len(val_dataset) if val_dataset is not None else 0,
+    )
 
 
 def build_stage2_metadata(dataset, args: argparse.Namespace) -> dict:
     record = first_record_from_dataset(dataset)
-    required_keys = ["gt_waypoints", "action", "dt", "reasoning_text"]
+    required_keys = [
+        "gt_waypoints",
+        "action",
+        "dt",
+        "ego_history_xyz",
+        "ego_history_rot",
+        "reasoning_text",
+    ]
     missing_keys = [key for key in required_keys if key not in record]
     if missing_keys:
         raise RuntimeError(
@@ -202,12 +220,14 @@ def build_stage2_metadata(dataset, args: argparse.Namespace) -> dict:
     }
 
 
-def _build_target_rows(tokenizer, registry, quantizer, batch: dict) -> tuple[list[list[int]], list[list[int]]]:
+def _build_target_rows(
+    tokenizer, registry, quantizer, batch: dict
+) -> tuple[list[list[int]], list[list[int]]]:
     if tokenizer.eos_token_id is None:
         raise RuntimeError("Tokenizer is missing `eos_token_id`, which Stage 2 requires.")
     target_rows: list[list[int]] = []
     action_mask_rows: list[list[int]] = []
-    for reasoning_text, action in zip(batch["reasoning_text"], batch["action"]):
+    for reasoning_text, action in zip(batch["reasoning_text"], batch["action"], strict=False):
         reasoning_prefix = tokenizer(
             f"{reasoning_text}\n\n{ACTION_SECTION_HEADER}\n",
             add_special_tokens=False,
@@ -224,9 +244,12 @@ def _build_target_rows(tokenizer, registry, quantizer, batch: dict) -> tuple[lis
 
 
 def prepare_stage2_batch(
+    model,
     batch: dict,
     processor,
     registry,
+    history_registry,
+    history_quantizer,
     quantizer,
     device: torch.device,
     action_loss_weight: float,
@@ -234,7 +257,11 @@ def prepare_stage2_batch(
     images = [Image.open(path).convert("RGB") for path in batch["image_path"]]
     try:
         prompt_texts = [
-            build_stage2_prompt_text(processor, float(v0.item()))
+            build_stage2_prompt_text(
+                processor,
+                float(v0.item()),
+                history_token_count=history_quantizer.token_count,
+            )
             for v0 in batch["v0"]
         ]
         prompt_inputs = processor(
@@ -242,6 +269,15 @@ def prepare_stage2_batch(
             images=images,
             return_tensors="pt",
             padding=True,
+        )
+        prompt_inputs = move_inputs_to_device(prompt_inputs, device)
+        prompt_inputs = inject_history_inputs_embeds(
+            model=model,
+            prompt_inputs=prompt_inputs,
+            history_registry=history_registry,
+            history_quantizer=history_quantizer,
+            history_xyz=batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
+            history_rot=batch["ego_history_rot"].to(device=device, dtype=torch.float32),
         )
         target_rows, action_mask_rows = _build_target_rows(
             processor.tokenizer,
@@ -257,14 +293,19 @@ def prepare_stage2_batch(
             (batch_size, max_len),
             fill_value=int(processor.tokenizer.pad_token_id),
             dtype=torch.long,
+            device=device,
         )
-        target_mask = torch.zeros((batch_size, max_len), dtype=prompt_inputs["attention_mask"].dtype)
-        weight_tensor = torch.ones((batch_size, max_len), dtype=torch.float32)
-        action_mask_tensor = torch.zeros((batch_size, max_len), dtype=torch.bool)
+        target_mask = torch.zeros(
+            (batch_size, max_len),
+            dtype=prompt_inputs["attention_mask"].dtype,
+            device=device,
+        )
+        weight_tensor = torch.ones((batch_size, max_len), dtype=torch.float32, device=device)
+        action_mask_tensor = torch.zeros((batch_size, max_len), dtype=torch.bool, device=device)
 
         for row_idx, row in enumerate(target_rows):
             row_len = len(row)
-            target_ids[row_idx, :row_len] = torch.tensor(row, dtype=torch.long)
+            target_ids[row_idx, :row_len] = torch.tensor(row, dtype=torch.long, device=device)
             target_mask[row_idx, :row_len] = 1
             for token_idx, is_action in enumerate(action_mask_rows[row_idx]):
                 action_mask_tensor[row_idx, token_idx] = bool(is_action)
@@ -275,15 +316,24 @@ def prepare_stage2_batch(
         full_inputs = {
             key: value
             for key, value in prompt_inputs.items()
-            if key not in {"input_ids", "attention_mask"}
+            if key not in {"input_ids", "attention_mask", "inputs_embeds"}
         }
         full_inputs["input_ids"] = input_ids
         full_inputs["attention_mask"] = attention_mask
+        if "inputs_embeds" in prompt_inputs:
+            target_embeds = model.get_input_embeddings()(target_ids)
+            full_inputs["inputs_embeds"] = torch.cat(
+                [prompt_inputs["inputs_embeds"], target_embeds], dim=1
+            )
         if "mm_token_type_ids" in full_inputs:
             full_inputs["mm_token_type_ids"] = torch.cat(
                 [
                     full_inputs["mm_token_type_ids"],
-                    torch.zeros((batch_size, max_len), dtype=full_inputs["mm_token_type_ids"].dtype),
+                    torch.zeros(
+                        (batch_size, max_len),
+                        dtype=full_inputs["mm_token_type_ids"].dtype,
+                        device=full_inputs["mm_token_type_ids"].device,
+                    ),
                 ],
                 dim=1,
             )
@@ -297,10 +347,10 @@ def prepare_stage2_batch(
         full_loss_weights[:, offset:] = weight_tensor
 
         return (
-            move_inputs_to_device(full_inputs, device),
-            labels.to(device),
-            full_loss_weights.to(device),
-            full_action_mask.to(device),
+            full_inputs,
+            labels,
+            full_loss_weights,
+            full_action_mask,
         )
     finally:
         for image in images:
@@ -359,6 +409,8 @@ def evaluate(
     dataloader: DataLoader,
     processor,
     registry,
+    history_registry,
+    history_quantizer,
     quantizer,
     device: torch.device,
     model_dtype: torch.dtype,
@@ -374,15 +426,18 @@ def evaluate(
 
     for batch in dataloader:
         full_inputs, labels, loss_weights, action_mask = prepare_stage2_batch(
+            model=model,
             batch=batch,
             processor=processor,
             registry=registry,
+            history_registry=history_registry,
+            history_quantizer=history_quantizer,
             quantizer=quantizer,
             device=device,
             action_loss_weight=action_loss_weight,
         )
         with torch.autocast("cuda", dtype=model_dtype):
-            outputs = model(**full_inputs)
+            outputs = model(**model_forward_inputs(full_inputs))
             loss = compute_weighted_loss(outputs.logits, labels, loss_weights)
 
         metrics = compute_token_metrics(outputs.logits, labels, action_mask)
@@ -418,7 +473,9 @@ def checkpoint_payload(
     return {
         "epoch": epoch,
         "global_step": global_step,
-        "model_state_dict": {key: value.detach().cpu() for key, value in model.state_dict().items()},
+        "model_state_dict": {
+            key: value.detach().cpu() for key, value in model.state_dict().items()
+        },
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict(),
         "args": vars(args),
@@ -445,7 +502,9 @@ def main() -> None:
 
     try:
         device = torch.device(
-            args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
+            args.device
+            if args.device != "auto"
+            else ("cuda" if torch.cuda.is_available() else "cpu")
         )
         if device.type != "cuda":
             raise RuntimeError("This Stage 2 trainer is intended to run on CUDA.")
@@ -475,8 +534,8 @@ def main() -> None:
             model,
             processor,
             registry,
-            _history_registry,
-            _history_quantizer,
+            history_registry,
+            history_quantizer,
             action_quantizer,
             model_dtype,
         ) = load_components(stage1_args)
@@ -509,7 +568,9 @@ def main() -> None:
         }
         write_run_config(save_dir, args, run_metadata)
 
-        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=args.lr, weight_decay=args.weight_decay
+        )
         steps_per_epoch = math.ceil(len(train_loader) / max(args.grad_accum_steps, 1))
         total_update_steps = steps_per_epoch * args.max_epochs
         warmup_steps = int(total_update_steps * args.warmup_ratio)
@@ -531,6 +592,8 @@ def main() -> None:
             dataloader=initial_eval_loader,
             processor=processor,
             registry=registry,
+            history_registry=history_registry,
+            history_quantizer=history_quantizer,
             quantizer=action_quantizer,
             device=device,
             model_dtype=model_dtype,
@@ -596,7 +659,9 @@ def main() -> None:
                 "setup/grad_accum_steps": args.grad_accum_steps,
                 f"baseline/{initial_eval_split}_loss": initial_eval["loss"],
                 f"baseline/{initial_eval_split}_token_accuracy": initial_eval["token_accuracy"],
-                f"baseline/{initial_eval_split}_action_token_accuracy": initial_eval["action_token_accuracy"],
+                f"baseline/{initial_eval_split}_action_token_accuracy": initial_eval[
+                    "action_token_accuracy"
+                ],
             },
             step=0,
         )
@@ -617,15 +682,18 @@ def main() -> None:
             optimizer.zero_grad(set_to_none=True)
             for batch_idx, batch in enumerate(train_loader, start=1):
                 full_inputs, labels, loss_weights, action_mask = prepare_stage2_batch(
+                    model=model,
                     batch=batch,
                     processor=processor,
                     registry=registry,
+                    history_registry=history_registry,
+                    history_quantizer=history_quantizer,
                     quantizer=action_quantizer,
                     device=device,
                     action_loss_weight=args.action_loss_weight,
                 )
                 with torch.autocast("cuda", dtype=model_dtype):
-                    outputs = model(**full_inputs)
+                    outputs = model(**model_forward_inputs(full_inputs))
                     loss = compute_weighted_loss(outputs.logits, labels, loss_weights)
 
                 (loss / args.grad_accum_steps).backward()
@@ -637,7 +705,9 @@ def main() -> None:
                 train_action_correct += metrics["action_correct"]
                 train_action_tokens += metrics["action_total"]
 
-                should_step = batch_idx % args.grad_accum_steps == 0 or batch_idx == len(train_loader)
+                should_step = batch_idx % args.grad_accum_steps == 0 or batch_idx == len(
+                    train_loader
+                )
                 if should_step:
                     if args.max_grad_norm > 0:
                         torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
@@ -675,6 +745,8 @@ def main() -> None:
                     dataloader=val_loader,
                     processor=processor,
                     registry=registry,
+                    history_registry=history_registry,
+                    history_quantizer=history_quantizer,
                     quantizer=action_quantizer,
                     device=device,
                     model_dtype=model_dtype,
@@ -774,7 +846,10 @@ def main() -> None:
                 json.dump(metrics_history, f, indent=2, ensure_ascii=False)
 
             completed_epochs = epoch
-            if args.early_stopping_patience > 0 and epochs_without_improvement >= args.early_stopping_patience:
+            if (
+                args.early_stopping_patience > 0
+                and epochs_without_improvement >= args.early_stopping_patience
+            ):
                 stop_reason = "early_stopping"
                 print(
                     json.dumps(

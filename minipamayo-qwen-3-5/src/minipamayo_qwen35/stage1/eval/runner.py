@@ -24,22 +24,6 @@ from PIL import Image
 from torch.utils.data import DataLoader
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
-from .. import CanonicalStage1Spec, Stage1TaskSpec
-from ..data.dataset import Stage1JsonlDataset
-from ..tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
-from ..tokenization.registry import Stage1TokenRegistry
-from ..train import (
-    CHECKPOINT_KIND_FULL,
-    CHECKPOINT_KIND_MODEL_ONLY,
-    build_processor_kwargs,
-    build_prompt_text,
-    compute_token_accuracy,
-    format_gib,
-    load_checkpoint,
-    prepare_batch,
-    prepare_prompt_inputs_with_history,
-    stage1_collate,
-)
 from ...utils.dynamics import forward_dynamics_batch
 from ...utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
@@ -52,6 +36,24 @@ from ...utils.run_metadata import (
     collect_git_metadata,
     collect_gpu_info,
     collect_processor_settings,
+)
+from .. import CanonicalStage1Spec, Stage1TaskSpec
+from ..data.dataset import Stage1JsonlDataset
+from ..tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
+from ..tokenization.registry import Stage1TokenRegistry
+from ..train import (
+    CHECKPOINT_KIND_FULL,
+    CHECKPOINT_KIND_MODEL_ONLY,
+    append_token_to_model_inputs,
+    build_processor_kwargs,
+    build_prompt_text,
+    compute_token_accuracy,
+    format_gib,
+    load_checkpoint,
+    model_forward_inputs,
+    prepare_batch,
+    prepare_prompt_inputs_with_history,
+    stage1_collate,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -113,7 +115,9 @@ def parse_args() -> argparse.Namespace:
     pre_parser.add_argument("--config-json", type=str, required=True)
     pre_args, remaining = pre_parser.parse_known_args()
     if remaining:
-        raise RuntimeError("Stage 1 evaluation accepts only --config-json. Put all settings in the JSON file.")
+        raise RuntimeError(
+            "Stage 1 evaluation accepts only --config-json. Put all settings in the JSON file."
+        )
 
     parser = build_parser()
     config_path, config_payload, config_args = _load_config_args(pre_args.config_json, parser)
@@ -154,8 +158,7 @@ def resolve_processor_path(checkpoint_path: Path) -> str:
     saved_processor = checkpoint_path.parent / "processor"
     if not saved_processor.exists():
         raise RuntimeError(
-            "Checkpoint is missing the canonical saved processor directory: "
-            f"{saved_processor}"
+            f"Checkpoint is missing the canonical saved processor directory: {saved_processor}"
         )
     return str(saved_processor)
 
@@ -190,7 +193,9 @@ def load_components(
     processor_path = resolve_processor_path(checkpoint_path)
     model_dtype = resolve_dtype(str(checkpoint_args["dtype"]))
     processor_kwargs = build_processor_kwargs(args.image_min_pixels, args.image_max_pixels)
-    processor = AutoProcessor.from_pretrained(processor_path, trust_remote_code=True, **processor_kwargs)
+    processor = AutoProcessor.from_pretrained(
+        processor_path, trust_remote_code=True, **processor_kwargs
+    )
 
     if "history_registry" not in checkpoint or not isinstance(checkpoint["history_registry"], dict):
         raise RuntimeError("Checkpoint is missing canonical `history_registry` metadata.")
@@ -210,7 +215,9 @@ def load_components(
     )
     registry.add_to_tokenizer(processor.tokenizer)
 
-    if "history_quantizer" not in checkpoint or not isinstance(checkpoint["history_quantizer"], dict):
+    if "history_quantizer" not in checkpoint or not isinstance(
+        checkpoint["history_quantizer"], dict
+    ):
         raise RuntimeError("Checkpoint is missing canonical `history_quantizer` metadata.")
     history_quantizer_cfg = checkpoint["history_quantizer"]
     required_history_quantizer_keys = [
@@ -661,7 +668,9 @@ def stage1_eval_summary_schema() -> bytes:
     ).encode("utf-8")
 
 
-def init_mcap_writer(output_mcap: str, episode_metadata: dict[str, str], camera_metadata: dict[str, str]):
+def init_mcap_writer(
+    output_mcap: str, episode_metadata: dict[str, str], camera_metadata: dict[str, str]
+):
     output_path = Path(output_mcap)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     stream = output_path.open("wb")
@@ -771,7 +780,9 @@ def write_single_segment_index(
         json.dump(index_payload, f, indent=2, ensure_ascii=False)
 
 
-def write_json_message(writer: Writer, channel_id: int, payload: dict, log_time_ns: int, sequence: int) -> None:
+def write_json_message(
+    writer: Writer, channel_id: int, payload: dict, log_time_ns: int, sequence: int
+) -> None:
     writer.add_message(
         channel_id=channel_id,
         log_time=log_time_ns,
@@ -789,39 +800,21 @@ def greedy_generate_action_tokens(
     action_len: int,
     model_dtype: torch.dtype,
 ) -> torch.Tensor:
-    action_token_ids = torch.tensor(registry.token_ids, device=prompt_inputs["input_ids"].device, dtype=torch.long)
+    action_token_ids = torch.tensor(
+        registry.token_ids, device=prompt_inputs["input_ids"].device, dtype=torch.long
+    )
     current_inputs = dict(prompt_inputs)
     generated: list[torch.Tensor] = []
 
     for _ in range(action_len):
         with torch.autocast("cuda", dtype=model_dtype):
-            outputs = model(**current_inputs)
+            outputs = model(**model_forward_inputs(current_inputs))
         next_logits = outputs.logits[:, -1, :]
         action_logits = next_logits.index_select(dim=-1, index=action_token_ids)
         next_indices = action_logits.argmax(dim=-1)
         next_token = action_token_ids[next_indices]
         generated.append(next_token)
-
-        current_inputs["input_ids"] = torch.cat([current_inputs["input_ids"], next_token.unsqueeze(1)], dim=1)
-        current_inputs["attention_mask"] = torch.cat(
-            [
-                current_inputs["attention_mask"],
-                torch.ones((next_token.shape[0], 1), device=next_token.device, dtype=current_inputs["attention_mask"].dtype),
-            ],
-            dim=1,
-        )
-        if "mm_token_type_ids" in current_inputs:
-            current_inputs["mm_token_type_ids"] = torch.cat(
-                [
-                    current_inputs["mm_token_type_ids"],
-                    torch.zeros(
-                        (next_token.shape[0], 1),
-                        device=next_token.device,
-                        dtype=current_inputs["mm_token_type_ids"].dtype,
-                    ),
-                ],
-                dim=1,
-            )
+        append_token_to_model_inputs(model, current_inputs, next_token)
 
     return torch.stack(generated, dim=1)
 
@@ -829,7 +822,9 @@ def greedy_generate_action_tokens(
 def main(task_spec: Stage1TaskSpec | None = None) -> None:
     task_spec = task_spec or CanonicalStage1Spec()
     args = parse_args()
-    device = torch.device(args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
+    device = torch.device(
+        args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
+    )
     if device.type != "cuda":
         raise RuntimeError("Stage 1 evaluation currently expects CUDA.")
     git_metadata = collect_git_metadata(Path(__file__).resolve().parent)
@@ -938,28 +933,30 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
             summary_channel_id,
         ) = init_mcap_writer(args.output_mcap, episode_metadata, camera_metadata)
 
-    print(json.dumps(
-        {
-            "event": "stage1_eval_setup",
-            "checkpoint": args.checkpoint,
-            "test_jsonl": test_jsonl,
-            "num_samples": len(dataset),
-            "batch_size": args.batch_size,
-            "target_dim": target_dim,
-            "full_action_dim": full_action_dim,
-            "k": k_steps,
-            "dt": dt,
-            "history_steps": int(stage1_metadata["history_steps"]),
-            "history_token_count": int(stage1_metadata["history_token_count"]),
-            "dtype": "bf16" if model_dtype == torch.bfloat16 else "fp16",
-            "image_min_pixels": args.image_min_pixels or None,
-            "image_max_pixels": args.image_max_pixels or None,
-            "processor_settings": processor_settings,
-            "action_representation": stage1_metadata["action_representation"],
-            "rollout_accel_source": stage1_metadata["rollout_accel_source"],
-        },
-        ensure_ascii=False,
-    ))
+    print(
+        json.dumps(
+            {
+                "event": "stage1_eval_setup",
+                "checkpoint": args.checkpoint,
+                "test_jsonl": test_jsonl,
+                "num_samples": len(dataset),
+                "batch_size": args.batch_size,
+                "target_dim": target_dim,
+                "full_action_dim": full_action_dim,
+                "k": k_steps,
+                "dt": dt,
+                "history_steps": int(stage1_metadata["history_steps"]),
+                "history_token_count": int(stage1_metadata["history_token_count"]),
+                "dtype": "bf16" if model_dtype == torch.bfloat16 else "fp16",
+                "image_min_pixels": args.image_min_pixels or None,
+                "image_max_pixels": args.image_max_pixels or None,
+                "processor_settings": processor_settings,
+                "action_representation": stage1_metadata["action_representation"],
+                "rollout_accel_source": stage1_metadata["rollout_accel_source"],
+            },
+            ensure_ascii=False,
+        )
+    )
 
     tf_loss_total = 0.0
     tf_batches = 0
@@ -983,6 +980,7 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
             sample_index = 0
             for batch in loader:
                 full_inputs, labels = prepare_batch(
+                    model,
                     batch,
                     processor,
                     registry,
@@ -994,7 +992,7 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                     device,
                 )
                 with torch.autocast("cuda", dtype=model_dtype):
-                    outputs = model(**full_inputs, labels=labels)
+                    outputs = model(**model_forward_inputs(full_inputs), labels=labels)
 
                 correct, total = compute_token_accuracy(outputs.logits, labels)
                 tf_loss_total += float(outputs.loss.detach().cpu())
@@ -1006,9 +1004,12 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                 shifted_labels = labels[:, 1:]
                 shifted_mask = shifted_labels != -100
                 tf_per_sample_total = shifted_mask.sum(dim=1)
-                tf_per_sample_correct = ((shifted_preds == shifted_labels) & shifted_mask).sum(dim=1)
+                tf_per_sample_correct = ((shifted_preds == shifted_labels) & shifted_mask).sum(
+                    dim=1
+                )
 
                 prompt_inputs = prepare_prompt_inputs_with_history(
+                    model,
                     batch,
                     processor,
                     history_registry,
@@ -1061,12 +1062,16 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                     gt_waypoints_list.append(gt_waypoint_tensor)
                     generated_bins.extend(pred_bins)
 
-                    pred_waypoint_tensor = forward_dynamics_batch(
-                        pred_action_tensor.view(1, k_steps, 2)[:, :, 0],
-                        pred_action_tensor.view(1, k_steps, 2)[:, :, 1],
-                        v0_tensor.view(1),
-                        dt=dt,
-                    ).squeeze(0).cpu()
+                    pred_waypoint_tensor = (
+                        forward_dynamics_batch(
+                            pred_action_tensor.view(1, k_steps, 2)[:, :, 0],
+                            pred_action_tensor.view(1, k_steps, 2)[:, :, 1],
+                            v0_tensor.view(1),
+                            dt=dt,
+                        )
+                        .squeeze(0)
+                        .cpu()
+                    )
                     displacement = torch.norm(pred_waypoint_tensor - gt_waypoint_tensor, dim=1)
                     tf_match_count = int(tf_per_sample_correct[row_idx].item())
                     tf_token_count = int(tf_per_sample_total[row_idx].item())
@@ -1099,7 +1104,9 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                         image_payload = {
                             "timestamp": ns_to_timestamp(log_time_ns),
                             "frame_id": "ego/front_camera",
-                            "data": base64.b64encode(Path(batch["image_path"][row_idx]).read_bytes()).decode("ascii"),
+                            "data": base64.b64encode(
+                                Path(batch["image_path"][row_idx]).read_bytes()
+                            ).decode("ascii"),
                             "format": normalize_image_format(batch["image_path"][row_idx]),
                         }
                         write_json_message(
@@ -1216,14 +1223,28 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                             ],
                             "metrics": {
                                 "teacher_forced_match_count": tf_match_count,
-                                "teacher_forced_token_accuracy": tf_match_count / max(tf_token_count, 1),
+                                "teacher_forced_token_accuracy": tf_match_count
+                                / max(tf_token_count, 1),
                                 "autoregressive_match_count": ar_match_count,
-                                "autoregressive_token_accuracy": ar_match_count / max(target_dim, 1),
+                                "autoregressive_token_accuracy": ar_match_count
+                                / max(target_dim, 1),
                                 "action_mae_accel": float(
-                                    (pred_action_tensor.view(k_steps, 2)[:, 0] - gt_action_tensor.view(k_steps, 2)[:, 0]).abs().mean().item()
+                                    (
+                                        pred_action_tensor.view(k_steps, 2)[:, 0]
+                                        - gt_action_tensor.view(k_steps, 2)[:, 0]
+                                    )
+                                    .abs()
+                                    .mean()
+                                    .item()
                                 ),
                                 "action_mae_kappa": float(
-                                    (pred_action_tensor.view(k_steps, 2)[:, 1] - gt_action_tensor.view(k_steps, 2)[:, 1]).abs().mean().item()
+                                    (
+                                        pred_action_tensor.view(k_steps, 2)[:, 1]
+                                        - gt_action_tensor.view(k_steps, 2)[:, 1]
+                                    )
+                                    .abs()
+                                    .mean()
+                                    .item()
                                 ),
                                 "ade_m": float(displacement.mean().item()),
                                 "fde_m": float(displacement[-1].item()),
@@ -1301,7 +1322,9 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
 
         if mcap_writer is not None:
             if first_elapsed_s is None or last_elapsed_s is None:
-                raise RuntimeError("MCAP output requested, but elapsed time metadata was not recorded.")
+                raise RuntimeError(
+                    "MCAP output requested, but elapsed time metadata was not recorded."
+                )
             write_json_message(
                 writer=mcap_writer,
                 channel_id=summary_channel_id,
