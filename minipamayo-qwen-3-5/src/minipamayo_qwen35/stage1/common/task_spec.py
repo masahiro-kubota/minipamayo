@@ -10,8 +10,8 @@ import numpy as np
 import torch
 from torch.utils.data import Subset
 
-from .data.canonical_action import canonical_action_array_from_record
-from .tokenization.quantizer import ActionQuantizer
+from ..data.canonical_action import canonical_action_array_from_record
+from ..tokenization.quantizer import ActionQuantizer
 
 
 def _record_action_array(record: dict) -> np.ndarray:

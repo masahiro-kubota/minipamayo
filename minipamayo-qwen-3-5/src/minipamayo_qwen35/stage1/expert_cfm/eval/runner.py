@@ -24,16 +24,16 @@ from ....utils.json_config import (
     resolve_path_base,
 )
 from ....utils.preflight import require_expected_cuda_toolkit
-from ..common import (
+from ..core.common import (
     extract_prompt_cache,
     freeze_module,
     infer_prompt_text,
     load_stage1_condition_components,
     prepare_condition_inputs,
 )
-from ..action_space import UnicycleAccelCurvatureActionSpace
-from ..diffusion import FlowMatchingDiffusion
-from ..model import load_action_expert_from_checkpoint
+from ..core.action_space import UnicycleAccelCurvatureActionSpace
+from ..core.diffusion import FlowMatchingDiffusion
+from ..core.model import load_action_expert_from_checkpoint
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {"checkpoint", "stage1_checkpoint", "eval_jsonl", "output_json"}

@@ -46,7 +46,7 @@ from ....utils.run_metadata import (
 )
 from ... import CanonicalStage1Spec, Stage1TaskSpec
 from ...data.dataset import Stage1JsonlDataset
-from ...prompt import (
+from ...common.prompt import (
     DEFAULT_QUESTION,
     PROMPT_SPECIAL_TOKENS,
     add_prompt_special_tokens,

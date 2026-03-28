@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
-from ..expert_cfm.action_space import UnicycleAccelCurvatureActionSpace
+from ..expert_cfm.core.action_space import UnicycleAccelCurvatureActionSpace
 
 
 def _canonicalize_future_xyz(value: torch.Tensor) -> torch.Tensor:

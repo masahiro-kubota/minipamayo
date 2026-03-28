@@ -19,8 +19,7 @@ import torch.nn.functional as F
 from PIL import Image
 from torch.utils.data import DataLoader, random_split
 
-from ....sequence.stage3_builder import build_stage2_prompt_text
-from ....stage1.prompt import COT_END_TOKEN, TRAJ_FUTURE_START_TOKEN
+from ....stage1.common.prompt import COT_END_TOKEN, TRAJ_FUTURE_START_TOKEN
 from ....stage1.vlm_ce.eval import load_components
 from ....stage1.vlm_ce.train import (
     format_gib,
@@ -48,7 +47,8 @@ from ....utils.run_metadata import (
     collect_gpu_info,
     collect_processor_settings,
 )
-from ..dataset import ReasoningSftJsonlDataset, reasoning_sft_collate
+from ..data import ReasoningSftJsonlDataset, reasoning_sft_collate
+from ..prompt import build_stage2_prompt_text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .tokenization.history import (
+from ..tokenization.history import (
     HISTORY_END_TOKEN,
     HISTORY_PLACEHOLDER_TOKEN,
     HISTORY_START_TOKEN,

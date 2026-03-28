@@ -4,14 +4,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from ..stage1.prompt import build_chat_prompt_text, build_history_placeholder, build_reasoning_prompt_text
-
 ACTION_SECTION_HEADER: Final[str] = "[Action Tokens]"
-
-DEFAULT_STAGE2_USER_PROMPT: Final[str] = (
-    "Current ego speed: {v0:.2f} m/s.\n"
-    "Analyze the driving scene and summarize the intended behavior in the structured format."
-)
 
 DEFAULT_STAGE3_USER_PROMPT: Final[str] = (
     "Current ego speed: {v0:.2f} m/s.\n"
@@ -112,10 +105,6 @@ def build_reasoning_text(
     )
 
 
-def build_stage2_user_prompt(v0: float) -> str:
-    return DEFAULT_STAGE2_USER_PROMPT.format(v0=float(v0))
-
-
 def build_stage3_user_prompt(v0: float) -> str:
     return DEFAULT_STAGE3_USER_PROMPT.format(v0=float(v0))
 
@@ -135,11 +124,6 @@ def build_chat_prompt_text(processor, user_prompt: str) -> str:
         tokenize=False,
         add_generation_prompt=True,
     )
-
-
-def build_stage2_prompt_text(processor, v0: float, history_token_count: int = 0) -> str:
-    del v0
-    return build_reasoning_prompt_text(processor, history_token_count=history_token_count)
 
 
 def build_stage3_prompt_text(processor, v0: float) -> str:

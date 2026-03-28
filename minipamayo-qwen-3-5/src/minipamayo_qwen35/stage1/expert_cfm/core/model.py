@@ -297,7 +297,7 @@ class Stage1ActionExpert(nn.Module):
             expert_text_config=self.expert_text_config,
             expert_cfg=dict(self.expert_text_config),
             action_in_proj_cfg={
-                "_target_": "minipamayo_qwen35.stage1.expert_cfm.model.PerWaypointActionInProjV2",
+                "_target_": "minipamayo_qwen35.stage1.expert_cfm.core.model.PerWaypointActionInProjV2",
                 "num_enc_layers": self.mlp_num_layers,
                 "hidden_size": self.mlp_hidden_size,
                 "max_freq": self.fourier_max_freq,

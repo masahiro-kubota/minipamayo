@@ -118,5 +118,5 @@ smoke 検証では Stage1 smoke JSONL に `reasoning_text` を足した派生 JS
 
 現在の canonical loader はこれを前提にしている。
 
-- [dataset.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage2/reasoning_sft/dataset.py)
+- [dataset.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage2/reasoning_sft/data/dataset.py)
 - [runner.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage2/reasoning_sft/train/runner.py)

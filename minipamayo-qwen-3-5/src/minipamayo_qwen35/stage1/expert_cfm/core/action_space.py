@@ -7,7 +7,7 @@ from typing import Any
 import torch
 from torch import nn
 
-from ..tokenization.history import canonicalize_history_batch_tensors
+from ...tokenization.history import canonicalize_history_batch_tensors
 from .action_space_utils import (
     dxy_theta_to_v,
     dxy_theta_to_v_without_v0,

@@ -12,7 +12,7 @@ import math
 import numpy as np
 import torch
 
-from ..expert_cfm.action_space import UnicycleAccelCurvatureActionSpace
+from ..expert_cfm.core.action_space import UnicycleAccelCurvatureActionSpace
 from ..tokenization.history import (
     canonicalize_history_batch_tensors,
     canonicalize_history_sample_tensors,

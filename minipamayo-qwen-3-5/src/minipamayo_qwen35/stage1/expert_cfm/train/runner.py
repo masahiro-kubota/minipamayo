@@ -44,8 +44,8 @@ from ....utils.run_metadata import (
     collect_gpu_info,
     collect_processor_settings,
 )
-from ..diffusion import FlowMatchingDiffusion
-from ..common import (
+from ..core.diffusion import FlowMatchingDiffusion
+from ..core.common import (
     build_stage1b_metadata,
     compute_action_stats,
     extract_prompt_cache,
@@ -54,7 +54,7 @@ from ..common import (
     load_stage1_condition_components,
     prepare_condition_inputs,
 )
-from ..model import Stage1ActionExpert
+from ..core.model import Stage1ActionExpert
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {

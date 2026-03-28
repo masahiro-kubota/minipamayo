@@ -10,11 +10,10 @@ from pathlib import Path
 import torch
 from transformers import LogitsProcessor, LogitsProcessorList, StoppingCriteria, StoppingCriteriaList
 
-from ....sequence.stage3_builder import build_stage2_prompt_text
-from ....stage1.expert_cfm.action_space import UnicycleAccelCurvatureActionSpace
-from ....stage1.expert_cfm.diffusion import FlowMatchingDiffusion
-from ....stage1.expert_cfm.model import load_action_expert_from_checkpoint
-from ....stage1.prompt import COT_END_TOKEN, TRAJ_FUTURE_START_TOKEN
+from ....stage1.common.prompt import COT_END_TOKEN, TRAJ_FUTURE_START_TOKEN
+from ....stage1.expert_cfm.core.action_space import UnicycleAccelCurvatureActionSpace
+from ....stage1.expert_cfm.core.diffusion import FlowMatchingDiffusion
+from ....stage1.expert_cfm.core.model import load_action_expert_from_checkpoint
 from ....stage1.vlm_ce.eval import load_components
 from ....stage1.vlm_ce.train import (
     load_checkpoint,
@@ -28,7 +27,8 @@ from ....utils.image_budget import (
 from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
 from ....utils.preflight import require_expected_cuda_toolkit
 from ....utils.run_metadata import collect_processor_settings
-from ..dataset import ReasoningSftJsonlDataset
+from ..data import ReasoningSftJsonlDataset
+from ..prompt import build_stage2_prompt_text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {

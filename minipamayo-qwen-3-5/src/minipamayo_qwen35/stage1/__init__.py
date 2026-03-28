@@ -1,6 +1,6 @@
 """Shared Stage 1 target specifications."""
 
-from .task_spec import (
+from .common.task_spec import (
     CanonicalStage1Spec,
     KappaOnlyStage1Spec,
     Stage1TaskSpec,

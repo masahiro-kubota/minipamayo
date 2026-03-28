@@ -40,7 +40,7 @@ from ....utils.run_metadata import (
 from ... import CanonicalStage1Spec, Stage1TaskSpec
 from ...data.dataset import Stage1JsonlDataset
 from ...data.canonical_action import rollout_waypoints_from_action_tensor
-from ...prompt import add_prompt_special_tokens
+from ...common.prompt import add_prompt_special_tokens
 from ...tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ...tokenization.registry import Stage1TokenRegistry
 from ..train import (

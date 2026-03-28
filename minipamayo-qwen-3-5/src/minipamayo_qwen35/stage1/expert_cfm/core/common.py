@@ -6,10 +6,10 @@ from pathlib import Path
 
 import torch
 
-from .. import CanonicalStage1Spec
-from ..prompt import DEFAULT_QUESTION, build_prompt_text
-from ..vlm_ce.eval import load_components
-from ..vlm_ce.train import model_forward_inputs, prepare_prompt_inputs_with_history
+from ... import CanonicalStage1Spec
+from ...common.prompt import DEFAULT_QUESTION, build_prompt_text
+from ...vlm_ce.eval import load_components
+from ...vlm_ce.train import model_forward_inputs, prepare_prompt_inputs_with_history
 
 
 def freeze_module(module) -> None:
@@ -156,7 +156,7 @@ def build_stage1b_metadata(dataset, args, expert_config: dict) -> dict:
         "diffusion_architecture": "flow_matching",
         "action_space_contract": "alpamayo_unicycle_accel_curvature_single_traj_group",
         "action_space_cfg": {
-            "_target_": "minipamayo_qwen35.stage1.expert_cfm.action_space.UnicycleAccelCurvatureActionSpace",
+            "_target_": "minipamayo_qwen35.stage1.expert_cfm.core.action_space.UnicycleAccelCurvatureActionSpace",
             "dt": dt_value,
             "n_waypoints": len(gt_waypoints),
             "theta_lambda": 1e-6,

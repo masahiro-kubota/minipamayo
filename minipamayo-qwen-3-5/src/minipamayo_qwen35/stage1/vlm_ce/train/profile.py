@@ -26,7 +26,7 @@ from ....utils.json_config import (
 from ....utils.preflight import require_expected_cuda_toolkit
 from ... import CanonicalStage1Spec
 from ...data.dataset import Stage1JsonlDataset
-from ...prompt import DEFAULT_QUESTION, add_prompt_special_tokens, build_prompt_text
+from ...common.prompt import DEFAULT_QUESTION, add_prompt_special_tokens, build_prompt_text
 from ...tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ...tokenization.registry import Stage1TokenRegistry
 from .runner import format_gib, model_forward_inputs, prepare_batch, stage1_collate
