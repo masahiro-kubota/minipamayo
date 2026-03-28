@@ -20,6 +20,8 @@ env/
 
 # Data
 data/
+!minipamayo-qwen-3-5/configs/
+!minipamayo-qwen-3-5/configs/**
 *.tar.gz
 *.zip
 *.h5
