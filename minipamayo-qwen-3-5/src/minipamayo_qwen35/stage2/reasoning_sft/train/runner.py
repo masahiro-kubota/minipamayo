@@ -85,6 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image-min-pixels", type=int, default=CANONICAL_IMAGE_MIN_PIXELS)
     parser.add_argument("--image-max-pixels", type=int, default=CANONICAL_IMAGE_MAX_PIXELS)
     parser.add_argument("--action-loss-weight", type=float, default=2.0)
+    parser.add_argument("--handoff-loss-weight", type=float, default=8.0)
     parser.add_argument("--gradient-checkpointing", action="store_true", default=True)
     parser.add_argument("--wandb-project", type=str, default="minipamayo-qwen35")
     parser.add_argument("--wandb-entity", type=str, default="")
@@ -143,6 +144,8 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`train_jsonl` must be defined in the config JSON.")
     if args.action_loss_weight <= 0.0:
         raise RuntimeError("`action_loss_weight` must be > 0.")
+    if args.handoff_loss_weight <= 0.0:
+        raise RuntimeError("`handoff_loss_weight` must be > 0.")
     if args.early_stopping_patience < 0:
         raise RuntimeError("`early_stopping_patience` must be >= 0.")
     if args.early_stopping_min_delta < 0:
@@ -219,6 +222,7 @@ def build_stage2_metadata(dataset, args: argparse.Namespace) -> dict:
         "action_dim": len(action),
         "dt": float(record["dt"]),
         "action_loss_weight": args.action_loss_weight,
+        "handoff_loss_weight": args.handoff_loss_weight,
     }
 
 
@@ -262,6 +266,7 @@ def prepare_stage2_batch(
     quantizer,
     device: torch.device,
     action_loss_weight: float,
+    handoff_loss_weight: float,
 ) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor]:
     images = [Image.open(path).convert("RGB") for path in batch["image_path"]]
     try:
@@ -311,14 +316,25 @@ def prepare_stage2_batch(
         )
         weight_tensor = torch.ones((batch_size, max_len), dtype=torch.float32, device=device)
         action_mask_tensor = torch.zeros((batch_size, max_len), dtype=torch.bool, device=device)
+        handoff_token_ids = {
+            int(processor.tokenizer.eos_token_id),
+            cot_end_token_id,
+            traj_future_start_token_id,
+        }
 
         for row_idx, row in enumerate(target_rows):
             row_len = len(row)
             target_ids[row_idx, :row_len] = torch.tensor(row, dtype=torch.long, device=device)
             target_mask[row_idx, :row_len] = 1
             for token_idx, is_action in enumerate(action_mask_rows[row_idx]):
+                token_id = int(row[token_idx])
                 action_mask_tensor[row_idx, token_idx] = bool(is_action)
-                weight_tensor[row_idx, token_idx] = action_loss_weight if is_action else 1.0
+                if bool(is_action):
+                    weight_tensor[row_idx, token_idx] = action_loss_weight
+                elif token_id in handoff_token_ids:
+                    weight_tensor[row_idx, token_idx] = handoff_loss_weight
+                else:
+                    weight_tensor[row_idx, token_idx] = 1.0
 
         input_ids = torch.cat([prompt_inputs["input_ids"], target_ids], dim=1)
         attention_mask = torch.cat([prompt_inputs["attention_mask"], target_mask], dim=1)
@@ -424,6 +440,7 @@ def evaluate(
     device: torch.device,
     model_dtype: torch.dtype,
     action_loss_weight: float,
+    handoff_loss_weight: float,
 ) -> dict:
     model.eval()
     total_loss = 0.0
@@ -444,6 +461,7 @@ def evaluate(
             quantizer=quantizer,
             device=device,
             action_loss_weight=action_loss_weight,
+            handoff_loss_weight=handoff_loss_weight,
         )
         with torch.autocast("cuda", dtype=model_dtype):
             outputs = model(**model_forward_inputs(full_inputs))
@@ -607,6 +625,7 @@ def main() -> None:
             device=device,
             model_dtype=model_dtype,
             action_loss_weight=args.action_loss_weight,
+            handoff_loss_weight=args.handoff_loss_weight,
         )
         release_cuda_memory()
 
@@ -700,6 +719,7 @@ def main() -> None:
                     quantizer=action_quantizer,
                     device=device,
                     action_loss_weight=args.action_loss_weight,
+                    handoff_loss_weight=args.handoff_loss_weight,
                 )
                 with torch.autocast("cuda", dtype=model_dtype):
                     outputs = model(**model_forward_inputs(full_inputs))
@@ -760,6 +780,7 @@ def main() -> None:
                     device=device,
                     model_dtype=model_dtype,
                     action_loss_weight=args.action_loss_weight,
+                    handoff_loss_weight=args.handoff_loss_weight,
                 )
                 release_cuda_memory()
                 val_loss = val_metrics["loss"]
