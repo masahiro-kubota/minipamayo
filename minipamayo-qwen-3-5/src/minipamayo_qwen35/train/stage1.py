@@ -11,6 +11,7 @@ For quick VRAM and throughput probes, use `minipamayo_qwen35.train.profile_stage
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import math
 import random
@@ -178,6 +179,12 @@ def move_inputs_to_device(batch: dict, device: torch.device) -> dict:
 
 def format_gib(num_bytes: int) -> float:
     return round(num_bytes / (1024**3), 3)
+
+
+def release_cuda_memory() -> None:
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 def stage1_collate(samples: list[dict]) -> dict:
@@ -497,6 +504,7 @@ def main() -> None:
             device=device,
             model_dtype=model_dtype,
         )
+        release_cuda_memory()
 
         metrics_history: list[dict] = []
         best_metric = float("inf")
@@ -622,6 +630,7 @@ def main() -> None:
                     device=device,
                     model_dtype=model_dtype,
                 )
+                release_cuda_memory()
                 val_loss = val_metrics["loss"]
                 val_accuracy = val_metrics["token_accuracy"]
                 metric_to_track = val_loss
