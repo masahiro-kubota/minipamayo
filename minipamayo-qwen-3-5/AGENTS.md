@@ -26,3 +26,9 @@ This file defines repository-specific implementation rules for `minipamayo-qwen-
 
 - When tightening schemas, prefer making failures explicit over preserving old broken artifacts.
 - If compatibility is needed later, add it only when explicitly requested and isolate it behind clearly named migration code.
+
+## Commits
+
+- Use conventional commit prefixes such as `feat:`, `fix:`, `refactor:`, `docs:`, and `chore:`.
+- Keep commit subjects short and concrete.
+- Do not use scopes like `feat(train): ...` unless explicitly requested.
