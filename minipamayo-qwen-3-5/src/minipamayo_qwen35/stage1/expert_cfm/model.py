@@ -425,7 +425,7 @@ def load_action_expert_from_checkpoint(
     checkpoint_path: str | Path,
     device: torch.device,
 ) -> tuple[Stage1ActionExpert, dict]:
-    checkpoint = torch.load(Path(checkpoint_path), map_location="cpu")
+    checkpoint = torch.load(Path(checkpoint_path), map_location="cpu", weights_only=False)
     if "expert_config" not in checkpoint:
         if "decoder_config" in checkpoint:
             raise RuntimeError(

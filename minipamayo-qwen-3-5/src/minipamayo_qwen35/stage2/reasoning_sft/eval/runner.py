@@ -12,6 +12,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from ....stage1.eval import load_components
+from ....stage1.train.runner import load_checkpoint
 from ....utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
@@ -101,7 +102,7 @@ def main() -> None:
     if device.type != "cuda":
         raise RuntimeError("This Stage 2 evaluator is intended to run on CUDA.")
 
-    checkpoint = torch.load(Path(args.checkpoint), map_location="cpu")
+    checkpoint = load_checkpoint(Path(args.checkpoint))
     checkpoint_args = checkpoint.get("args")
     if not isinstance(checkpoint_args, dict) or "stage1a_checkpoint" not in checkpoint_args:
         raise RuntimeError(
