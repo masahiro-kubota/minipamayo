@@ -1,305 +1,168 @@
-# Alpamayo 推論コードとの整合性監査
+# Alpamayo 推論コードとの未整合メモ
 
-## 目的
+## 前提
 
-`minipamayo-qwen-3-5` の `stage1` と `stage2` が、`/home/masa/minipamayo/related_repos/alpamayo` の公開推論コードとどこまで整合しているかを確認する。
+このメモは、`/home/masa/minipamayo/related_repos/alpamayo` と比較したときに、`minipamayo-qwen-3-5` の `stage1` / `stage2` で **まだ整合していない部分だけ** を残したものである。
 
-今回の監査では、次の 2 点は意図的な差分として許容する。
+次の 2 点は意図的な差分として許容する。
 
 - 過去画像を入れていない
 - バックボーンとして `Qwen3.5-0.8B` を使っている
 
-それ以外について、学習コード、推論コード、型、special token、ライブラリ構成の整合性を確認した。
+整合済みの項目はこのメモから除外している。
 
-## 結論
+## 未整合の一覧
 
-`stage2` まで来れば Alpamayo の推論コードと直接比較できる、という状態にかなり近づいている。ただし、まだ完全一致ではない。
+### 1. `stage1.vlm_ce.inference.helper` の message contract
 
-すでに揃った部分は大きい。
+Alpamayo の `helper.create_message(...)` 契約と、こちらの `stage1.vlm_ce.inference.helper.create_message(...)` はまだ一致していない。
 
-- prompt special token に `<|cot_start|>`, `<|traj_future_start|>` などを追加した
-- history tensor shape を `single_traj_group` 前提に正規化した
-- history は `input_ids` の placeholder 置換で fuse する形に寄せた
-- `stage2 -> expert_cfm` の end-to-end handoff runner を追加した
-- `expert_cfm` に `action_space` / `diffusion` ラッパーを追加した
-- 依存ライブラリも `hydra-core`, `hydra-colorlog`, `einops`, `av` を追加した
+残っている差分:
 
-まだ残る本質差分は次のとおり。
+- Alpamayo は `frames: torch.Tensor` の 4D 入力を前提にしているが、こちらは `list[Any]` を受ける
+- Alpamayo helper そのものと同じ message builder ではない
+- `helper.py` の `system / user / assistant-prefill` 契約をそのまま再現していない
+- canonical prompt 本体は寄っているが、inference helper の API はまだ簡略版
+- Alpamayo の `get_processor(tokenizer)` 契約とも一致していない
+  - Alpamayo: `BASE_PROCESSOR_NAME` 固定 + 外から tokenizer を差し込む
+  - こちら: checkpoint 由来の `processor_path` をそのまま読む
 
-- Alpamayo と同一の `helper.create_message(...)` 契約にはまだ達していない
-- history token の量子化仕様と trajectory token `<i*>` 契約はまだ別
-- `expert_cfm` は周辺 API を寄せたが、Alpamayo の expert 本体と完全同型ではない
-- `torch` / `transformers` / `flash-attn` / `physical_ai_av` などの依存 stack はまだ一致していない
+影響:
 
-したがって、現状は「Stage2 までの handoff 契約はかなり寄ったが、公開 Alpamayo 実装と同一 stack ではまだない」と判断するのが正確。
-
-## 監査対象
-
-### Alpamayo 側
-
-- `related_repos/alpamayo/src/alpamayo_r1/helper.py`
-- `related_repos/alpamayo/src/alpamayo_r1/test_inference.py`
-- `related_repos/alpamayo/src/alpamayo_r1/models/base_model.py`
-- `related_repos/alpamayo/src/alpamayo_r1/models/alpamayo_r1.py`
-- `related_repos/alpamayo/src/alpamayo_r1/action_space/`
-- `related_repos/alpamayo/pyproject.toml`
-
-### こちら側
-
-- `src/minipamayo_qwen35/stage1/prompt.py`
-- `src/minipamayo_qwen35/stage1/tokenization/history.py`
-- `src/minipamayo_qwen35/stage1/data/dataset.py`
-- `src/minipamayo_qwen35/stage1/vlm_ce/train/runner.py`
-- `src/minipamayo_qwen35/stage1/vlm_ce/eval/runner.py`
-- `src/minipamayo_qwen35/stage1/vlm_ce/inference/helper.py`
-- `src/minipamayo_qwen35/stage1/expert_cfm/action_space.py`
-- `src/minipamayo_qwen35/stage1/expert_cfm/diffusion.py`
-- `src/minipamayo_qwen35/stage1/expert_cfm/model.py`
-- `src/minipamayo_qwen35/stage1/expert_cfm/train/runner.py`
-- `src/minipamayo_qwen35/stage1/expert_cfm/eval/runner.py`
-- `src/minipamayo_qwen35/stage1/expert_cfm/inference/runner.py`
-- `src/minipamayo_qwen35/stage2/reasoning_sft/dataset.py`
-- `src/minipamayo_qwen35/stage2/reasoning_sft/train/runner.py`
-- `src/minipamayo_qwen35/stage2/reasoning_sft/inference/runner.py`
-- `pyproject.toml`
-
-## すでに揃っている部分
-
-### 1. 画像 token budget
-
-画像 budget は Alpamayo と同じ `min_pixels=163840`, `max_pixels=196608` に固定している。
-
-### 2. history tensor shape
-
-canonical `stage1` / `stage2` dataset は Alpamayo と同じ single-traj-group 形に正規化して扱う。
-
-- `ego_history_xyz`: `[B, 1, T, 3]`
-- `ego_history_rot`: `[B, 1, T, 3, 3]`
-
-### 3. history の注入方式
-
-history は `input_ids` の placeholder token を discrete history token ID に置換する形へ修正済み。
-
-以前の `inputs_embeds` 上書きからは脱しており、この点は Alpamayo 側へ寄った。
-
-### 4. prompt special token
-
-canonical prompt 側には次を持たせている。
-
-- `<|cot_start|>`
-- `<|cot_end|>`
-- `<|traj_future_start|>`
-- `<|traj_future_end|>`
-
-また Stage2 では reasoning 用 user text と `assistant` prefill `<|cot_start|>` を入れる。
-
-### 5. Stage2 から expert への handoff
-
-canonical runner を追加済み。
-
-- `src/minipamayo_qwen35/stage2/reasoning_sft/inference/runner.py`
-
-この runner は
-
-- Stage2 VLM で reasoning を rollout
-- `<|traj_future_start|>` まで進める
-- その cache を `stage1.expert_cfm` に handoff
-- continuous action / trajectory を生成
-
-という形で、Alpamayo に近い end-to-end 推論経路を持つ。
-
-### 6. expert 側の周辺 API
-
-`expert_cfm` には Alpamayo 風の周辺 API を追加した。
-
-- `stage1/expert_cfm/action_space.py`
-- `stage1/expert_cfm/diffusion.py`
-
-`FlowMatchingDiffusion.sample(...)` と `UnicycleAccelCurvatureActionSpace.action_to_traj(...)` を通す構造になっている。
-
-## まだ整合していない部分
-
-### 1. helper / message builder はまだ別物
-
-Alpamayo の `helper.create_message(...)` は
-
-- system
-- user
-  - 複数画像
-  - history placeholder
-  - CoT 指示
-- assistant
-  - `<|cot_start|>`
-
-の契約をそのまま持つ。
-
-一方、こちらの `stage1.vlm_ce.inference.helper.create_message(...)` はまだ簡略版で、
-
-- 画像
-- 任意の `user_text`
-
-を組み立てる helper に留まっている。
-
-canonical `stage1.prompt` はかなり寄っているが、`helper.py` と 1 対 1 で一致しているわけではない。
+- `apply_chat_template(...)` に入る message object が完全一致しない
+- helper レベルでの比較がしにくい
 
 ### 2. history token の量子化仕様
 
-history は `input_ids` 置換型にしたが、量子化仕様そのものは独自実装である。
+history は `input_ids` 置換型に寄せたが、量子化仕様そのものは独自実装である。
 
 - Alpamayo: `tokenize_history_trajectory(...)`
 - こちら: `HistoryTrajectoryQuantizer`
 
-したがって、「history を discrete token にする」という方針は同じでも、token の意味空間はまだ一致していない。
+残っている差分:
 
-### 3. trajectory token `<i*>` 契約
+- history token の意味空間
+- bin の切り方
+- history trajectory tokenization の実装契約
 
-Alpamayo は future discrete trajectory token として `<i*>` 系を持つ。
+影響:
 
-こちらは `Stage1TokenRegistry` による独自 action token 語彙であり、Alpamayo の trajectory token 契約とは一致していない。
+- 同じ history を入れても token 列の意味が一致しない
 
-これは `stage1A` / `stage2` の教師信号比較で残る差分である。
+### 3. future trajectory token `<i*>` 契約
 
-### 4. Stage2 の supervised target
+Alpamayo は future discrete trajectory token として `<i*>` 系を使う。
 
-Stage2 の handoff runner は追加したが、学習 target はまだ Alpamayo の推論経路と完全一致ではない。
+こちらは `Stage1TokenRegistry` による独自 action token 語彙を使っている。
 
-現在は `reasoning_text + <|traj_future_start|> + action token supervision` 系で学習しているため、
+残っている差分:
 
-- 推論経路は寄った
-- 学習教師はまだ完全一致ではない
+- Alpamayo の `<i*>` trajectory token 契約を持っていない
+- future boundary token と future payload token の扱いが異なる
 
-という状態である。
+影響:
 
-### 5. expert 本体は完全同型ではない
+- `stage1A` / `stage2` の教師信号を Alpamayo と直接比較できない
 
-`expert_cfm` の外側の契約は寄せたが、expert 本体まで Alpamayo と同型ではない。
+### 4. `stage2` の supervised target
 
-まだ違う点は次のとおり。
+`stage2 -> expert_cfm` の handoff runner 自体はあるが、`stage2` の学習 target はまだ Alpamayo の推論経路と完全一致ではない。
+
+現在の target:
+
+- `reasoning_text + <|traj_future_start|> + action token supervision`
+
+残っている差分:
+
+- Stage2 の教師信号設計が Alpamayo の最終推論契約と完全には一致しない
+- `stage2` が free-running で `<|traj_future_start|>` を安定して出すところまではまだ確認できていない
+
+実行確認上の未解決:
+
+- smoke 1 epoch の `stage2` checkpoint では
+  - `Stage 2 reasoning rollout did not emit <|traj_future_start|> within the token budget`
+  で handoff が失敗した
+
+影響:
+
+- code path はある
+- ただし end-to-end handoff が安定に成立するところまでは未確認
+
+### 5. `expert_cfm` の expert 本体
+
+`expert_cfm` は周辺 API を寄せたが、Alpamayo の expert 本体と完全同型ではない。
+
+残っている差分:
 
 - Alpamayo の `AutoModel.from_config` / expert transformer stack と完全同型ではない
-- `hydra` instantiate 契約を使っていない
+- `hydra` instantiate 契約を expert 本体では使っていない
 - local normalization / metadata 契約が残っている
 
-つまり、「同じ役割を持つ近縁実装」ではあるが、「そのまま同型」とは言えない。
+影響:
 
-### 6. action_space は full API ではない
+- 「同じ役割の近縁実装」ではあるが、「同じモデル構成」とはまだ言えない
 
-現在の `stage1/expert_cfm/action_space.py` は
+### 6. `action_space` の API
 
-- history から初期速度を推定
-- unicycle rollout で trajectory を返す
+現在の `stage1/expert_cfm/action_space.py` は最小限の rollout API しか持っていない。
 
-という最小 API を持つ。
+残っている差分:
 
-ただし、まだ Alpamayo の full API との差がある。
-
-- `traj_to_action` を含んでいない
+- `traj_to_action` がない
 - action 正規化統計の持ち方が違う
-- `geometry` 周辺の補助実装がない
+- `geometry` 周辺の補助 API がない
 
-### 7. ライブラリ stack
+影響:
 
-Alpamayo 側の主要依存:
+- Alpamayo の `action_space` をそのまま置き換え対象として比較できない
 
-- `torch==2.8.0`
-- `transformers==4.57.1`
-- `flash-attn`
-- `hydra-core`
-- `hydra-colorlog`
-- `einops`
-- `physical_ai_av`
-- `av`
+### 7. 依存ライブラリ stack
 
-こちらの現在値:
+まだ一致していない主要差分:
 
-- `torch==2.10.0`
-- `transformers` は GitHub `main`
-- `flash-linear-attention==0.4.2`
-- `hydra-core` あり
-- `hydra-colorlog` あり
-- `einops` あり
-- `physical_ai_av` なし
-- `av` あり
+- `torch`
+  - Alpamayo: `2.8.0`
+  - こちら: `2.10.0`
+- `transformers`
+  - Alpamayo: `4.57.1`
+  - こちら: GitHub `main`
+- attention 実装
+  - Alpamayo: `flash-attn`
+  - こちら: `flash-linear-attention`
+- dataset / AV 周辺
+  - Alpamayo: `physical_ai_av` あり
+  - こちら: なし
 
-依存 stack の差はまだ大きい。特に `transformers` pin と `flash-attn` / `physical_ai_av` は未整合である。
+影響:
 
-## 優先度順の残タスク
+- generation / cache / attention 周辺の挙動差
+- Alpamayo 公開実装と完全同条件の比較ができない
+
+## 優先度順
 
 ### 優先度 A
 
 - `stage1.vlm_ce.inference.helper` を Alpamayo helper 契約に合わせる
-- `<i*>` trajectory token と future boundary token の tokenizer 契約を整理する
-- Stage2 target を Alpamayo の推論経路にもっと揃える
+- `<i*>` trajectory token と future token 契約を整理する
+- `stage2` target を Alpamayo 推論経路にさらに寄せる
+- `stage2` free-running で `<|traj_future_start|>` が出るところまで確認する
 
 ### 優先度 B
 
 - `expert_cfm` の expert 本体を Alpamayo の expert stack にさらに寄せる
 - `action_space` を full API に近づける
-- `diffusion` 周辺の API を Alpamayo 命名に寄せる
 
 ### 優先度 C
 
 - `torch`, `transformers`, `flash-attn`, `physical_ai_av` を含む依存 stack を見直す
-- processor / tokenizer 初期化方法を Alpamayo helper とさらに近づける
 
-## 監査上の判断
+## ひとことで言うと
 
-今のコードは、
+過去画像なしとバックボーン差分を除いても、`stage2` までで「ある程度比べられる」とは言える。
 
-- 「Alpamayo の推論契約にかなり寄せた近縁実装」
+ただし、まだ残っているのは主にこの 4 つ。
 
-とは言える。
-
-ただし、
-
-- 「過去画像なし・バックボーン差分を除けば、Alpamayo 推論コードと完全に同じ」
-
-とはまだ言えない。
-
-比較可能性をさらに高めるために必要なのは、主に次の 4 つである。
-
-- helper / tokenizer / special token 契約の整理
-- history token 量子化仕様の整理
-- expert / diffusion / action_space stack の同型化
-- 依存ライブラリ stack の整理
-
-## 補足
-
-本監査は「何がまだ一致していないか」を整理するためのものであり、差分のすべてが直ちに悪いという意味ではない。
-
-ただし、
-
-- 型を整合させたい
-- Alpamayo と意図しない差分を減らしたい
-- 学習コードと推論コードの整合性を強く取りたい
-
-という目的に対しては、上の残差分は無視できない。
-
-## 実行確認メモ
-
-2026-03-29 時点で、smoke 実行で確認できたことは次のとおり。
-
-- `Stage1B` smoke train は完走した
-  - `best_val_cfm_loss = 1.7816`
-  - `peak_reserved_gib = 2.691`
-- `Stage1B` inference は通った
-  - `flow_steps = 10`
-  - `ADE = 3.4728m`
-  - `FDE = 7.7718m`
-- `Stage2` smoke train は現行 contract で回し直した
-  - `target_layout = reasoning_then_traj_future_start_then_action_tokens`
-  - `val_loss = 3.7437`
-
-ただし、`Stage2 -> expert_cfm` の free-running handoff 推論は、smoke 1epoch checkpoint ではまだ成功していない。
-
-- failure:
-  - `Stage 2 reasoning rollout did not emit <|traj_future_start|> within the token budget`
-  - `max_reasoning_tokens = 256`
-
-したがって、
-
-- code path 自体は存在する
-- `Stage1B` 単体は動く
-- しかし `Stage2` の free-running rollout が handoff token を安定して出すところまでは、smoke checkpoint では未確認
-
-という状態である。
+- helper / tokenizer / future token 契約
+- `stage2` の target と free-running handoff 成立性
+- expert / action_space の同型性
+- 依存ライブラリ stack
