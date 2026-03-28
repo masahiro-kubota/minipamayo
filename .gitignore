@@ -24,6 +24,8 @@ data/
 !minipamayo-qwen-3-5/configs/**
 !minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/data/
 !minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/data/**
+!minipamayo-qwen-3-5/src/minipamayo_qwen35/stage2/reasoning_sft/data/
+!minipamayo-qwen-3-5/src/minipamayo_qwen35/stage2/reasoning_sft/data/**
 *.tar.gz
 *.zip
 *.h5
