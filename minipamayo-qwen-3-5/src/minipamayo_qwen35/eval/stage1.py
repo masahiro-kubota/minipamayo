@@ -27,10 +27,13 @@ from ..data.stage1_dataset import Stage1JsonlDataset
 from ..tokens.action_quantizer import ActionQuantizer
 from ..tokens.token_registry import Stage1TokenRegistry
 from ..train.stage1 import (
+    CHECKPOINT_KIND_FULL,
+    CHECKPOINT_KIND_MODEL_ONLY,
     build_processor_kwargs,
     build_prompt_text,
     compute_token_accuracy,
     format_gib,
+    load_checkpoint,
     move_inputs_to_device,
     prepare_batch,
     stage1_collate,
@@ -124,7 +127,14 @@ def parse_args() -> argparse.Namespace:
 
 
 def resolve_checkpoint_args(checkpoint: dict) -> dict:
-    checkpoint_args = checkpoint.get("args")
+    if "checkpoint_kind" not in checkpoint:
+        raise RuntimeError("Checkpoint is missing canonical `checkpoint_kind`.")
+    checkpoint_kind = checkpoint["checkpoint_kind"]
+    if checkpoint_kind not in {CHECKPOINT_KIND_FULL, CHECKPOINT_KIND_MODEL_ONLY}:
+        raise RuntimeError(f"Unsupported checkpoint_kind: {checkpoint_kind!r}")
+    if "args" not in checkpoint:
+        raise RuntimeError("Checkpoint is missing canonical `args` metadata.")
+    checkpoint_args = checkpoint["args"]
     if not isinstance(checkpoint_args, dict):
         raise RuntimeError("Checkpoint is missing canonical `args` metadata.")
     required_keys = ["model_path", "dtype"]
@@ -154,7 +164,7 @@ def resolve_dtype(dtype_name: str) -> torch.dtype:
 
 def load_components(args: argparse.Namespace) -> tuple[dict, object, object, Stage1TokenRegistry, ActionQuantizer, torch.dtype]:
     checkpoint_path = Path(args.checkpoint)
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    checkpoint = load_checkpoint(checkpoint_path)
     checkpoint_args = resolve_checkpoint_args(checkpoint)
     model_path = str(checkpoint_args["model_path"])
     processor_path = resolve_processor_path(checkpoint_path)
@@ -189,7 +199,9 @@ def load_components(args: argparse.Namespace) -> tuple[dict, object, object, Sta
 
 
 def require_checkpoint_run_metadata(checkpoint: dict) -> dict:
-    run_metadata = checkpoint.get("run_metadata")
+    if "run_metadata" not in checkpoint:
+        raise RuntimeError("Checkpoint is missing canonical `run_metadata`.")
+    run_metadata = checkpoint["run_metadata"]
     if not isinstance(run_metadata, dict):
         raise RuntimeError("Checkpoint is missing canonical `run_metadata`.")
     return run_metadata
@@ -802,7 +814,9 @@ def main() -> None:
         collate_fn=stage1_collate,
     )
 
-    stage1_metadata = checkpoint.get("stage1_metadata")
+    if "stage1_metadata" not in checkpoint:
+        raise RuntimeError("Checkpoint is missing canonical `stage1_metadata`.")
+    stage1_metadata = checkpoint["stage1_metadata"]
     if not isinstance(stage1_metadata, dict):
         raise RuntimeError("Checkpoint is missing canonical `stage1_metadata`.")
     required_stage1_keys = ["question", "action_dim", "k", "dt"]

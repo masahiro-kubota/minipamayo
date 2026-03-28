@@ -49,6 +49,8 @@ DEFAULT_QUESTION = (
     "Predict the future ego trajectory as action tokens. "
     "Output only the action tokens in order."
 )
+CHECKPOINT_KIND_FULL = "full"
+CHECKPOINT_KIND_MODEL_ONLY = "model_only"
 
 # Practical Stage 1 VRAM notes for Qwen3.5-0.8B on this repo's CARLA-derived data:
 # - Current dataset images are 1280x720. With full image tokens, 12 GB class GPUs still OOM
@@ -454,7 +456,21 @@ def evaluate(
 
 
 def validate_resume_args(args: argparse.Namespace, checkpoint: dict) -> None:
-    checkpoint_args = checkpoint.get("args")
+    if "checkpoint_kind" not in checkpoint:
+        raise RuntimeError("Resume checkpoint is missing canonical `checkpoint_kind`.")
+    checkpoint_kind = checkpoint["checkpoint_kind"]
+    if checkpoint_kind != CHECKPOINT_KIND_FULL:
+        raise RuntimeError(
+            "Resume checkpoint must be a full checkpoint with optimizer and scheduler state. "
+            f"Received checkpoint_kind={checkpoint_kind!r}."
+        )
+    if "optimizer_state_dict" not in checkpoint or "scheduler_state_dict" not in checkpoint:
+        raise RuntimeError(
+            "Resume checkpoint is missing optimizer or scheduler state required for continuation."
+        )
+    if "args" not in checkpoint:
+        raise RuntimeError("Resume checkpoint is missing canonical `args` metadata.")
+    checkpoint_args = checkpoint["args"]
     if not isinstance(checkpoint_args, dict):
         raise RuntimeError("Resume checkpoint is missing canonical `args` metadata.")
     keys_to_match = [
@@ -528,9 +544,8 @@ def best_metric_from_history(metrics_history: list[dict], metric_name: str) -> t
 
 
 def checkpoint_payload(
+    checkpoint_kind: str,
     model,
-    optimizer,
-    scheduler,
     args: argparse.Namespace,
     registry: Stage1TokenRegistry,
     quantizer: ActionQuantizer,
@@ -542,11 +557,10 @@ def checkpoint_payload(
     run_metadata: dict,
 ) -> dict:
     return {
+        "checkpoint_kind": checkpoint_kind,
         "epoch": epoch,
         "global_step": global_step,
         "model_state_dict": {key: value.detach().cpu() for key, value in model.state_dict().items()},
-        "optimizer_state_dict": optimizer.state_dict(),
-        "scheduler_state_dict": scheduler.state_dict(),
         "args": vars(args),
         "metrics_history": metrics_history,
         "token_registry": {
@@ -563,6 +577,72 @@ def checkpoint_payload(
         "initial_eval": initial_eval,
         "run_metadata": run_metadata,
     }
+
+
+def full_checkpoint_payload(
+    model,
+    optimizer,
+    scheduler,
+    args: argparse.Namespace,
+    registry: Stage1TokenRegistry,
+    quantizer: ActionQuantizer,
+    stage1_metadata: dict,
+    initial_eval: dict | None,
+    epoch: int,
+    global_step: int,
+    metrics_history: list[dict],
+    run_metadata: dict,
+) -> dict:
+    payload = checkpoint_payload(
+        checkpoint_kind=CHECKPOINT_KIND_FULL,
+        model=model,
+        args=args,
+        registry=registry,
+        quantizer=quantizer,
+        stage1_metadata=stage1_metadata,
+        initial_eval=initial_eval,
+        epoch=epoch,
+        global_step=global_step,
+        metrics_history=metrics_history,
+        run_metadata=run_metadata,
+    )
+    payload["optimizer_state_dict"] = optimizer.state_dict()
+    payload["scheduler_state_dict"] = scheduler.state_dict()
+    return payload
+
+
+def model_only_checkpoint_payload(
+    model,
+    args: argparse.Namespace,
+    registry: Stage1TokenRegistry,
+    quantizer: ActionQuantizer,
+    stage1_metadata: dict,
+    initial_eval: dict | None,
+    epoch: int,
+    global_step: int,
+    metrics_history: list[dict],
+    run_metadata: dict,
+) -> dict:
+    return checkpoint_payload(
+        checkpoint_kind=CHECKPOINT_KIND_MODEL_ONLY,
+        model=model,
+        args=args,
+        registry=registry,
+        quantizer=quantizer,
+        stage1_metadata=stage1_metadata,
+        initial_eval=initial_eval,
+        epoch=epoch,
+        global_step=global_step,
+        metrics_history=metrics_history,
+        run_metadata=run_metadata,
+    )
+
+
+def load_checkpoint(path: Path) -> dict:
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    if not isinstance(checkpoint, dict):
+        raise RuntimeError(f"Checkpoint must deserialize to a dict: {path}")
+    return checkpoint
 
 
 def maybe_wandb_log(run, data: dict, step: int | None = None) -> None:
@@ -618,7 +698,7 @@ def main() -> None:
                 raise RuntimeError(
                     "`resume_from_checkpoint` must point inside the same `save_dir` so checkpoints, history, and processor stay consistent."
                 )
-            resume_checkpoint = torch.load(resume_checkpoint_path, map_location="cpu")
+            resume_checkpoint = load_checkpoint(resume_checkpoint_path)
             validate_resume_args(args, resume_checkpoint)
             saved_processor_dir = resume_checkpoint_path.parent / "processor"
             if not saved_processor_dir.exists():
@@ -925,10 +1005,8 @@ def main() -> None:
 
             if improved:
                 torch.save(
-                    checkpoint_payload(
+                    model_only_checkpoint_payload(
                         model=model,
-                        optimizer=optimizer,
-                        scheduler=scheduler,
                         args=args,
                         registry=registry,
                         quantizer=quantizer,
@@ -944,7 +1022,7 @@ def main() -> None:
 
             if args.save_every_epochs > 0 and epoch % args.save_every_epochs == 0:
                 torch.save(
-                    checkpoint_payload(
+                    full_checkpoint_payload(
                         model=model,
                         optimizer=optimizer,
                         scheduler=scheduler,
@@ -962,7 +1040,7 @@ def main() -> None:
                 )
 
             torch.save(
-                checkpoint_payload(
+                full_checkpoint_payload(
                     model=model,
                     optimizer=optimizer,
                     scheduler=scheduler,
@@ -1008,10 +1086,8 @@ def main() -> None:
                 break
 
         torch.save(
-            checkpoint_payload(
+            model_only_checkpoint_payload(
                 model=model,
-                optimizer=optimizer,
-                scheduler=scheduler,
                 args=args,
                 registry=registry,
                 quantizer=quantizer,
