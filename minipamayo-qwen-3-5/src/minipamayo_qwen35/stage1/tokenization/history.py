@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import torch
 
+from .registry import format_stage1_token
+
 HISTORY_START_TOKEN = "<|traj_history_start|>"
 HISTORY_PLACEHOLDER_TOKEN = "<|traj_history|>"
 HISTORY_END_TOKEN = "<|traj_history_end|>"
@@ -114,13 +116,15 @@ def yaw_from_rot_mats_torch(rot_mats: torch.Tensor) -> torch.Tensor:
 
 @dataclass(frozen=True)
 class HistoryTrajectoryQuantizer:
-    """Uniform scalar quantizer for ego-frame history `(x, y, yaw)`."""
+    """Alpamayo-like delta-trajectory quantizer for ego-frame history."""
 
     history_steps: int = 16
     n_bins: int = 256
-    x_range: tuple[float, float] = (-20.0, 20.0)
-    y_range: tuple[float, float] = (-20.0, 20.0)
-    yaw_range: tuple[float, float] = (-math.pi, math.pi)
+    x_range: tuple[float, float] = (-4.0, 4.0)
+    y_range: tuple[float, float] = (-4.0, 4.0)
+    z_range: tuple[float, float] = (-10.0, 10.0)
+    yaw_range: tuple[float, float] | None = None
+    quantization_mode: str = "delta_xyz"
 
     @property
     def token_count(self) -> int:
@@ -132,16 +136,30 @@ class HistoryTrajectoryQuantizer:
             history_rot,
             history_steps=self.history_steps,
         )
-        yaw = _yaw_from_rot_mats(rot)
+        if self.quantization_mode == "delta_xyz":
+            del rot
+            xyz_padded = np.pad(xyz, ((1, 0), (0, 0)))
+            delta_xyz = (xyz_padded[1:] - xyz_padded[:-1]).astype(np.float32)
+            components = delta_xyz
+            ranges = (self.x_range, self.y_range, self.z_range)
+        elif self.quantization_mode == "xy_yaw":
+            yaw = _yaw_from_rot_mats(rot)
+            components = np.stack([xyz[:, 0], xyz[:, 1], yaw], axis=-1)
+            ranges = (self.x_range, self.y_range, self.yaw_range or (-math.pi, math.pi))
+        else:
+            raise RuntimeError(
+                f"Unsupported history quantization mode: {self.quantization_mode!r}"
+            )
         bin_ids: list[int] = []
         for step_idx in range(self.history_steps):
-            bin_ids.append(
-                _quantize_scalar(float(xyz[step_idx, 0]), self.x_range, self.n_bins)
-            )
-            bin_ids.append(
-                _quantize_scalar(float(xyz[step_idx, 1]), self.y_range, self.n_bins)
-            )
-            bin_ids.append(_quantize_scalar(float(yaw[step_idx]), self.yaw_range, self.n_bins))
+            for dim_idx, value_range in enumerate(ranges):
+                bin_ids.append(
+                    _quantize_scalar(
+                        float(components[step_idx, dim_idx]),
+                        value_range,
+                        self.n_bins,
+                    )
+                )
         return bin_ids
 
     def metadata(self) -> dict:
@@ -150,15 +168,21 @@ class HistoryTrajectoryQuantizer:
             "n_bins": self.n_bins,
             "x_range": list(self.x_range),
             "y_range": list(self.y_range),
-            "yaw_range": list(self.yaw_range),
+            "z_range": list(self.z_range),
+            "yaw_range": list(self.yaw_range) if self.yaw_range is not None else None,
             "token_count": self.token_count,
-            "token_layout": "per_step_xyz_yaw_scalar_bins_single_traj_group",
+            "quantization_mode": self.quantization_mode,
+            "token_layout": "delta_xyz_scalar_bins_single_traj_group"
+            if self.quantization_mode == "delta_xyz"
+            else "per_step_xy_yaw_scalar_bins_single_traj_group",
         }
 
     def canonical_scalar_ranges(
         self,
     ) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
-        return (self.x_range, self.y_range, self.yaw_range)
+        if self.quantization_mode == "delta_xyz":
+            return (self.x_range, self.y_range, self.z_range)
+        return (self.x_range, self.y_range, self.yaw_range or (-math.pi, math.pi))
 
 
 @dataclass
@@ -166,7 +190,7 @@ class HistoryTokenRegistry:
     """Tokenizer-visible registry for Stage 1 history trajectory tokens."""
 
     n_bins: int = 256
-    token_prefix: str = "hist"
+    token_prefix: str = "i"
     token_strings: list[str] = field(init=False)
     token_ids: list[int] = field(default_factory=list)
     id_to_bin: dict[int, int] = field(default_factory=dict)
@@ -175,7 +199,7 @@ class HistoryTokenRegistry:
     end_token_id: int | None = None
 
     def __post_init__(self) -> None:
-        self.token_strings = [f"<{self.token_prefix}_{i:03d}>" for i in range(self.n_bins)]
+        self.token_strings = [format_stage1_token(self.token_prefix, i) for i in range(self.n_bins)]
 
     def add_to_tokenizer(self, tokenizer) -> int:
         existing_vocab = tokenizer.get_vocab()
@@ -262,15 +286,18 @@ def encode_history_token_id_rows(
 def history_xyz_rot_to_scalars_torch(
     history_xyz: torch.Tensor,
     history_rot: torch.Tensor,
+    *,
+    quantizer: HistoryTrajectoryQuantizer | None = None,
 ) -> torch.Tensor:
     batch_xyz, batch_rot = canonicalize_history_batch_tensors(history_xyz, history_rot)
     squeezed_xyz = batch_xyz[:, 0]
+    if quantizer is None or quantizer.quantization_mode == "delta_xyz":
+        padded_xyz = torch.nn.functional.pad(squeezed_xyz, (0, 0, 1, 0))
+        return padded_xyz[:, 1:] - padded_xyz[:, :-1]
+
     squeezed_rot = batch_rot[:, 0]
     yaw = yaw_from_rot_mats_torch(squeezed_rot).unsqueeze(-1)
-    return torch.stack(
-        [squeezed_xyz[..., 0], squeezed_xyz[..., 1], yaw[..., 0]],
-        dim=-1,
-    )
+    return torch.stack([squeezed_xyz[..., 0], squeezed_xyz[..., 1], yaw[..., 0]], dim=-1)
 
 
 def normalize_history_scalars_torch(
@@ -286,7 +313,10 @@ def normalize_history_scalars_torch(
         [
             [float(quantizer.x_range[0]), float(quantizer.x_range[1])],
             [float(quantizer.y_range[0]), float(quantizer.y_range[1])],
-            [float(quantizer.yaw_range[0]), float(quantizer.yaw_range[1])],
+            [
+                float(quantizer.canonical_scalar_ranges()[2][0]),
+                float(quantizer.canonical_scalar_ranges()[2][1]),
+            ],
         ],
         dtype=history_scalars.dtype,
         device=history_scalars.device,
@@ -317,7 +347,11 @@ def interpolate_history_token_embeddings(
             f"history_xyz.shape={tuple(batch_xyz.shape)!r}\n"
             f"history_steps={history_quantizer.history_steps}"
         )
-    history_scalars = history_xyz_rot_to_scalars_torch(batch_xyz, batch_rot)
+    history_scalars = history_xyz_rot_to_scalars_torch(
+        batch_xyz,
+        batch_rot,
+        quantizer=history_quantizer,
+    )
     normalized = normalize_history_scalars_torch(history_scalars, history_quantizer)
     scaled = normalized.add(1.0).mul(0.5 * float(history_quantizer.n_bins - 1))
     lower_idx = torch.floor(scaled).to(torch.long)

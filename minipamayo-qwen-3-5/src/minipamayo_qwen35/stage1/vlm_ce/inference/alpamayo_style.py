@@ -19,7 +19,7 @@ from pathlib import Path
 
 import torch
 from PIL import Image
-from transformers import AutoModelForImageTextToText
+from transformers import AutoModelForImageTextToText, AutoTokenizer
 
 from ....utils.dynamics import forward_dynamics_batch
 from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
@@ -42,7 +42,14 @@ from ..train import (
     inject_history_inputs_embeds,
     load_checkpoint,
 )
-from .helper import MAX_PIXELS, MIN_PIXELS, SYSTEM_PROMPT, create_message, get_processor, to_device
+from .helper import (
+    MAX_PIXELS,
+    MIN_PIXELS,
+    SYSTEM_PROMPT,
+    create_message,
+    get_processor,
+    to_device,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {
@@ -168,12 +175,7 @@ def main() -> None:
     processor_path = resolve_processor_path(checkpoint_path)
     model_path = str(checkpoint_args["model_path"])
     model_dtype = resolve_dtype(str(checkpoint_args["dtype"]))
-    processor = get_processor(processor_path)
-    processor_settings = collect_processor_settings(
-        processor,
-        requested_min_pixels=MIN_PIXELS,
-        requested_max_pixels=MAX_PIXELS,
-    )
+    tokenizer = AutoTokenizer.from_pretrained(processor_path, trust_remote_code=True)
 
     if "history_registry" not in checkpoint or not isinstance(checkpoint["history_registry"], dict):
         raise RuntimeError("Checkpoint is missing canonical `history_registry` metadata.")
@@ -182,14 +184,21 @@ def main() -> None:
         n_bins=int(history_cfg["n_bins"]),
         token_prefix=str(history_cfg["token_prefix"]),
     )
-    history_registry.add_to_tokenizer(processor.tokenizer)
+    history_registry.add_to_tokenizer(tokenizer)
 
     token_cfg = checkpoint["token_registry"]
     registry = Stage1TokenRegistry(
         n_bins=token_cfg["n_bins"],
         token_prefix=token_cfg["token_prefix"],
     )
-    registry.add_to_tokenizer(processor.tokenizer)
+    registry.add_to_tokenizer(tokenizer)
+
+    processor = get_processor(tokenizer, processor_name=processor_path)
+    processor_settings = collect_processor_settings(
+        processor,
+        requested_min_pixels=MIN_PIXELS,
+        requested_max_pixels=MAX_PIXELS,
+    )
 
     if "history_quantizer" not in checkpoint or not isinstance(
         checkpoint["history_quantizer"], dict
@@ -201,7 +210,13 @@ def main() -> None:
         n_bins=int(history_quantizer_cfg["n_bins"]),
         x_range=tuple(history_quantizer_cfg["x_range"]),
         y_range=tuple(history_quantizer_cfg["y_range"]),
-        yaw_range=tuple(history_quantizer_cfg["yaw_range"]),
+        z_range=tuple(history_quantizer_cfg.get("z_range", (-10.0, 10.0))),
+        yaw_range=(
+            tuple(history_quantizer_cfg["yaw_range"])
+            if history_quantizer_cfg.get("yaw_range") is not None
+            else None
+        ),
+        quantization_mode=str(history_quantizer_cfg.get("quantization_mode", "xy_yaw")),
     )
 
     if "quantizer" not in checkpoint or not isinstance(checkpoint["quantizer"], dict):
@@ -231,7 +246,12 @@ def main() -> None:
     history_prefix = build_history_placeholder(history_quantizer.token_count)
     user_text = f"{history_prefix}\n{stage1_metadata['question']}"
     with Image.open(image_path).convert("RGB") as image:
-        messages = create_message([image], user_text)
+        messages = create_message(
+            [image],
+            user_text,
+            history_token_count=history_quantizer.token_count,
+            include_assistant_prefill=False,
+        )
         inputs = processor.apply_chat_template(
             messages,
             tokenize=True,

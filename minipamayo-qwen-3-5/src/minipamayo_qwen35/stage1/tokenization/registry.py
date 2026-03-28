@@ -5,19 +5,26 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
+import torch
+
+
+def format_stage1_token(prefix: str, index: int) -> str:
+    if prefix == "i":
+        return f"<i{index}>"
+    return f"<{prefix}_{index:03d}>"
 
 @dataclass
 class Stage1TokenRegistry:
     """Owns the extra Stage 1 target tokens added to the tokenizer."""
 
     n_bins: int = 256
-    token_prefix: str = "act"
+    token_prefix: str = "i"
     token_strings: list[str] = field(init=False)
     token_ids: list[int] = field(default_factory=list)
     id_to_bin: dict[int, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        self.token_strings = [f"<{self.token_prefix}_{i:03d}>" for i in range(self.n_bins)]
+        self.token_strings = [format_stage1_token(self.token_prefix, i) for i in range(self.n_bins)]
 
     def add_to_tokenizer(self, tokenizer) -> int:
         existing_vocab = tokenizer.get_vocab()
@@ -55,3 +62,22 @@ class Stage1TokenRegistry:
 
     def decode_action_token_ids(self, token_ids: list[int], quantizer) -> np.ndarray:
         return self.decode_target_token_ids(token_ids, quantizer)
+
+    @property
+    def token_id_min(self) -> int:
+        if not self.token_ids:
+            raise RuntimeError("Token registry is not attached to a tokenizer yet.")
+        return min(self.token_ids)
+
+    @property
+    def token_id_max(self) -> int:
+        if not self.token_ids:
+            raise RuntimeError("Token registry is not attached to a tokenizer yet.")
+        return max(self.token_ids)
+
+    def mask_logits(self, scores: torch.Tensor) -> torch.Tensor:
+        if not self.token_ids:
+            raise RuntimeError("Token registry is not attached to a tokenizer yet.")
+        masked = scores.clone()
+        masked[:, self.token_ids] = torch.finfo(masked.dtype).min
+        return masked

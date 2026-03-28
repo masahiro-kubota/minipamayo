@@ -8,12 +8,13 @@ import sys
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 
 from ....sequence.stage3_builder import build_stage2_prompt_text
 from ....stage1.expert_cfm.action_space import UnicycleAccelCurvatureActionSpace
 from ....stage1.expert_cfm.diffusion import FlowMatchingDiffusion
 from ....stage1.expert_cfm.model import load_action_expert_from_checkpoint
-from ....stage1.prompt import TRAJ_FUTURE_START_TOKEN
+from ....stage1.prompt import COT_END_TOKEN, TRAJ_FUTURE_START_TOKEN
 from ....stage1.vlm_ce.eval import load_components
 from ....stage1.vlm_ce.train import (
     append_token_to_model_inputs,
@@ -54,6 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image-max-pixels", type=int, default=CANONICAL_IMAGE_MAX_PIXELS)
     parser.add_argument("--max-reasoning-tokens", type=int, default=256)
     parser.add_argument("--flow-steps", type=int, default=10)
+    parser.add_argument("--temperature", type=float, default=0.6)
+    parser.add_argument("--top-p", type=float, default=0.98)
+    parser.add_argument("--top-k", type=int, default=0)
     return parser
 
 
@@ -107,24 +111,78 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`max_reasoning_tokens` must be > 0.")
     if args.flow_steps <= 0:
         raise RuntimeError("`flow_steps` must be > 0.")
+    if args.temperature <= 0.0:
+        raise RuntimeError("`temperature` must be > 0.")
+    if not (0.0 < args.top_p <= 1.0):
+        raise RuntimeError("`top_p` must be in (0, 1].")
+    if args.top_k < 0:
+        raise RuntimeError("`top_k` must be >= 0.")
     validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
     return args
+
+
+def _apply_top_k_top_p_filter(
+    logits: torch.Tensor,
+    *,
+    top_k: int,
+    top_p: float,
+) -> torch.Tensor:
+    filtered = logits.clone()
+    if top_k > 0:
+        kth_values = torch.topk(filtered, k=min(top_k, filtered.shape[-1]), dim=-1).values[:, -1]
+        filtered[filtered < kth_values.unsqueeze(-1)] = torch.finfo(filtered.dtype).min
+    if top_p < 1.0:
+        sorted_logits, sorted_indices = torch.sort(filtered, descending=True, dim=-1)
+        sorted_probs = F.softmax(sorted_logits, dim=-1)
+        cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+        sorted_remove_mask = cumulative_probs > top_p
+        sorted_remove_mask[:, 1:] = sorted_remove_mask[:, :-1].clone()
+        sorted_remove_mask[:, 0] = False
+        remove_mask = torch.zeros_like(sorted_remove_mask)
+        remove_mask.scatter_(1, sorted_indices, sorted_remove_mask)
+        filtered[remove_mask] = torch.finfo(filtered.dtype).min
+    return filtered
+
+
+def sample_next_token(
+    logits: torch.Tensor,
+    *,
+    traj_registry,
+    temperature: float,
+    top_p: float,
+    top_k: int,
+) -> torch.Tensor:
+    filtered = traj_registry.mask_logits(logits)
+    filtered = filtered / temperature
+    filtered = _apply_top_k_top_p_filter(filtered, top_k=top_k, top_p=top_p)
+    probs = F.softmax(filtered, dim=-1)
+    return torch.multinomial(probs, num_samples=1).squeeze(-1)
 
 
 def greedy_generate_until_token(
     *,
     model,
     prompt_inputs: dict,
+    traj_registry,
     stop_token_id: int,
     max_new_tokens: int,
     model_dtype: torch.dtype,
+    temperature: float,
+    top_p: float,
+    top_k: int,
 ) -> tuple[torch.Tensor, dict]:
     current_inputs = dict(prompt_inputs)
     generated: list[torch.Tensor] = []
     for _ in range(max_new_tokens):
         with torch.autocast("cuda", dtype=model_dtype):
             outputs = model(**model_forward_inputs(current_inputs))
-        next_token = outputs.logits[:, -1, :].argmax(dim=-1)
+        next_token = sample_next_token(
+            outputs.logits[:, -1, :],
+            traj_registry=traj_registry,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+        )
         generated.append(next_token)
         append_token_to_model_inputs(model, current_inputs, next_token)
         if torch.all(next_token == stop_token_id):
@@ -159,7 +217,7 @@ def main() -> None:
         stage1_checkpoint,
         model,
         processor,
-        _registry,
+        registry,
         history_registry,
         history_quantizer,
         _quantizer,
@@ -217,12 +275,19 @@ def main() -> None:
     reasoning_token_ids, handed_off_inputs = greedy_generate_until_token(
         model=model,
         prompt_inputs=prompt_inputs,
+        traj_registry=registry,
         stop_token_id=stop_token_id,
         max_new_tokens=args.max_reasoning_tokens,
         model_dtype=model_dtype,
+        temperature=args.temperature,
+        top_p=args.top_p,
+        top_k=args.top_k,
     )
     stop_mask = reasoning_token_ids != stop_token_id
     decoded_reasoning_ids = reasoning_token_ids[0][stop_mask[0]].detach().cpu().tolist()
+    cot_end_token_id = int(processor.tokenizer.convert_tokens_to_ids(COT_END_TOKEN))
+    if decoded_reasoning_ids and decoded_reasoning_ids[-1] == cot_end_token_id:
+        decoded_reasoning_ids = decoded_reasoning_ids[:-1]
     reasoning_text = processor.tokenizer.decode(
         decoded_reasoning_ids,
         skip_special_tokens=False,
@@ -277,6 +342,9 @@ def main() -> None:
             "text": reasoning_text,
             "token_ids": reasoning_token_ids[0].detach().cpu().tolist(),
             "stop_token_id": stop_token_id,
+            "temperature": args.temperature,
+            "top_p": args.top_p,
+            "top_k": args.top_k,
         },
         "prediction": {
             "action": pred_action[0].detach().cpu().tolist(),

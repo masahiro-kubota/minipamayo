@@ -227,7 +227,6 @@ def load_components(
         "n_bins",
         "x_range",
         "y_range",
-        "yaw_range",
     ]
     missing_history_quantizer_keys = [
         key for key in required_history_quantizer_keys if key not in history_quantizer_cfg
@@ -242,7 +241,13 @@ def load_components(
         n_bins=int(history_quantizer_cfg["n_bins"]),
         x_range=tuple(history_quantizer_cfg["x_range"]),
         y_range=tuple(history_quantizer_cfg["y_range"]),
-        yaw_range=tuple(history_quantizer_cfg["yaw_range"]),
+        z_range=tuple(history_quantizer_cfg.get("z_range", (-10.0, 10.0))),
+        yaw_range=(
+            tuple(history_quantizer_cfg["yaw_range"])
+            if history_quantizer_cfg.get("yaw_range") is not None
+            else None
+        ),
+        quantization_mode=str(history_quantizer_cfg.get("quantization_mode", "xy_yaw")),
     )
 
     if "quantizer" not in checkpoint or not isinstance(checkpoint["quantizer"], dict):
