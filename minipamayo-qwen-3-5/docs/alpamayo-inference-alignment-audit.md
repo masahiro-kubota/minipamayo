@@ -43,58 +43,7 @@
 - ただし Alpamayo 推論コードと同じ「reasoning rollout のあと expert に handoff」が、
   いまの smoke 学習済み重みで安定成立するところまではまだ確認できていない
 
-### 2. `expert_cfm` 本体の exact 同型性
-
-`expert_cfm` は API と大枠構造を Alpamayo 側に寄せたが、
-**公開実装と exact 同型** とまではまだ言えない。
-
-比較対象:
-
-- Alpamayo:
-  - `models.action_in_proj`
-  - `models.alpamayo_r1`
-  - expert transformer config
-- こちら:
-  - `stage1/expert_cfm/model.py`
-
-残っている差分:
-
-- expert text config / hidden config の作り方
-- action in projection の細部ハイパーパラメータ
-- prompt cache の slicing / attention mask の扱い
-- `hydra` config からそのまま instantiate する構成ではない
-
-影響:
-
-- 役割は近いが、expert そのものの capacity と数値特性が一致している保証はない
-- trajectory 品質差が出たときに、data/recipe 以外に expert 本体差も候補に残る
-
-### 3. `action_space` の数値契約
-
-`action_space` の API surface 自体はかなり揃ったが、
-**数値の中身** はまだ Alpamayo の `UnicycleAccelCurvatureActionSpace` と一致していない。
-
-比較対象:
-
-- Alpamayo:
-  - `action_space/unicycle_accel_curvature.py`
-  - `action_space/utils.py`
-  - `geometry/rotation.py`
-- こちら:
-  - `stage1/expert_cfm/action_space.py`
-
-残っている差分:
-
-- smoothing / ridge / lambda を使った trajectory-to-action 推定ではない
-- `theta_smooth`, `dxy_theta_to_v`, `solve_xs_eq_y` などの数値ルーチンがない
-- rotation / geometry helper 群を共有していない
-
-影響:
-
-- 同じ future trajectory から得る `(a, kappa)` が Alpamayo と完全一致しない
-- 同じ predicted action を rollout しても、ADE / FDE に action-space 由来の差が混じる
-
-### 4. 依存ライブラリ stack
+### 2. 依存ライブラリ stack
 
 まだ一致していない主要差分:
 
@@ -125,11 +74,6 @@
 
 ### 優先度 B
 
-- `expert_cfm` の exact 同型性を高める
-- `action_space` の数値契約を Alpamayo 側に寄せる
-
-### 優先度 C
-
 - `transformers` と build backend を含む依存 stack をさらに揃える
 
 ## ひとことで言うと
@@ -137,8 +81,7 @@
 過去画像なしとバックボーン差分を除けば、
 `stage1` / `stage2` の **配線** はかなり Alpamayo に寄っている。
 
-いま残っているのは主にこの 4 つである。
+いま残っているのは主にこの 2 つである。
 
 - `stage2` free-running handoff の成立性
-- expert / action-space の exact 数値契約
 - 依存ライブラリ stack

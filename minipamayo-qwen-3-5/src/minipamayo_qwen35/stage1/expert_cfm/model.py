@@ -121,6 +121,10 @@ class Stage1ActionExpertConfig:
     k: int
     action_dims: tuple[int, int]
     expert_text_config: dict
+    expert_cfg: dict
+    action_in_proj_cfg: dict
+    action_out_proj_cfg: dict
+    keep_same_dtype: bool
     expert_non_causal_attention: bool
     num_fourier_feats: int
     fourier_max_freq: float
@@ -227,6 +231,7 @@ class Stage1ActionExpert(nn.Module):
         fourier_max_freq: float = 100.0,
         mlp_hidden_size: int = 1024,
         mlp_num_layers: int = 4,
+        keep_same_dtype: bool = True,
         accel_mean: float = 0.0,
         accel_std: float = 1.0,
         kappa_mean: float = 0.0,
@@ -251,6 +256,7 @@ class Stage1ActionExpert(nn.Module):
         self.fourier_max_freq = float(fourier_max_freq)
         self.mlp_hidden_size = int(mlp_hidden_size)
         self.mlp_num_layers = int(mlp_num_layers)
+        self.keep_same_dtype = bool(keep_same_dtype)
         self.expert_text_config = dict(expert_text_config)
 
         text_config = build_text_config(expert_text_config)
@@ -270,6 +276,11 @@ class Stage1ActionExpert(nn.Module):
         )
         self.action_out_proj = nn.Linear(hidden_size, self.action_dims[-1])
 
+        if self.keep_same_dtype:
+            expert_dtype = self.expert.dtype
+            self.action_in_proj = self.action_in_proj.to(dtype=expert_dtype)
+            self.action_out_proj = self.action_out_proj.to(dtype=expert_dtype)
+
         self.register_buffer("accel_mean", torch.tensor(float(accel_mean), dtype=torch.float32))
         self.register_buffer("accel_std", torch.tensor(float(accel_std), dtype=torch.float32))
         self.register_buffer("kappa_mean", torch.tensor(float(kappa_mean), dtype=torch.float32))
@@ -284,6 +295,18 @@ class Stage1ActionExpert(nn.Module):
             k=self.k,
             action_dims=self.action_dims,
             expert_text_config=self.expert_text_config,
+            expert_cfg=dict(self.expert_text_config),
+            action_in_proj_cfg={
+                "_target_": "minipamayo_qwen35.stage1.expert_cfm.model.PerWaypointActionInProjV2",
+                "num_enc_layers": self.mlp_num_layers,
+                "hidden_size": self.mlp_hidden_size,
+                "max_freq": self.fourier_max_freq,
+                "num_fourier_feats": self.num_fourier_feats,
+            },
+            action_out_proj_cfg={
+                "_target_": "torch.nn.Linear",
+            },
+            keep_same_dtype=self.keep_same_dtype,
             expert_non_causal_attention=self.expert_non_causal_attention,
             num_fourier_feats=self.num_fourier_feats,
             fourier_max_freq=self.fourier_max_freq,
@@ -471,6 +494,7 @@ def load_action_expert_from_checkpoint(
         fourier_max_freq=float(expert_config["fourier_max_freq"]),
         mlp_hidden_size=int(expert_config["mlp_hidden_size"]),
         mlp_num_layers=int(expert_config["mlp_num_layers"]),
+        keep_same_dtype=bool(expert_config.get("keep_same_dtype", True)),
         accel_mean=float(action_stats["accel_mean"]),
         accel_std=float(action_stats["accel_std"]),
         kappa_mean=float(action_stats["kappa_mean"]),

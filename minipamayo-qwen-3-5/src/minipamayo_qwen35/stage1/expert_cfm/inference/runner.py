@@ -149,10 +149,14 @@ def main() -> None:
         raise RuntimeError("Stage 1B checkpoint metadata is missing canonical `dt`.")
     dt = float(stage1b_metadata["dt"])
     diffusion = FlowMatchingDiffusion(n_steps=args.flow_steps)
-    action_space = UnicycleAccelCurvatureActionSpace(
-        k=int(stage1b_metadata["k"]) if "k" in stage1b_metadata else int(sample["action"].shape[0] // 2),
-        dt=dt,
+    action_space_cfg = dict(stage1b_metadata.get("action_space_cfg") or {})
+    action_space_cfg.pop("_target_", None)
+    action_space_cfg.setdefault(
+        "n_waypoints",
+        int(stage1b_metadata["k"]) if "k" in stage1b_metadata else int(sample["action"].shape[0] // 2),
     )
+    action_space_cfg.setdefault("dt", dt)
+    action_space = UnicycleAccelCurvatureActionSpace(**action_space_cfg)
     pred_action = diffusion.sample(
         expert=expert,
         prompt_cache=prompt_cache,
