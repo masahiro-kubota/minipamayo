@@ -3,10 +3,10 @@ __pycache__/
 *.pyc
 src/*.egg-info/
 src/**/*.egg-info/
-checkpoints/
+checkpoints
 wandb/
-datasets/raw/
-datasets/processed/
-datasets/splits/
+datasets/raw
+datasets/processed
+datasets/splits
 artifacts/eval_stage1_spec_smoke/
 20260327_211943_town01_all_intersections_loop_expert_eval_4f7638a26db5/
