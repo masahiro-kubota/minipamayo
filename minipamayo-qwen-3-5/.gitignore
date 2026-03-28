@@ -9,6 +9,7 @@ datasets/raw
 datasets/processed
 datasets/splits
 artifacts/eval_stage1_spec_smoke/
+artifacts/inference/
 20260327_211943_town01_all_intersections_loop_expert_eval_4f7638a26db5/
 !env/
 !env/cuda-12.8.sh
