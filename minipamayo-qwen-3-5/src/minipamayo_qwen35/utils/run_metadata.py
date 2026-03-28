@@ -140,16 +140,28 @@ def collect_gpu_info(device: torch.device) -> dict[str, Any]:
     return info
 
 
-def collect_processor_settings(processor) -> dict[str, Any]:
+def collect_processor_settings(
+    processor,
+    *,
+    requested_min_pixels: int | None = None,
+    requested_max_pixels: int | None = None,
+) -> dict[str, Any]:
     image_processor = getattr(processor, "image_processor", None)
     if image_processor is None:
         return {}
 
+    size = getattr(image_processor, "size", None)
+    if size is not None:
+        size = dict(size)
+
     return {
         "processor_class": processor.__class__.__name__,
         "image_processor_class": image_processor.__class__.__name__,
+        "requested_min_pixels": requested_min_pixels,
+        "requested_max_pixels": requested_max_pixels,
         "min_pixels": getattr(image_processor, "min_pixels", None),
         "max_pixels": getattr(image_processor, "max_pixels", None),
+        "size": size,
         "patch_size": getattr(image_processor, "patch_size", None),
         "temporal_patch_size": getattr(image_processor, "temporal_patch_size", None),
         "merge_size": getattr(image_processor, "merge_size", None),

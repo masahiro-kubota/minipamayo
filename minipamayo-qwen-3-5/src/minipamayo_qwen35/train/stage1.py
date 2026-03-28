@@ -29,12 +29,19 @@ from ..tokens.action_quantizer import ActionQuantizer
 from ..tokens.token_registry import Stage1TokenRegistry
 from ..utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
 from ..utils.preflight import collect_gpu_preflight_snapshot, enforce_training_prerequisites
+from ..utils.run_metadata import (
+    collect_dataset_view_fingerprint,
+    collect_git_metadata,
+    collect_gpu_info,
+    collect_processor_settings,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG_PATH_KEYS = {
     "dataset_jsonl",
     "val_jsonl",
     "model_path",
+    "resume_from_checkpoint",
     "save_dir",
 }
 
@@ -72,13 +79,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--warmup-ratio", type=float, default=0.05)
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
+    parser.add_argument("--early-stopping-patience", type=int, default=0)
+    parser.add_argument("--early-stopping-min-delta", type=float, default=0.0)
     parser.add_argument("--val-fraction", type=float, default=0.2)
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--log-every", type=int, default=10)
+    parser.add_argument("--resume-from-checkpoint", type=str, default="")
     parser.add_argument("--save-every-epochs", type=int, default=0)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--dtype", type=str, default="bf16", choices=["bf16", "fp16"])
+    parser.add_argument("--image-min-pixels", type=int, default=0)
+    parser.add_argument("--image-max-pixels", type=int, default=0)
     parser.add_argument("--question", type=str, default=DEFAULT_QUESTION)
     parser.add_argument("--wandb-project", type=str, default="minipamayo-qwen35")
     parser.add_argument("--wandb-entity", type=str, default="")
@@ -144,6 +156,14 @@ def parse_args() -> argparse.Namespace:
     args.config_args = config_args
     if not args.dataset_jsonl:
         raise RuntimeError("`dataset_jsonl` must be defined in the config JSON.")
+    if args.early_stopping_patience < 0:
+        raise RuntimeError("`early_stopping_patience` must be >= 0.")
+    if args.early_stopping_min_delta < 0:
+        raise RuntimeError("`early_stopping_min_delta` must be >= 0.")
+    if args.image_min_pixels < 0 or args.image_max_pixels < 0:
+        raise RuntimeError("`image_min_pixels` and `image_max_pixels` must be >= 0.")
+    if args.image_min_pixels > 0 and args.image_max_pixels > 0 and args.image_min_pixels > args.image_max_pixels:
+        raise RuntimeError("`image_min_pixels` must be <= `image_max_pixels` when both are set.")
     return args
 
 
@@ -171,6 +191,15 @@ def build_prompt_text(processor, question: str) -> str:
     )
 
 
+def build_processor_kwargs(image_min_pixels: int, image_max_pixels: int) -> dict:
+    kwargs = {}
+    if image_min_pixels > 0:
+        kwargs["min_pixels"] = image_min_pixels
+    if image_max_pixels > 0:
+        kwargs["max_pixels"] = image_max_pixels
+    return kwargs
+
+
 def move_inputs_to_device(batch: dict, device: torch.device) -> dict:
     out = {}
     for key, value in batch.items():
@@ -191,6 +220,24 @@ def release_cuda_memory() -> None:
         torch.cuda.empty_cache()
 
 
+def move_value_to_device(value, device: torch.device):
+    if isinstance(value, torch.Tensor):
+        return value.to(device)
+    if isinstance(value, dict):
+        return {key: move_value_to_device(item, device) for key, item in value.items()}
+    if isinstance(value, list):
+        return [move_value_to_device(item, device) for item in value]
+    if isinstance(value, tuple):
+        return tuple(move_value_to_device(item, device) for item in value)
+    return value
+
+
+def move_optimizer_state_to_device(optimizer, device: torch.device) -> None:
+    for state in optimizer.state.values():
+        for key, value in list(state.items()):
+            state[key] = move_value_to_device(value, device)
+
+
 def log_gpu_preflight(device: torch.device) -> dict:
     device_index = device.index if device.index is not None else torch.cuda.current_device()
     snapshot = collect_gpu_preflight_snapshot(gpu_index=device_index)
@@ -208,6 +255,21 @@ def log_gpu_preflight(device: torch.device) -> dict:
             )
         )
     return snapshot
+
+
+def write_run_config(save_dir: Path, args: argparse.Namespace, run_metadata: dict) -> None:
+    with (save_dir / "run_config.json").open("w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "config_json": args.config_json,
+                "config_payload": args.config_payload,
+                "resolved_args": vars(args),
+                "run_metadata": run_metadata,
+            },
+            f,
+            indent=2,
+            ensure_ascii=False,
+        )
 
 
 def stage1_collate(samples: list[dict]) -> dict:
@@ -389,6 +451,54 @@ def evaluate(
     }
 
 
+def validate_resume_args(args: argparse.Namespace, checkpoint: dict) -> None:
+    checkpoint_args = checkpoint.get("args", {})
+    defaults = {
+        "val_jsonl": "",
+        "image_min_pixels": 0,
+        "image_max_pixels": 0,
+    }
+    keys_to_match = [
+        "dataset_jsonl",
+        "val_jsonl",
+        "model_path",
+        "dtype",
+        "gradient_checkpointing",
+        "image_min_pixels",
+        "image_max_pixels",
+    ]
+    mismatches = []
+    for key in keys_to_match:
+        checkpoint_value = checkpoint_args.get(key, defaults.get(key))
+        current_value = getattr(args, key)
+        if checkpoint_value != current_value:
+            mismatches.append(f"{key}: checkpoint={checkpoint_value!r}, config={current_value!r}")
+    if mismatches:
+        raise RuntimeError(
+            "Resume checkpoint settings do not match the current config:\n" + "\n".join(mismatches)
+        )
+
+
+def metric_improved(current: float, best: float, min_delta: float) -> bool:
+    if math.isinf(best):
+        return True
+    return current < (best - min_delta)
+
+
+def best_metric_from_history(metrics_history: list[dict], metric_name: str) -> tuple[float, int]:
+    best_metric = float("inf")
+    best_epoch = 0
+    for metrics in metrics_history:
+        value = metrics.get(metric_name)
+        if value is None:
+            continue
+        value = float(value)
+        if value < best_metric:
+            best_metric = value
+            best_epoch = int(metrics.get("epoch", 0))
+    return best_metric, best_epoch
+
+
 def checkpoint_payload(
     model,
     optimizer,
@@ -401,6 +511,7 @@ def checkpoint_payload(
     epoch: int,
     global_step: int,
     metrics_history: list[dict],
+    run_metadata: dict,
 ) -> dict:
     return {
         "epoch": epoch,
@@ -422,6 +533,7 @@ def checkpoint_payload(
         },
         "stage1_metadata": stage1_metadata,
         "initial_eval": initial_eval,
+        "run_metadata": run_metadata,
     }
 
 
@@ -454,28 +566,39 @@ def main() -> None:
         if device.type != "cuda":
             raise RuntimeError("This Stage 1 trainer is intended to run on CUDA.")
         gpu_preflight = log_gpu_preflight(device)
+        gpu_info = collect_gpu_info(device)
+        git_metadata = collect_git_metadata(Path(__file__).resolve().parent)
         set_seed(args.seed)
 
         train_loader, val_loader, train_size, val_size = build_dataloaders(args)
         if len(train_loader) == 0:
             raise RuntimeError("Train DataLoader is empty.")
+        train_dataset_fingerprint = collect_dataset_view_fingerprint(train_loader.dataset)
+        val_dataset_fingerprint = collect_dataset_view_fingerprint(val_loader.dataset) if val_loader is not None else None
 
         save_dir = Path(args.save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
-        with (save_dir / "run_config.json").open("w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "config_json": args.config_json,
-                    "config_payload": args.config_payload,
-                    "resolved_args": vars(args),
-                },
-                f,
-                indent=2,
-                ensure_ascii=False,
-            )
+
+        resume_checkpoint = None
+        resume_checkpoint_path = None
+        processor_source = args.model_path
+        if args.resume_from_checkpoint:
+            resume_checkpoint_path = Path(args.resume_from_checkpoint).resolve()
+            if not resume_checkpoint_path.exists():
+                raise RuntimeError(f"Resume checkpoint does not exist: {resume_checkpoint_path}")
+            if resume_checkpoint_path.parent != save_dir.resolve():
+                raise RuntimeError(
+                    "`resume_from_checkpoint` must point inside the same `save_dir` so checkpoints, history, and processor stay consistent."
+                )
+            resume_checkpoint = torch.load(resume_checkpoint_path, map_location="cpu")
+            validate_resume_args(args, resume_checkpoint)
+            saved_processor_dir = resume_checkpoint_path.parent / "processor"
+            if saved_processor_dir.exists():
+                processor_source = str(saved_processor_dir)
 
         load_start = time.perf_counter()
-        processor = AutoProcessor.from_pretrained(args.model_path, trust_remote_code=True)
+        processor_kwargs = build_processor_kwargs(args.image_min_pixels, args.image_max_pixels)
+        processor = AutoProcessor.from_pretrained(processor_source, trust_remote_code=True, **processor_kwargs)
         model_dtype = torch.bfloat16 if args.dtype == "bf16" else torch.float16
         model = AutoModelForImageTextToText.from_pretrained(
             args.model_path,
@@ -487,7 +610,15 @@ def main() -> None:
         registry = Stage1TokenRegistry(n_bins=quantizer.n_bins)
         added = registry.add_to_tokenizer(processor.tokenizer)
         stage1_metadata = build_stage1_metadata(train_loader.dataset, args, registry, quantizer)
+        processor_settings = collect_processor_settings(
+            processor,
+            requested_min_pixels=args.image_min_pixels or None,
+            requested_max_pixels=args.image_max_pixels or None,
+        )
+        stage1_metadata["processor_settings"] = processor_settings
         model.resize_token_embeddings(len(processor.tokenizer))
+        if resume_checkpoint is not None:
+            model.load_state_dict(resume_checkpoint["model_state_dict"])
         model.config.use_cache = False
         if args.gradient_checkpointing:
             model.gradient_checkpointing_enable()
@@ -515,25 +646,76 @@ def main() -> None:
 
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
         prompt_text = build_prompt_text(processor, args.question)
-
-        initial_eval_split = "val" if val_loader is not None else "train"
-        initial_eval_loader = val_loader if val_loader is not None else train_loader
-        initial_eval = evaluate(
-            model=model,
-            dataloader=initial_eval_loader,
-            processor=processor,
-            registry=registry,
-            quantizer=quantizer,
-            prompt_text=prompt_text,
-            device=device,
-            model_dtype=model_dtype,
-        )
-        release_cuda_memory()
-
-        metrics_history: list[dict] = []
-        best_metric = float("inf")
         best_metric_name = "val_loss" if val_loader is not None else "train_loss"
-        global_step = 0
+        initial_eval_split = "val" if val_loader is not None else "train"
+        run_metadata = {
+            "git": git_metadata,
+            "gpu": gpu_info,
+            "gpu_preflight": gpu_preflight,
+            "datasets": {
+                "train": train_dataset_fingerprint,
+                "val": val_dataset_fingerprint,
+            },
+            "processor": processor_settings,
+            "resume": {
+                "requested": bool(args.resume_from_checkpoint),
+                "resume_from_checkpoint": str(resume_checkpoint_path) if resume_checkpoint_path is not None else None,
+                "resumed": resume_checkpoint is not None,
+                "checkpoint_epoch": int(resume_checkpoint.get("epoch", 0)) if resume_checkpoint is not None else 0,
+                "checkpoint_global_step": int(resume_checkpoint.get("global_step", 0)) if resume_checkpoint is not None else 0,
+            },
+        }
+        write_run_config(save_dir, args, run_metadata)
+
+        if resume_checkpoint is not None:
+            optimizer.load_state_dict(resume_checkpoint["optimizer_state_dict"])
+            scheduler.load_state_dict(resume_checkpoint["scheduler_state_dict"])
+            move_optimizer_state_to_device(optimizer, device)
+            initial_eval = resume_checkpoint.get("initial_eval")
+            metrics_history = list(resume_checkpoint.get("metrics_history", []))
+            global_step = int(resume_checkpoint.get("global_step", 0))
+            start_epoch = int(resume_checkpoint.get("epoch", 0)) + 1
+            best_metric, best_epoch = best_metric_from_history(metrics_history, best_metric_name)
+            last_epoch = int(metrics_history[-1]["epoch"]) if metrics_history else 0
+            epochs_without_improvement = max(0, last_epoch - best_epoch)
+        else:
+            initial_eval_loader = val_loader if val_loader is not None else train_loader
+            initial_eval = evaluate(
+                model=model,
+                dataloader=initial_eval_loader,
+                processor=processor,
+                registry=registry,
+                quantizer=quantizer,
+                prompt_text=prompt_text,
+                device=device,
+                model_dtype=model_dtype,
+            )
+            release_cuda_memory()
+            metrics_history = []
+            global_step = 0
+            start_epoch = 1
+            best_metric = float("inf")
+            best_epoch = 0
+            epochs_without_improvement = 0
+
+        if initial_eval is None:
+            initial_eval_loader = val_loader if val_loader is not None else train_loader
+            initial_eval = evaluate(
+                model=model,
+                dataloader=initial_eval_loader,
+                processor=processor,
+                registry=registry,
+                quantizer=quantizer,
+                prompt_text=prompt_text,
+                device=device,
+                model_dtype=model_dtype,
+            )
+            release_cuda_memory()
+
+        if start_epoch > args.max_epochs:
+            raise RuntimeError(
+                f"Resume checkpoint is already at epoch {start_epoch - 1}, which is >= configured max_epochs={args.max_epochs}."
+            )
 
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats(device)
@@ -542,14 +724,19 @@ def main() -> None:
             "event": "stage1_setup",
             "config_json": args.config_json or None,
             "run_config_path": str(save_dir / "run_config.json"),
-            "gpu_preflight": gpu_preflight,
+            "run_metadata": run_metadata,
             "train_size": train_size,
             "val_size": val_size,
             "batch_size": args.batch_size,
             "grad_accum_steps": args.grad_accum_steps,
             "max_epochs": args.max_epochs,
+            "start_epoch": start_epoch,
             "dtype": args.dtype,
             "gradient_checkpointing": args.gradient_checkpointing,
+            "image_min_pixels": args.image_min_pixels or None,
+            "image_max_pixels": args.image_max_pixels or None,
+            "early_stopping_patience": args.early_stopping_patience,
+            "early_stopping_min_delta": args.early_stopping_min_delta,
             "total_vocab_size": len(processor.tokenizer),
             "added_action_tokens": added,
             "model_load_elapsed_s": round(load_elapsed, 3),
@@ -574,12 +761,16 @@ def main() -> None:
             "setup/val_size": val_size,
             "setup/batch_size": args.batch_size,
             "setup/grad_accum_steps": args.grad_accum_steps,
+            "setup/start_epoch": start_epoch,
             "setup/total_vocab_size": len(processor.tokenizer),
             "setup/added_action_tokens": added,
             "setup/model_load_elapsed_s": round(load_elapsed, 3),
             "setup/k": stage1_metadata["k"],
             "setup/dt": stage1_metadata["dt"],
             "setup/n_bins": stage1_metadata["n_bins"],
+            "setup/image_min_pixels": args.image_min_pixels,
+            "setup/image_max_pixels": args.image_max_pixels,
+            "setup/resumed": resume_checkpoint is not None,
             f"baseline/{initial_eval_split}_loss": initial_eval["loss"],
             f"baseline/{initial_eval_split}_token_accuracy": initial_eval["token_accuracy"],
         }
@@ -593,7 +784,10 @@ def main() -> None:
             )
         maybe_wandb_log(wandb_run, setup_wandb_payload, step=0)
 
-        for epoch in range(1, args.max_epochs + 1):
+        stop_reason = "max_epochs"
+        completed_epochs = start_epoch - 1
+
+        for epoch in range(start_epoch, args.max_epochs + 1):
             epoch_start = time.perf_counter()
             train_loss_total = 0.0
             train_batches = 0
@@ -671,6 +865,14 @@ def main() -> None:
                 val_accuracy = None
                 metric_to_track = train_loss
 
+            improved = metric_improved(metric_to_track, best_metric, args.early_stopping_min_delta)
+            if improved:
+                best_metric = metric_to_track
+                best_epoch = epoch
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+
             epoch_metrics = {
                 "epoch": epoch,
                 "global_step": global_step,
@@ -678,6 +880,12 @@ def main() -> None:
                 "train_token_accuracy": train_accuracy,
                 "val_loss": val_loss,
                 "val_token_accuracy": val_accuracy,
+                "metric_name": best_metric_name,
+                "metric_to_track": metric_to_track,
+                "improved": improved,
+                "best_metric": best_metric,
+                "best_epoch": best_epoch,
+                "epochs_without_improvement": epochs_without_improvement,
                 "lr": scheduler.get_last_lr()[0],
                 "epoch_elapsed_s": round(time.perf_counter() - epoch_start, 3),
                 "optimizer_steps_this_epoch": optimizer_steps_this_epoch,
@@ -691,6 +899,8 @@ def main() -> None:
                 "train/epoch_elapsed_s": epoch_metrics["epoch_elapsed_s"],
                 "train/optimizer_steps_this_epoch": optimizer_steps_this_epoch,
                 "train/lr_epoch_end": scheduler.get_last_lr()[0],
+                "summary/best_metric_so_far": best_metric,
+                "summary/epochs_without_improvement": epochs_without_improvement,
             }
             if val_loss is not None:
                 epoch_log["val/loss"] = val_loss
@@ -698,8 +908,7 @@ def main() -> None:
                 epoch_log["val/token_accuracy"] = val_accuracy
             maybe_wandb_log(wandb_run, epoch_log, step=global_step)
 
-            if metric_to_track < best_metric:
-                best_metric = metric_to_track
+            if improved:
                 torch.save(
                     checkpoint_payload(
                         model=model,
@@ -713,6 +922,7 @@ def main() -> None:
                         epoch=epoch,
                         global_step=global_step,
                         metrics_history=metrics_history,
+                        run_metadata=run_metadata,
                     ),
                     save_dir / "best.pt",
                 )
@@ -731,12 +941,56 @@ def main() -> None:
                         epoch=epoch,
                         global_step=global_step,
                         metrics_history=metrics_history,
+                        run_metadata=run_metadata,
                     ),
                     save_dir / f"epoch_{epoch:03d}.pt",
                 )
 
+            torch.save(
+                checkpoint_payload(
+                    model=model,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    args=args,
+                    registry=registry,
+                    quantizer=quantizer,
+                    stage1_metadata=stage1_metadata,
+                    initial_eval=initial_eval,
+                    epoch=epoch,
+                    global_step=global_step,
+                    metrics_history=metrics_history,
+                    run_metadata=run_metadata,
+                ),
+                save_dir / "last.pt",
+            )
+
             with (save_dir / "history.json").open("w", encoding="utf-8") as f:
                 json.dump(metrics_history, f, indent=2, ensure_ascii=False)
+            completed_epochs = epoch
+
+            if args.early_stopping_patience > 0 and epochs_without_improvement >= args.early_stopping_patience:
+                stop_reason = "early_stopping"
+                early_stop_payload = {
+                    "event": "early_stopping",
+                    "epoch": epoch,
+                    "best_metric_name": best_metric_name,
+                    "best_metric": best_metric,
+                    "best_epoch": best_epoch,
+                    "patience": args.early_stopping_patience,
+                    "min_delta": args.early_stopping_min_delta,
+                    "epochs_without_improvement": epochs_without_improvement,
+                }
+                print(json.dumps(early_stop_payload, ensure_ascii=False))
+                maybe_wandb_log(
+                    wandb_run,
+                    {
+                        "summary/early_stopped": 1,
+                        "summary/early_stop_epoch": epoch,
+                        "summary/best_epoch": best_epoch,
+                    },
+                    step=global_step,
+                )
+                break
 
         torch.save(
             checkpoint_payload(
@@ -748,9 +1002,10 @@ def main() -> None:
                 quantizer=quantizer,
                 stage1_metadata=stage1_metadata,
                 initial_eval=initial_eval,
-                epoch=args.max_epochs,
+                epoch=completed_epochs,
                 global_step=global_step,
                 metrics_history=metrics_history,
+                run_metadata=run_metadata,
             ),
             save_dir / "final.pt",
         )
@@ -771,16 +1026,26 @@ def main() -> None:
             "batch_size": args.batch_size,
             "grad_accum_steps": args.grad_accum_steps,
             "max_epochs": args.max_epochs,
+            "completed_epochs": completed_epochs,
             "gradient_checkpointing": args.gradient_checkpointing,
+            "image_min_pixels": args.image_min_pixels or None,
+            "image_max_pixels": args.image_max_pixels or None,
+            "early_stopping_patience": args.early_stopping_patience,
+            "early_stopping_min_delta": args.early_stopping_min_delta,
+            "stopped_early": stop_reason == "early_stopping",
+            "stop_reason": stop_reason,
             "best_metric_name": best_metric_name,
             "best_metric": best_metric,
+            "best_epoch": best_epoch,
+            "resume_from_checkpoint": str(resume_checkpoint_path) if resume_checkpoint_path is not None else None,
+            "resumed": resume_checkpoint is not None,
             "added_action_tokens": added,
             "total_vocab_size": len(processor.tokenizer),
             "model_load_elapsed_s": round(load_elapsed, 3),
             "total_wall_time_s": round(time.perf_counter() - wall_start, 3),
             "peak_allocated_gib": format_gib(torch.cuda.max_memory_allocated(device)),
             "peak_reserved_gib": format_gib(torch.cuda.max_memory_reserved(device)),
-            "gpu_preflight": gpu_preflight,
+            "run_metadata": run_metadata,
             "stage1_metadata": stage1_metadata,
             "initial_eval": {
                 "split": initial_eval_split,
@@ -797,9 +1062,11 @@ def main() -> None:
             wandb_run,
             {
                 "summary/best_metric": best_metric,
+                "summary/best_epoch": best_epoch,
                 "summary/peak_allocated_gib": final_summary["peak_allocated_gib"],
                 "summary/peak_reserved_gib": final_summary["peak_reserved_gib"],
                 "summary/total_wall_time_s": final_summary["total_wall_time_s"],
+                "summary/stopped_early": 1 if final_summary["stopped_early"] else 0,
             },
             step=global_step,
         )
@@ -808,9 +1075,12 @@ def main() -> None:
                 {
                     "best_metric_name": best_metric_name,
                     "best_metric": best_metric,
+                    "best_epoch": best_epoch,
                     "peak_allocated_gib": final_summary["peak_allocated_gib"],
                     "peak_reserved_gib": final_summary["peak_reserved_gib"],
                     "total_wall_time_s": final_summary["total_wall_time_s"],
+                    "stopped_early": final_summary["stopped_early"],
+                    "stop_reason": stop_reason,
                 }
             )
 

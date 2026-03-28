@@ -34,3 +34,16 @@ Recorded-entrypoint examples:
 - `uv run python -m minipamayo_qwen35.eval.stage1 --config-json configs/eval/stage1/ignore_rule_data_12gb.json`
 
 The data, train, and eval entrypoints intentionally reject CLI overrides so the JSON files remain the full run record.
+
+Stage 1 train configs now support:
+
+- `resume_from_checkpoint` for epoch-level resume from `last.pt`
+- `early_stopping_patience` and `early_stopping_min_delta`
+- `image_min_pixels` and `image_max_pixels` to control the Qwen processor image-token budget
+  `0` keeps the processor default, and smaller `image_max_pixels` reduces image tokens for tighter VRAM budgets
+
+Stage 1 train outputs record:
+
+- `run_config.json` with resolved args plus git commit, dataset fingerprint, GPU info, and processor settings
+- `summary.json` with the same run metadata plus final metrics
+- `last.pt`, `best.pt`, and `final.pt` for resume and comparison
