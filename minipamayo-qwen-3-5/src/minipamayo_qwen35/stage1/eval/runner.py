@@ -1190,6 +1190,8 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
         displacement_errors = torch.norm(pred_waypoints - gt_waypoints, dim=2)
 
         summary = {
+            "launch_mode": "config_json_only",
+            "cli_overrides": [],
             "config_json": args.config_json,
             "config_payload": args.config_payload,
             "config_args": args.config_args,
