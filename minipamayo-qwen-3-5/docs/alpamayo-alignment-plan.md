@@ -60,7 +60,7 @@
 
 - [x] `stage1` が `o_image` しか実質使っていない
 - [x] `o_egomotion` / history tensor が train/eval/inference で未使用
-- [ ] history placeholder token と実 tensor 注入の両立がない
+- [x] history placeholder token と実 tensor 注入の両立がない
 
 ### Stage1 の中身
 
@@ -70,8 +70,8 @@
 
 ### Reasoning の段階
 
-- [ ] 現状の `stage2` は synthetic reasoning text を条件に使っている
-- [ ] 論文の `Stage2` に相当する CoC reasoning SFT と naming / 契約が揃っていない
+- [x] 現状の `stage2` は synthetic reasoning text を条件に使っている
+- [x] 論文の `Stage2` に相当する CoC reasoning SFT と naming / 契約が揃っていない
 
 ### 問題設定
 
@@ -82,9 +82,9 @@
 
 ### 1. 論文本流と実験系を明確に分離する
 
-- [ ] `canonical` は Alpamayo 論文寄りの本流だけに使う
+- [x] `canonical` は Alpamayo 論文寄りの本流だけに使う
 - [x] `steer_only`, `short_horizon`, `smoke` は `experiments/` に隔離する
-- [ ] 本流に実験用 shortcut を混ぜない
+- [x] 本流に実験用 shortcut を混ぜない
 
 ### 2. Stage の意味を論文基準に合わせる
 
@@ -95,7 +95,7 @@
 ### 3. history は text 埋め込みではなく構造化入力を本命にする
 
 - [x] canonical path では `ego_history_xyz / ego_history_rot` を使う
-- [ ] prompt text だけに history を埋める方法は experiment 扱いにする
+- [x] prompt text だけに history を埋める方法は experiment 扱いにする
 
 ### 4. 画像 token budget は Alpamayo 寄りを canonical default にする
 
@@ -174,7 +174,7 @@ configs/
   - 必要なら local / ego-frame 版も保存する
 - [x] Stage1 dataset に history field を追加する
 - [x] processor / model 入力に history placeholder token を入れる
-- [ ] placeholder を実 history token/tensor に fuse する経路を追加する
+- [x] placeholder を実 history token/tensor に fuse する経路を追加する
 - [x] prompt を Alpamayo 寄りの最小形に整理する
 
 ## Canonical Stage1B: action-expert CFM
@@ -216,13 +216,17 @@ configs/
 
 ### 方針
 
-- [ ] synthetic reasoning text を canonical から外す
-- [ ] CoC dataset 契約を別に定義する
-- [ ] Stage1 と同じ観測契約の上に reasoning supervision を足す
+- [x] synthetic reasoning text を canonical から外す
+- [x] CoC dataset 契約を別に定義する
+- [x] Stage1 と同じ観測契約の上に reasoning supervision を足す
+
+参照:
+
+- [stage2-reasoning-sft-dataset-contract.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/stage2-reasoning-sft-dataset-contract.md)
 
 ### 現状との差
 
-- [ ] 今の `stage2` は論文の Stage2 ではなく、むしろ Stage1B 寄り
+- [x] 今の `stage2` は論文の Stage2 ではなく、むしろ Stage1B 寄り
 - [ ] 今の `stage3` が reasoning SFT に近いので、再配置が必要
 
 ## Canonical Stage3: RL / post-training
@@ -275,7 +279,7 @@ configs/
 ### Phase 2: Stage1A を作り直す
 
 - [x] current `stage1` を `stage1/vlm_ce` に整理する
-- [ ] history token / tensor 注入経路を入れる
+- [x] history token / tensor 注入経路を入れる
 - [x] canonical prompt を整理する
 - [x] canonical `128 token` path を確立する
 - [x] `steer_only` を完全に experiment へ押し込む
@@ -290,7 +294,7 @@ configs/
 ### Phase 4: Stage2 reasoning SFT を再配置する
 
 - [x] current `stage3` の役割を見直す
-- [ ] CoC dataset 契約を定義する
+- [x] CoC dataset 契約を定義する
 - [x] `stage2/reasoning_sft` を新設する
 
 ### Phase 5: Stage3 post-training を再配置する
@@ -304,6 +308,8 @@ configs/
 - [x] README のコマンド例を更新する
 - [x] 実験系 config を `experiments/` に寄せる
 - [ ] 旧 naming を削除する
+  - `train/stage2` と `eval/stage2` は削除済み
+  - `stage3` / `stage4` 由来の旧 naming は未着手
 
 ## 検証方針
 
@@ -323,12 +329,18 @@ configs/
 
 - [x] condition source が期待通りか確認
 - [x] VLM 側へ expert 勾配が戻っていないことを確認
-- [ ] CFM loss が下がることを確認
+- [x] CFM loss が下がることを確認
 - [x] continuous trajectory rollout が成立することを確認
 
-### Stage2 / Stage3
+### Stage2
 
-- [ ] reasoning token / action token の系列契約確認
+- [x] reasoning token / action token の系列契約確認
+- [x] checkpoint metadata 契約確認
+- [ ] eval path が train 契約と一致していることを確認
+
+### Stage3
+
+- [ ] reward / rollout 契約確認
 - [ ] checkpoint metadata 契約確認
 - [ ] inference path が train 契約と一致していることを確認
 
@@ -337,7 +349,7 @@ configs/
 - [x] `refactor: add canonical stage1 history schema`
 - [x] `refactor: move qwen35 canonical stage1 ce under vlm_ce`
 - [x] `feat: add qwen35 canonical stage1 expert cfm path`
-- [ ] `refactor: realign qwen35 reasoning stage to alpamayo stage2`
+- [x] `refactor: realign qwen35 reasoning stage to alpamayo stage2`
 - [ ] `refactor: realign qwen35 post-training stage to alpamayo stage3`
 - [x] `docs: add alpamayo alignment notes and commands`
 
@@ -349,6 +361,8 @@ configs/
 - [x] `o_egomotion` / history を本流に入れる
 - [x] 今の `stage2 decoder` 相当は論文準拠では Stage1B とみなす
 - [ ] `steer_only` や smoke は experiment に閉じ込める
+  - `steer_only` は experiment へ隔離済み
+  - smoke dataset / smoke config は contract 検証用に残している
 
 この方針に従うことで、
 

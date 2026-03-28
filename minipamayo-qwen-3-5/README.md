@@ -63,6 +63,12 @@ Stage 1 train configs now support:
 
 Stage 1 eval configs use `test_jsonl` explicitly so the evaluation split is named separately from train/val.
 
+Canonical `Stage2 / reasoning_sft` expects the same observation contract as `Stage1A` plus `reasoning_text`.
+
+- required additions over Stage1: `reasoning_text`
+- required observation fields carried over: `ego_history_xyz`, `ego_history_rot`
+- contract note: [stage2-reasoning-sft-dataset-contract.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/stage2-reasoning-sft-dataset-contract.md)
+
 Stage 1 train outputs record:
 
 - `run_config.json` with resolved args plus git commit, dataset fingerprint, GPU info, and processor settings
