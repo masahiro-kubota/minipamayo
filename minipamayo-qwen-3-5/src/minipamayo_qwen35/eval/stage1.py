@@ -48,8 +48,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG_PATH_KEYS = {
     "checkpoint",
     "test_jsonl",
-    "processor_dir",
-    "model_path",
     "output_json",
     "output_mcap",
 }
@@ -60,14 +58,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config-json", type=str, default="")
     parser.add_argument("--checkpoint", type=str, default="")
     parser.add_argument("--test-jsonl", type=str, default="")
-    parser.add_argument("--processor-dir", type=str, default="")
-    parser.add_argument("--model-path", type=str, default="")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--show-samples", type=int, default=10)
-    parser.add_argument("--dtype", type=str, default="", choices=["", "bf16", "fp16"])
     parser.add_argument("--image-min-pixels", type=int, default=0)
     parser.add_argument("--image-max-pixels", type=int, default=0)
     parser.add_argument("--output-json", type=str, default="")
@@ -128,32 +123,30 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def resolve_model_path(args: argparse.Namespace, checkpoint: dict) -> str:
-    if args.model_path:
-        return args.model_path
+def resolve_checkpoint_args(checkpoint: dict) -> dict:
     checkpoint_args = checkpoint.get("args")
-    if not isinstance(checkpoint_args, dict) or "model_path" not in checkpoint_args:
-        raise RuntimeError("Checkpoint is missing canonical `args.model_path` metadata.")
-    return str(checkpoint_args["model_path"])
+    if not isinstance(checkpoint_args, dict):
+        raise RuntimeError("Checkpoint is missing canonical `args` metadata.")
+    required_keys = ["model_path", "dtype"]
+    missing_keys = [key for key in required_keys if key not in checkpoint_args]
+    if missing_keys:
+        raise RuntimeError(
+            "Checkpoint is missing canonical `args` fields:\n" + "\n".join(missing_keys)
+        )
+    return checkpoint_args
 
 
-def resolve_processor_path(args: argparse.Namespace, checkpoint_path: Path, model_path: str) -> str:
-    if args.processor_dir:
-        return args.processor_dir
+def resolve_processor_path(checkpoint_path: Path) -> str:
     saved_processor = checkpoint_path.parent / "processor"
-    if saved_processor.exists():
-        return str(saved_processor)
-    return model_path
+    if not saved_processor.exists():
+        raise RuntimeError(
+            "Checkpoint is missing the canonical saved processor directory: "
+            f"{saved_processor}"
+        )
+    return str(saved_processor)
 
 
-def resolve_dtype(args: argparse.Namespace, checkpoint: dict) -> torch.dtype:
-    if args.dtype:
-        dtype_name = args.dtype
-    else:
-        checkpoint_args = checkpoint.get("args")
-        if not isinstance(checkpoint_args, dict) or "dtype" not in checkpoint_args:
-            raise RuntimeError("Checkpoint is missing canonical `args.dtype` metadata.")
-        dtype_name = checkpoint_args["dtype"]
+def resolve_dtype(dtype_name: str) -> torch.dtype:
     if dtype_name == "fp16":
         return torch.float16
     return torch.bfloat16
@@ -162,10 +155,10 @@ def resolve_dtype(args: argparse.Namespace, checkpoint: dict) -> torch.dtype:
 def load_components(args: argparse.Namespace) -> tuple[dict, object, object, Stage1TokenRegistry, ActionQuantizer, torch.dtype]:
     checkpoint_path = Path(args.checkpoint)
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
-
-    model_path = resolve_model_path(args, checkpoint)
-    processor_path = resolve_processor_path(args, checkpoint_path, model_path)
-    model_dtype = resolve_dtype(args, checkpoint)
+    checkpoint_args = resolve_checkpoint_args(checkpoint)
+    model_path = str(checkpoint_args["model_path"])
+    processor_path = resolve_processor_path(checkpoint_path)
+    model_dtype = resolve_dtype(str(checkpoint_args["dtype"]))
     processor_kwargs = build_processor_kwargs(args.image_min_pixels, args.image_max_pixels)
     processor = AutoProcessor.from_pretrained(processor_path, trust_remote_code=True, **processor_kwargs)
 

@@ -481,6 +481,26 @@ def validate_resume_args(args: argparse.Namespace, checkpoint: dict) -> None:
         )
 
 
+def load_resume_state(checkpoint: dict) -> tuple[dict, list[dict], int, int]:
+    required_keys = ["initial_eval", "metrics_history", "global_step", "epoch"]
+    missing_keys = [key for key in required_keys if key not in checkpoint]
+    if missing_keys:
+        raise RuntimeError(
+            "Resume checkpoint is missing canonical state:\n" + "\n".join(missing_keys)
+        )
+
+    initial_eval = checkpoint["initial_eval"]
+    metrics_history = checkpoint["metrics_history"]
+    if not isinstance(initial_eval, dict):
+        raise RuntimeError("Resume checkpoint `initial_eval` must be an object.")
+    if not isinstance(metrics_history, list):
+        raise RuntimeError("Resume checkpoint `metrics_history` must be a list.")
+
+    global_step = int(checkpoint["global_step"])
+    start_epoch = int(checkpoint["epoch"]) + 1
+    return initial_eval, list(metrics_history), global_step, start_epoch
+
+
 def metric_improved(current: float, best: float, min_delta: float) -> bool:
     if math.isinf(best):
         return True
@@ -595,8 +615,12 @@ def main() -> None:
             resume_checkpoint = torch.load(resume_checkpoint_path, map_location="cpu")
             validate_resume_args(args, resume_checkpoint)
             saved_processor_dir = resume_checkpoint_path.parent / "processor"
-            if saved_processor_dir.exists():
-                processor_source = str(saved_processor_dir)
+            if not saved_processor_dir.exists():
+                raise RuntimeError(
+                    "Resume checkpoint is missing the canonical saved processor directory: "
+                    f"{saved_processor_dir}"
+                )
+            processor_source = str(saved_processor_dir)
 
         load_start = time.perf_counter()
         processor_kwargs = build_processor_kwargs(args.image_min_pixels, args.image_max_pixels)
@@ -663,8 +687,8 @@ def main() -> None:
                 "requested": bool(args.resume_from_checkpoint),
                 "resume_from_checkpoint": str(resume_checkpoint_path) if resume_checkpoint_path is not None else None,
                 "resumed": resume_checkpoint is not None,
-                "checkpoint_epoch": int(resume_checkpoint.get("epoch", 0)) if resume_checkpoint is not None else 0,
-                "checkpoint_global_step": int(resume_checkpoint.get("global_step", 0)) if resume_checkpoint is not None else 0,
+                "checkpoint_epoch": int(resume_checkpoint["epoch"]) if resume_checkpoint is not None else 0,
+                "checkpoint_global_step": int(resume_checkpoint["global_step"]) if resume_checkpoint is not None else 0,
             },
         }
         write_run_config(save_dir, args, run_metadata)
@@ -673,10 +697,7 @@ def main() -> None:
             optimizer.load_state_dict(resume_checkpoint["optimizer_state_dict"])
             scheduler.load_state_dict(resume_checkpoint["scheduler_state_dict"])
             move_optimizer_state_to_device(optimizer, device)
-            initial_eval = resume_checkpoint.get("initial_eval")
-            metrics_history = list(resume_checkpoint.get("metrics_history", []))
-            global_step = int(resume_checkpoint.get("global_step", 0))
-            start_epoch = int(resume_checkpoint.get("epoch", 0)) + 1
+            initial_eval, metrics_history, global_step, start_epoch = load_resume_state(resume_checkpoint)
             best_metric, best_epoch = best_metric_from_history(metrics_history, best_metric_name)
             last_epoch = int(metrics_history[-1]["epoch"]) if metrics_history else 0
             epochs_without_improvement = max(0, last_epoch - best_epoch)
@@ -699,20 +720,6 @@ def main() -> None:
             best_metric = float("inf")
             best_epoch = 0
             epochs_without_improvement = 0
-
-        if initial_eval is None:
-            initial_eval_loader = val_loader if val_loader is not None else train_loader
-            initial_eval = evaluate(
-                model=model,
-                dataloader=initial_eval_loader,
-                processor=processor,
-                registry=registry,
-                quantizer=quantizer,
-                prompt_text=prompt_text,
-                device=device,
-                model_dtype=model_dtype,
-            )
-            release_cuda_memory()
 
         if start_epoch > args.max_epochs:
             raise RuntimeError(
