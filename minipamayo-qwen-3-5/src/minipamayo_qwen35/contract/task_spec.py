@@ -10,8 +10,8 @@ import numpy as np
 import torch
 from torch.utils.data import Subset
 
+from ..action_space.discrete_action_space import DiscreteTrajectoryTokenizer
 from ..action_space.record_adapter import saved_action_array_from_record
-from .trajectory_tokens import ActionQuantizer
 
 
 def _record_action_array(record: dict) -> np.ndarray:
@@ -144,17 +144,17 @@ class CanonicalStage1Spec(Stage1TaskSpec):
     action_representation: str = "accel_kappa"
     rollout_accel_source: str = "predicted"
 
-    def build_quantizer(self, train_dataset) -> ActionQuantizer:
-        return ActionQuantizer()
+    def build_quantizer(self, train_dataset) -> DiscreteTrajectoryTokenizer:
+        return DiscreteTrajectoryTokenizer()
 
-    def quantizer_from_checkpoint(self, quantizer_payload: dict) -> ActionQuantizer:
+    def quantizer_from_checkpoint(self, quantizer_payload: dict) -> DiscreteTrajectoryTokenizer:
         required_keys = ["n_bins", "a_range", "kappa_range"]
         missing_keys = [key for key in required_keys if key not in quantizer_payload]
         if missing_keys:
             raise RuntimeError(
                 "Canonical Stage 1 checkpoint is missing quantizer metadata:\n" + "\n".join(missing_keys)
             )
-        return ActionQuantizer(
+        return DiscreteTrajectoryTokenizer(
             n_bins=int(quantizer_payload["n_bins"]),
             a_range=tuple(quantizer_payload["a_range"]),
             kappa_range=tuple(quantizer_payload["kappa_range"]),
@@ -174,7 +174,7 @@ class CanonicalStage1Spec(Stage1TaskSpec):
     ) -> torch.Tensor:
         return target.reshape(-1).to(torch.float32)
 
-    def quantizer_metadata(self, quantizer: ActionQuantizer) -> dict[str, Any]:
+    def quantizer_metadata(self, quantizer: DiscreteTrajectoryTokenizer) -> dict[str, Any]:
         return {
             "quantizer_kind": "accel_kappa",
             "n_bins": quantizer.n_bins,
@@ -186,7 +186,7 @@ class CanonicalStage1Spec(Stage1TaskSpec):
         self,
         batch: dict,
         registry,
-        quantizer: ActionQuantizer,
+        quantizer: DiscreteTrajectoryTokenizer,
     ) -> list[list[int]]:
         if "ego_future_xyz" not in batch or "ego_future_rot" not in batch:
             return super().encode_target_token_rows_from_batch(batch, registry, quantizer)

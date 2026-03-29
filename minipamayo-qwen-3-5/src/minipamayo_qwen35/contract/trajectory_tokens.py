@@ -7,8 +7,6 @@ from dataclasses import dataclass, field
 import numpy as np
 import torch
 
-from ..action_space.discrete_action_space import ActionQuantizer
-
 
 def format_stage1_token(prefix: str, index: int) -> str:
     if prefix == "i":

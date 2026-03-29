@@ -1,7 +1,7 @@
 """Shared action-space package aligned with Alpamayo naming."""
 
 from .action_space import ActionSpace
-from .discrete_action_space import ActionQuantizer, DiscreteTrajectoryTokenizer
+from .discrete_action_space import DiscreteTrajectoryTokenizer
 from .record_adapter import (
     canonical_action_array_from_record,
     canonical_action_tensor_from_record,
@@ -14,7 +14,6 @@ from .record_adapter import (
 from .unicycle_accel_curvature import UnicycleAccelCurvatureActionSpace
 
 __all__ = [
-    "ActionQuantizer",
     "ActionSpace",
     "DiscreteTrajectoryTokenizer",
     "UnicycleAccelCurvatureActionSpace",

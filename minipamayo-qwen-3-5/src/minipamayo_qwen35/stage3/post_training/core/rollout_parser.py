@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from ....contract.trajectory_tokens import ActionQuantizer, Stage1TokenRegistry
+from ....action_space.discrete_action_space import DiscreteTrajectoryTokenizer
+from ....contract.trajectory_tokens import Stage1TokenRegistry
 from ....reasoning.synthetic import normalize_label
 
 
@@ -39,7 +40,7 @@ def split_generated_token_ids(
 
 def _neutral_action_token_ids(
     registry: Stage1TokenRegistry,
-    quantizer: ActionQuantizer,
+    quantizer: DiscreteTrajectoryTokenizer,
     action_len: int,
 ) -> list[int]:
     zeros = np.zeros(action_len, dtype=np.float32)
@@ -49,7 +50,7 @@ def _neutral_action_token_ids(
 def decode_action_token_ids(
     token_ids: list[int],
     registry: Stage1TokenRegistry,
-    quantizer: ActionQuantizer,
+    quantizer: DiscreteTrajectoryTokenizer,
     action_len: int,
 ) -> tuple[np.ndarray, int]:
     token_rows = list(token_ids[:action_len])
@@ -64,7 +65,7 @@ def parse_generated_sequence(
     token_ids: list[int],
     tokenizer,
     registry: Stage1TokenRegistry,
-    quantizer: ActionQuantizer,
+    quantizer: DiscreteTrajectoryTokenizer,
     action_len: int,
 ) -> dict:
     text_token_ids, action_token_ids = split_generated_token_ids(token_ids, registry)

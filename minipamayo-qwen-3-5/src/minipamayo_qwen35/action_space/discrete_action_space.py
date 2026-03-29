@@ -119,7 +119,7 @@ class DiscreteTrajectoryTokenizer:
         del hist_tstamp
         if tokens.dim() != 2 or tokens.shape[1] % 2 != 0:
             raise RuntimeError(
-                "ActionQuantizer.decode expects tokens shaped (batch, 2*k).\n"
+                "DiscreteTrajectoryTokenizer.decode expects tokens shaped (batch, 2*k).\n"
                 f"found={tuple(tokens.shape)!r}"
             )
         k = tokens.shape[1] // 2
@@ -132,5 +132,3 @@ class DiscreteTrajectoryTokenizer:
         fut_xyz, fut_rot = action_space.action_to_traj(action, hist_xyz, hist_rot)
         return fut_xyz, fut_rot, None
 
-
-ActionQuantizer = DiscreteTrajectoryTokenizer

@@ -1,5 +1,6 @@
 """Shared Stage 1 / Stage 2 contract exports."""
 
+from ..action_space.discrete_action_space import DiscreteTrajectoryTokenizer
 from .history_tokens import (
     HISTORY_END_TOKEN,
     HISTORY_PLACEHOLDER_TOKEN,
@@ -34,16 +35,16 @@ from .sequence_layout import (
     STAGE2_TARGET_LAYOUT,
 )
 from .task_spec import CanonicalStage1Spec, KappaOnlyStage1Spec, Stage1TaskSpec
-from .trajectory_tokens import ActionQuantizer, Stage1TokenRegistry, format_stage1_token
+from .trajectory_tokens import Stage1TokenRegistry, format_stage1_token
 
 __all__ = [
     "ALPAMAYO_REASONING_USER_TEXT",
-    "ActionQuantizer",
     "COT_END_TOKEN",
     "COT_START_TOKEN",
     "CanonicalStage1Spec",
     "DEFAULT_QUESTION",
     "DEFAULT_SYSTEM_PROMPT",
+    "DiscreteTrajectoryTokenizer",
     "HISTORY_END_TOKEN",
     "HISTORY_PLACEHOLDER_TOKEN",
     "HISTORY_SPECIAL_TOKENS",
