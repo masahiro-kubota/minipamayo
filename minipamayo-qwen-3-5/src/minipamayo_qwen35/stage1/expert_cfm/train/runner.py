@@ -100,7 +100,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--decoder-intermediate-size", type=int, default=2048)
     parser.add_argument("--decoder-attention-dropout", type=float, default=0.0)
     parser.add_argument("--expert-non-causal-attention", type=bool, default=True)
-    parser.add_argument("--keep-same-dtype", type=bool, default=True)
     parser.add_argument("--num-fourier-feats", type=int, default=20)
     parser.add_argument("--fourier-max-freq", type=float, default=100.0)
     parser.add_argument("--mlp-hidden-size", type=int, default=1024)
@@ -382,7 +381,7 @@ def main() -> None:
             k=int(first_batch["action"].shape[-1] // 2),
             action_dims=(int(first_batch["action"].shape[-1] // 2), 2),
             expert_text_config=expert_text_config,
-            keep_same_dtype=bool(args.keep_same_dtype),
+            keep_same_dtype=True,
             expert_non_causal_attention=bool(args.expert_non_causal_attention),
             num_fourier_feats=args.num_fourier_feats,
             fourier_max_freq=args.fourier_max_freq,
