@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import torch
+
 from ..models.base_model import SPECIAL_TOKENS, TRAJ_TOKEN
 from .history_tokens import (
     HISTORY_END_TOKEN,
@@ -39,6 +41,49 @@ def build_history_placeholder(history_token_count: int) -> str:
         f"{HISTORY_PLACEHOLDER_TOKEN * history_token_count}"
         f"{HISTORY_END_TOKEN}"
     )
+
+
+def build_stage1_question_user_text(question: str, history_token_count: int = 0) -> str:
+    history_prefix = build_history_placeholder(history_token_count)
+    return f"{history_prefix}{question}" if history_prefix else question
+
+
+def build_reasoning_user_text(history_token_count: int = 0) -> str:
+    history_prefix = build_history_placeholder(history_token_count)
+    return f"{history_prefix}{ALPAMAYO_REASONING_USER_TEXT}"
+
+
+def build_multimodal_messages(
+    *,
+    frames: torch.Tensor,
+    user_text: str,
+    assistant_prefill: str | None = None,
+) -> list[dict]:
+    if frames.ndim != 4:
+        raise ValueError(f"{frames.ndim=}, expected 4 (N, C, H, W)")
+    messages = [
+        {
+            "role": "system",
+            "content": [
+                {"type": "text", "text": DEFAULT_SYSTEM_PROMPT},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "image", "image": frame} for frame in frames]
+            + [{"type": "text", "text": user_text}],
+        },
+    ]
+    if assistant_prefill is not None:
+        messages.append(
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": assistant_prefill},
+                ],
+            }
+        )
+    return messages
 
 
 def build_messages(
@@ -100,8 +145,7 @@ def build_prompt_text(
     *,
     assistant_prefill: str | None = None,
 ) -> str:
-    history_prefix = build_history_placeholder(history_token_count)
-    user_text = f"{history_prefix}{question}" if history_prefix else question
+    user_text = build_stage1_question_user_text(question, history_token_count)
     return build_chat_prompt_text(
         processor,
         user_text=user_text,
@@ -110,8 +154,7 @@ def build_prompt_text(
 
 
 def build_reasoning_prompt_text(processor, history_token_count: int = 0) -> str:
-    history_prefix = build_history_placeholder(history_token_count)
-    user_text = f"{history_prefix}{ALPAMAYO_REASONING_USER_TEXT}"
+    user_text = build_reasoning_user_text(history_token_count)
     return build_chat_prompt_text(
         processor,
         user_text=user_text,

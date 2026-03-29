@@ -15,15 +15,20 @@ from PIL import Image
 from transformers import LogitsProcessor, LogitsProcessorList, StoppingCriteriaList
 
 from ....config import AlpamayoR1Config
-from ....contract.prompt import TRAJ_FUTURE_START_TOKEN
+from ....contract.prompt import (
+    COT_START_TOKEN,
+    TRAJ_FUTURE_START_TOKEN,
+    build_multimodal_messages,
+    build_reasoning_user_text,
+)
 from ....action_space.record_adapter import (
     canonicalize_history_batch_for_action_space,
 )
-from ....helper import create_message, get_processor, to_device
+from ....helper import get_processor, to_device
 from ....models.alpamayo_r1 import AlpamayoR1
 from ....models.base_model import SPECIAL_TOKENS, TRAJ_TOKEN
 from ....models.token_utils import StopAfterEOS
-from ....stage1.vlm_ce.eval.runner import load_components, resolve_processor_path
+from ....stage1.vlm_ce.eval.runner import load_components
 from ....stage1.vlm_ce.train import (
     load_checkpoint,
 )
@@ -493,10 +498,7 @@ def load_stage2_inference_bundle(
         quantizer,
         _model_dtype,
     ) = load_components(stage1_args)
-    processor = get_processor(
-        str(resolve_processor_path(stage1a_checkpoint_path)),
-        tokenizer=loaded_processor.tokenizer,
-    )
+    processor = get_processor(loaded_processor.tokenizer)
     stage2_embed_rows = int(
         checkpoint["model_state_dict"]["model.language_model.embed_tokens.weight"].shape[0]
     )
@@ -565,7 +567,11 @@ def build_wrapper_inputs_for_sample(
     with Image.open(image_path) as raw_image:
         image = raw_image.convert("RGB")
         frame_tensor = torch.from_numpy(np.array(image, copy=True)).permute(2, 0, 1).unsqueeze(0)
-    messages = create_message(frame_tensor, num_traj_token=history_token_count)
+    messages = build_multimodal_messages(
+        frames=frame_tensor,
+        user_text=build_reasoning_user_text(history_token_count),
+        assistant_prefill=COT_START_TOKEN,
+    )
     tokenized_data = processor.apply_chat_template(
         messages,
         tokenize=True,

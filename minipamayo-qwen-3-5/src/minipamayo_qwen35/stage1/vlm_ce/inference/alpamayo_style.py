@@ -20,13 +20,17 @@ from pathlib import Path
 import numpy as np
 import torch
 from PIL import Image
-from transformers import AutoModelForImageTextToText
+from transformers import AutoModelForImageTextToText, AutoProcessor
 
 from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
 from ....utils.preflight import require_expected_cuda_toolkit
 from ....utils.run_metadata import collect_processor_settings
 from ....contract.task_spec import CanonicalStage1Spec, KappaOnlyStage1Spec, Stage1TaskSpec
-from ....contract.prompt import add_prompt_special_tokens, build_history_placeholder
+from ....contract.prompt import (
+    add_prompt_special_tokens,
+    build_multimodal_messages,
+    build_stage1_question_user_text,
+)
 from ....action_space.record_adapter import rollout_waypoints_from_action_tensor
 from ...data.dataset import Stage1JsonlDataset
 from ..eval.runner import (
@@ -45,13 +49,7 @@ from ..train import (
     inject_history_inputs_embeds,
     load_checkpoint,
 )
-from ....helper import (
-    MAX_PIXELS,
-    MIN_PIXELS,
-    create_message,
-    get_processor,
-    to_device,
-)
+from ....helper import MAX_PIXELS, MIN_PIXELS, get_processor, to_device
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {
@@ -178,7 +176,8 @@ def main() -> None:
     processor_path = resolve_processor_path(checkpoint_path)
     model_path = str(checkpoint_args["model_path"])
     model_dtype = resolve_dtype(str(checkpoint_args["dtype"]))
-    processor = get_processor(processor_path)
+    saved_processor = AutoProcessor.from_pretrained(processor_path, trust_remote_code=True)
+    processor = get_processor(saved_processor.tokenizer)
     tokenizer = processor.tokenizer
     add_prompt_special_tokens(tokenizer)
 
@@ -280,14 +279,13 @@ def main() -> None:
     record = dataset.records[args.sample_index]
 
     image_path = Path(sample["image_path"])
-    user_text = (
-        f"{build_history_placeholder(history_quantizer.token_count)}"
-        f"{stage1_metadata['question']}"
+    user_text = build_stage1_question_user_text(
+        str(stage1_metadata["question"]),
+        int(history_quantizer.token_count),
     )
     with Image.open(image_path).convert("RGB") as image:
         frame_tensor = torch.from_numpy(np.array(image, copy=True)).permute(2, 0, 1).unsqueeze(0)
-        messages = create_message(frame_tensor, user_text=user_text)
-        messages = messages[:2]
+        messages = build_multimodal_messages(frames=frame_tensor, user_text=user_text)
         inputs = processor.apply_chat_template(
             messages,
             tokenize=True,
