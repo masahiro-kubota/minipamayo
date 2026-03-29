@@ -37,6 +37,7 @@ from ....utils.run_metadata import (
     collect_gpu_info,
     collect_processor_settings,
 )
+from ...checkpoint_completion import require_completed_training_run
 from ....contract.task_spec import CanonicalStage1Spec, Stage1TaskSpec
 from ...dataset import Stage1JsonlDataset
 from ....action_space.record_adapter import rollout_waypoints_from_action_tensor
@@ -849,6 +850,12 @@ def greedy_generate_action_tokens(
 def main(task_spec: Stage1TaskSpec | None = None) -> None:
     task_spec = task_spec or CanonicalStage1Spec()
     args = parse_args()
+    require_completed_training_run(
+        args.checkpoint,
+        checkpoint_label="Stage 1A checkpoint",
+        required_summary_keys=["completed_epochs", "best_epoch", "stop_reason"],
+        allowed_stop_reasons={"max_epochs", "early_stopping"},
+    )
     device = torch.device(
         args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
     )

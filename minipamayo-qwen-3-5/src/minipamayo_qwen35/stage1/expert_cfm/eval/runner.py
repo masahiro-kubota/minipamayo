@@ -12,6 +12,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from ....stage1.dataset import Stage1JsonlDataset
+from ....stage1.checkpoint_completion import require_completed_training_run
 from ....stage1.vlm_ce.train import stage1_collate
 from ....action_space.record_adapter import (
     canonicalize_future_batch_from_action_space,
@@ -121,6 +122,17 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    require_completed_training_run(
+        args.stage1_checkpoint,
+        checkpoint_label="Stage 1A checkpoint",
+        required_summary_keys=["completed_epochs", "best_epoch", "stop_reason"],
+        allowed_stop_reasons={"max_epochs", "early_stopping"},
+    )
+    require_completed_training_run(
+        args.checkpoint,
+        checkpoint_label="Stage 1B checkpoint",
+        required_summary_keys=["best_epoch", "history_length"],
+    )
     device = torch.device(args.device)
     if device.type != "cuda":
         raise RuntimeError("Canonical Stage 1B evaluation currently expects CUDA.")
