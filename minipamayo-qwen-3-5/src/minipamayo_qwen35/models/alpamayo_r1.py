@@ -237,6 +237,11 @@ class AlpamayoR1(ReasoningVLA):
         delta = vlm_outputs.rope_deltas + offset[:, None]
         position_ids += delta.to(position_ids.device)
 
+        # Qwen3-VL on transformers 4.57.1 accepts Alpamayo's 4D additive mask path
+        # because the model stack explicitly handles 4D masks and reduces them to a
+        # padding-style mask for downstream processing. Qwen3.5 on transformers 5.4
+        # does not expose the same compatibility path on the expert route, so we
+        # construct the 2D padding mask directly for flash_attention_2.
         # modify the attention_masks to remove padding tokens
         attention_mask = torch.zeros(
             (b_star, prefill_seq_len + n_diffusion_tokens),

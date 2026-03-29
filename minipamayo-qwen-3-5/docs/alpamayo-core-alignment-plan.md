@@ -84,9 +84,9 @@ diff -u \
   - pure import path 差に加えて以下が残っている
   - Alpamayo の inline 4D additive mask ではなく、inline の 2D padding mask を使う
   - これは `transformers==5.4.0 + Qwen3.5-0.8B + flash_attention_2` の expert path が 2D padding mask を期待するため
+  - `transformers==4.57.1` の `Qwen3-VL` には 4D mask を padding mask に落とす互換分岐があるが、`Qwen3.5` の expert path には同等の分岐が無い
   - Alpamayo の in-place `prompt_cache.crop(...)` ではなく、step ごとに cache clone を使う
-  - これは `Qwen3_5DynamicCache` が `crop()` を持たないため
-  - いずれも `Qwen3.5-0.8B + transformers 5.4` の cache / flash-attn runtime 差のための shim
+    - これは `Qwen3_5DynamicCache` が `crop()` を持たないため
 - `test_inference.py`
   - Alpamayo は `load_physical_aiavdataset.py` から直接 tensor を作る
   - こちらは `samples_reasoning_sft.jsonl` と `record_adapter` 系の契約を使う
