@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+from contextlib import nullcontext
 import json
 import math
 import sys
@@ -274,6 +275,9 @@ def evaluate(
     expert.eval()
     total_loss = 0.0
     total_batches = 0
+    amp_context = (
+        torch.autocast("cuda", dtype=torch.bfloat16) if device.type == "cuda" else nullcontext()
+    )
     for batch in dataloader:
         prompt_inputs = prepare_condition_inputs(
             model=model,
@@ -286,12 +290,13 @@ def evaluate(
         )
         prompt_cache, prompt_attention_mask = extract_prompt_cache(model, prompt_inputs)
         gt_action = batch["action"].to(device=device, dtype=torch.float32)
-        loss = diffusion.loss(
-            expert=expert,
-            gt_action=gt_action,
-            prompt_cache=prompt_cache,
-            prompt_attention_mask=prompt_attention_mask,
-        )
+        with amp_context:
+            loss = diffusion.loss(
+                expert=expert,
+                gt_action=gt_action,
+                prompt_cache=prompt_cache,
+                prompt_attention_mask=prompt_attention_mask,
+            )
         total_loss += float(loss.detach().cpu())
         total_batches += 1
     return {"cfm_loss": total_loss / max(1, total_batches)}
@@ -445,6 +450,11 @@ def main() -> None:
             },
             step=0,
         )
+        amp_context = (
+            torch.autocast("cuda", dtype=torch.bfloat16)
+            if device.type == "cuda"
+            else nullcontext()
+        )
 
         for epoch in range(1, args.max_epochs + 1):
             epoch_start = time.time()
@@ -467,12 +477,13 @@ def main() -> None:
                 with torch.no_grad():
                     prompt_cache, prompt_attention_mask = extract_prompt_cache(model, prompt_inputs)
                 gt_action = batch["action"].to(device=device, dtype=torch.float32)
-                loss = diffusion.loss(
-                    expert=expert,
-                    gt_action=gt_action,
-                    prompt_cache=prompt_cache,
-                    prompt_attention_mask=prompt_attention_mask,
-                )
+                with amp_context:
+                    loss = diffusion.loss(
+                        expert=expert,
+                        gt_action=gt_action,
+                        prompt_cache=prompt_cache,
+                        prompt_attention_mask=prompt_attention_mask,
+                    )
                 (loss / float(args.grad_accum_steps)).backward()
                 train_loss_total += float(loss.detach().cpu())
                 batch_count += 1

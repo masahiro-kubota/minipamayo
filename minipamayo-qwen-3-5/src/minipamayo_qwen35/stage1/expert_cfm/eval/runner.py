@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import json
 import sys
 from pathlib import Path
@@ -167,6 +168,9 @@ def main() -> None:
     total_ade = 0.0
     total_fde = 0.0
     total_samples = 0
+    amp_context = (
+        torch.autocast("cuda", dtype=torch.bfloat16) if device.type == "cuda" else nullcontext()
+    )
 
     with torch.no_grad():
         for batch in dataloader:
@@ -181,17 +185,18 @@ def main() -> None:
             )
             prompt_cache, prompt_attention_mask = extract_prompt_cache(model, prompt_inputs)
             gt_action = batch["action"].to(device=device, dtype=torch.float32)
-            loss = diffusion.loss(
-                expert=expert,
-                gt_action=gt_action,
-                prompt_cache=prompt_cache,
-                prompt_attention_mask=prompt_attention_mask,
-            )
-            pred_action = diffusion.sample(
-                expert=expert,
-                prompt_cache=prompt_cache,
-                prompt_attention_mask=prompt_attention_mask,
-            ).reshape(gt_action.shape[0], -1, 2)
+            with amp_context:
+                loss = diffusion.loss(
+                    expert=expert,
+                    gt_action=gt_action,
+                    prompt_cache=prompt_cache,
+                    prompt_attention_mask=prompt_attention_mask,
+                )
+                pred_action = diffusion.sample(
+                    expert=expert,
+                    prompt_cache=prompt_cache,
+                    prompt_attention_mask=prompt_attention_mask,
+                ).reshape(gt_action.shape[0], -1, 2)
             gt_waypoints = batch["gt_waypoints"].to(device=device, dtype=torch.float32)
             history_xyz, history_rot = canonicalize_history_batch_for_action_space(
                 batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
