@@ -16,9 +16,8 @@ from ....action_space.record_adapter import (
     canonicalize_history_batch_for_action_space,
 )
 from ....action_space.unicycle_accel_curvature import UnicycleAccelCurvatureActionSpace
-from ....models.token_utils import StopAfterEOS
-from ....stage1.expert_cfm.core.diffusion import FlowMatchingDiffusion
-from ....stage1.expert_cfm.core.model import load_action_expert_from_checkpoint
+from ....diffusion import FlowMatchingDiffusion
+from ....models import StopAfterEOS, load_action_expert_from_checkpoint
 from ....stage1.vlm_ce.eval import load_components
 from ....stage1.vlm_ce.train import (
     load_checkpoint,
