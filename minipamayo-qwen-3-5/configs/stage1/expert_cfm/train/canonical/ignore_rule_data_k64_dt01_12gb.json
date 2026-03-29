@@ -28,7 +28,7 @@
     "decoder_num_attention_heads": 0,
     "decoder_intermediate_size": 2048,
     "decoder_attention_dropout": 0.0,
-    "keep_same_dtype": false,
+    "keep_same_dtype": true,
     "num_fourier_feats": 20,
     "fourier_max_freq": 100.0,
     "mlp_hidden_size": 1024,

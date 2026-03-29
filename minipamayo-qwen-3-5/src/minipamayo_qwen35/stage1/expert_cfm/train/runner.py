@@ -100,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--decoder-intermediate-size", type=int, default=2048)
     parser.add_argument("--decoder-attention-dropout", type=float, default=0.0)
     parser.add_argument("--expert-non-causal-attention", type=bool, default=True)
-    parser.add_argument("--keep-same-dtype", type=bool, default=False)
+    parser.add_argument("--keep-same-dtype", type=bool, default=True)
     parser.add_argument("--num-fourier-feats", type=int, default=20)
     parser.add_argument("--fourier-max-freq", type=float, default=100.0)
     parser.add_argument("--mlp-hidden-size", type=int, default=1024)
