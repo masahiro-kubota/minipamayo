@@ -9,14 +9,14 @@ from pathlib import Path
 
 import torch
 
-from ...utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
-from ...action_space.record_adapter import (
+from ..utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
+from ..action_space.record_adapter import (
     canonical_action_tensor_from_record,
     saved_action_tensor_from_record,
 )
 from .dataset import read_jsonl
 
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def build_parser() -> argparse.ArgumentParser:

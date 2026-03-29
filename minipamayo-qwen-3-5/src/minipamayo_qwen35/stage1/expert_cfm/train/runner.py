@@ -14,7 +14,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, random_split
 
-from ....stage1.data.dataset import Stage1JsonlDataset
+from ....stage1.dataset import Stage1JsonlDataset
 from ....stage1.vlm_ce.train import (
     format_gib,
     log_gpu_preflight,
@@ -47,7 +47,7 @@ from ....utils.run_metadata import (
 )
 from ....diffusion.action_expert import FlowMatchingDiffusion
 from ....models.action_expert import Stage1ActionExpert
-from ..core.common import (
+from ..common import (
     build_stage1b_metadata,
     compute_action_stats,
     extract_prompt_cache,

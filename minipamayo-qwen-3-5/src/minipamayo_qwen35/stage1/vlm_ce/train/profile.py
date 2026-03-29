@@ -25,7 +25,7 @@ from ....utils.json_config import (
 )
 from ....utils.preflight import require_expected_cuda_toolkit
 from ....contract.task_spec import CanonicalStage1Spec
-from ...data.dataset import Stage1JsonlDataset
+from ...dataset import Stage1JsonlDataset
 from ....contract.prompt import DEFAULT_QUESTION, add_prompt_special_tokens, build_prompt_text
 from ....contract.history_tokens import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ....contract.trajectory_tokens import Stage1TokenRegistry

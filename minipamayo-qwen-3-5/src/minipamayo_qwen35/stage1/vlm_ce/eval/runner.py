@@ -38,7 +38,7 @@ from ....utils.run_metadata import (
     collect_processor_settings,
 )
 from ....contract.task_spec import CanonicalStage1Spec, Stage1TaskSpec
-from ...data.dataset import Stage1JsonlDataset
+from ...dataset import Stage1JsonlDataset
 from ....action_space.record_adapter import rollout_waypoints_from_action_tensor
 from ....contract.prompt import add_prompt_special_tokens
 from ....contract.history_tokens import HistoryTokenRegistry, HistoryTrajectoryQuantizer

@@ -1,4 +1,4 @@
-"""Run the canonical Stage 1 data extraction entrypoint."""
+"""Run the canonical Stage 1 preprocessing entrypoint."""
 
 from .extract import main
 

@@ -8,8 +8,8 @@ from pathlib import Path
 import torch
 from torch.utils.data import Dataset
 
-from ...contract.history_tokens import canonicalize_history_sample_tensors
-from ...action_space.record_adapter import (
+from ..contract.history_tokens import canonicalize_history_sample_tensors
+from ..action_space.record_adapter import (
     derive_future_tensors_from_global_poses,
     saved_action_tensor_from_record,
 )

@@ -11,7 +11,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 
-from ....stage1.data.dataset import Stage1JsonlDataset
+from ....stage1.dataset import Stage1JsonlDataset
 from ....stage1.vlm_ce.train import stage1_collate
 from ....action_space.record_adapter import (
     canonicalize_future_batch_from_action_space,
@@ -31,7 +31,7 @@ from ....utils.json_config import (
 from ....utils.preflight import require_expected_cuda_toolkit
 from ....diffusion.action_expert import FlowMatchingDiffusion
 from ....models.action_expert import load_action_expert_from_checkpoint
-from ..core.common import (
+from ..common import (
     extract_prompt_cache,
     freeze_module,
     infer_prompt_text,

@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import Dataset
 
-from ..stage1.data.dataset import normalize_jsonl_paths, read_jsonl
+from ..stage1.dataset import normalize_jsonl_paths, read_jsonl
 from .synthetic import build_reasoning_text, infer_driving_decision
 
 

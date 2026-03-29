@@ -45,7 +45,7 @@ from ....utils.run_metadata import (
     collect_processor_settings,
 )
 from ....contract.task_spec import CanonicalStage1Spec, Stage1TaskSpec
-from ...data.dataset import Stage1JsonlDataset
+from ...dataset import Stage1JsonlDataset
 from ....contract.prompt import (
     DEFAULT_QUESTION,
     PROMPT_SPECIAL_TOKENS,

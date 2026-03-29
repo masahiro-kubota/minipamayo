@@ -14,7 +14,7 @@ from ....action_space.record_adapter import (
     canonicalize_future_batch_from_action_space,
     canonicalize_history_batch_for_action_space,
 )
-from ....stage1.data.dataset import Stage1JsonlDataset
+from ....stage1.dataset import Stage1JsonlDataset
 from ....utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
@@ -24,7 +24,7 @@ from ....utils.json_config import load_json_payload, normalize_arg_config, resol
 from ....utils.preflight import require_expected_cuda_toolkit
 from ....diffusion.action_expert import FlowMatchingDiffusion
 from ....models.action_expert import load_action_expert_from_checkpoint
-from ..core.common import (
+from ..common import (
     extract_prompt_cache,
     freeze_module,
     infer_prompt_text,

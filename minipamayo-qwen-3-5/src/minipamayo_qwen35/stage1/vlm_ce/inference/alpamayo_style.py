@@ -32,7 +32,7 @@ from ....contract.prompt import (
     build_stage1_question_user_text,
 )
 from ....action_space.record_adapter import rollout_waypoints_from_action_tensor
-from ...data.dataset import Stage1JsonlDataset
+from ...dataset import Stage1JsonlDataset
 from ..eval.runner import (
     greedy_generate_action_tokens,
     require_record_field,
