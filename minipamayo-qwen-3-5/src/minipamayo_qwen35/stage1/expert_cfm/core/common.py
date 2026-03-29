@@ -6,8 +6,8 @@ from pathlib import Path
 
 import torch
 
-from ... import CanonicalStage1Spec
-from ...common.prompt import DEFAULT_QUESTION, build_prompt_text
+from ....contract.task_spec import CanonicalStage1Spec
+from ....contract.prompt import DEFAULT_QUESTION, build_prompt_text
 from ...vlm_ce.eval import load_components
 from ...vlm_ce.train import model_forward_inputs, prepare_prompt_inputs_with_history
 

@@ -44,21 +44,21 @@ from ....utils.run_metadata import (
     collect_gpu_info,
     collect_processor_settings,
 )
-from ... import CanonicalStage1Spec, Stage1TaskSpec
+from ....contract.task_spec import CanonicalStage1Spec, Stage1TaskSpec
 from ...data.dataset import Stage1JsonlDataset
-from ...common.prompt import (
+from ....contract.prompt import (
     DEFAULT_QUESTION,
     PROMPT_SPECIAL_TOKENS,
     add_prompt_special_tokens,
     build_prompt_text,
 )
-from ...tokenization.history import (
+from ....contract.history_tokens import (
     HistoryTokenRegistry,
     HistoryTrajectoryQuantizer,
     encode_history_token_id_rows,
     interpolate_history_token_embeddings,
 )
-from ...tokenization.registry import Stage1TokenRegistry
+from ....contract.trajectory_tokens import Stage1TokenRegistry
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {

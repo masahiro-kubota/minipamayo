@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..stage1.tokenization.quantizer import ActionQuantizer
-from ..stage1.tokenization.registry import Stage1TokenRegistry
+from ..contract.trajectory_tokens import ActionQuantizer, Stage1TokenRegistry
 from .stage3_builder import normalize_label
 
 

@@ -10,7 +10,7 @@ from pathlib import Path
 import torch
 from transformers import LogitsProcessor, LogitsProcessorList, StoppingCriteria, StoppingCriteriaList
 
-from ....stage1.common.prompt import COT_END_TOKEN, TRAJ_FUTURE_START_TOKEN
+from ....contract.prompt import COT_END_TOKEN, TRAJ_FUTURE_START_TOKEN
 from ....stage1.expert_cfm.core.action_space import UnicycleAccelCurvatureActionSpace
 from ....stage1.expert_cfm.core.diffusion import FlowMatchingDiffusion
 from ....stage1.expert_cfm.core.model import load_action_expert_from_checkpoint

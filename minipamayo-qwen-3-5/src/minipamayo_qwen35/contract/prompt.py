@@ -1,8 +1,8 @@
-"""Prompt builders for canonical Stage 1."""
+"""Shared prompt builders for the Stage 1 / Stage 2 contract."""
 
 from __future__ import annotations
 
-from ..tokenization.history import (
+from .history_tokens import (
     HISTORY_END_TOKEN,
     HISTORY_PLACEHOLDER_TOKEN,
     HISTORY_START_TOKEN,

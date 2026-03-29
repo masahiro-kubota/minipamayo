@@ -1,4 +1,4 @@
-"""Shared Stage 1 target specifications and quantizers."""
+"""Shared Stage 1 / Stage 2 target specifications and quantizers."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ import numpy as np
 import torch
 from torch.utils.data import Subset
 
-from ..data.canonical_action import canonical_action_array_from_record
-from ..tokenization.quantizer import ActionQuantizer
+from ..stage1.data.canonical_action import canonical_action_array_from_record
+from .trajectory_tokens import ActionQuantizer
 
 
 def _record_action_array(record: dict) -> np.ndarray:

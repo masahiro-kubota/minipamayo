@@ -17,7 +17,7 @@ from ....stage1.data.canonical_action import (
     canonical_action_tensor_from_tensors,
     derive_future_tensors_from_global_poses,
 )
-from ....stage1.tokenization.history import canonicalize_history_sample_tensors
+from ....contract.history_tokens import canonicalize_history_sample_tensors
 
 if TYPE_CHECKING:
     from pathlib import Path

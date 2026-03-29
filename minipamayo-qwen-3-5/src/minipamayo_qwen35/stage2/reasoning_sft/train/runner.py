@@ -19,7 +19,8 @@ import torch.nn.functional as F
 from PIL import Image
 from torch.utils.data import DataLoader, random_split
 
-from ....stage1.common.prompt import COT_END_TOKEN, TRAJ_FUTURE_START_TOKEN
+from ....contract.prompt import COT_END_TOKEN, TRAJ_FUTURE_START_TOKEN
+from ....contract.sequence_layout import STAGE2_PROMPT_CONTRACT, STAGE2_TARGET_LAYOUT
 from ....stage1.vlm_ce.eval import load_components
 from ....stage1.vlm_ce.train import (
     format_gib,
@@ -212,8 +213,8 @@ def build_stage2_metadata(dataset, args: argparse.Namespace) -> dict:
         "val_jsonl": args.val_jsonl or None,
         "sample_format": "jsonl+images",
         "reasoning_source": "provided_reasoning_text",
-        "target_layout": "reasoning_then_cot_end_then_traj_future_start_then_eos",
-        "prompt_contract": "alpamayo_like_reasoning_with_cot_prefill",
+        "target_layout": STAGE2_TARGET_LAYOUT,
+        "prompt_contract": STAGE2_PROMPT_CONTRACT,
         "k": int(gt_waypoints.shape[0]),
         "action_dim": int(action.shape[0]),
         "dt": float(sample["dt"]),

@@ -25,8 +25,8 @@ from transformers import AutoModelForImageTextToText
 from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
 from ....utils.preflight import require_expected_cuda_toolkit
 from ....utils.run_metadata import collect_processor_settings
-from ... import CanonicalStage1Spec, KappaOnlyStage1Spec, Stage1TaskSpec
-from ...common.prompt import add_prompt_special_tokens
+from ....contract.task_spec import CanonicalStage1Spec, KappaOnlyStage1Spec, Stage1TaskSpec
+from ....contract.prompt import add_prompt_special_tokens
 from ...data.canonical_action import rollout_waypoints_from_action_tensor
 from ...data.dataset import Stage1JsonlDataset
 from ..eval.runner import (
@@ -36,8 +36,8 @@ from ..eval.runner import (
     resolve_dtype,
     resolve_processor_path,
 )
-from ...tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
-from ...tokenization.registry import Stage1TokenRegistry
+from ....contract.history_tokens import HistoryTokenRegistry, HistoryTrajectoryQuantizer
+from ....contract.trajectory_tokens import Stage1TokenRegistry
 from ..train import (
     CHECKPOINT_KIND_FULL,
     CHECKPOINT_KIND_MODEL_ONLY,

@@ -24,11 +24,11 @@ from ....utils.json_config import (
     resolve_path_base,
 )
 from ....utils.preflight import require_expected_cuda_toolkit
-from ... import CanonicalStage1Spec
+from ....contract.task_spec import CanonicalStage1Spec
 from ...data.dataset import Stage1JsonlDataset
-from ...common.prompt import DEFAULT_QUESTION, add_prompt_special_tokens, build_prompt_text
-from ...tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
-from ...tokenization.registry import Stage1TokenRegistry
+from ....contract.prompt import DEFAULT_QUESTION, add_prompt_special_tokens, build_prompt_text
+from ....contract.history_tokens import HistoryTokenRegistry, HistoryTrajectoryQuantizer
+from ....contract.trajectory_tokens import Stage1TokenRegistry
 from .runner import format_gib, model_forward_inputs, prepare_batch, stage1_collate
 from .runner import build_model_load_kwargs
 

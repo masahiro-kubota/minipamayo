@@ -1,4 +1,4 @@
-"""History trajectory tokenization helpers for canonical Stage 1."""
+"""Shared history trajectory tokenization helpers for the contract layer."""
 
 from __future__ import annotations
 
@@ -8,7 +8,11 @@ from dataclasses import dataclass, field
 import numpy as np
 import torch
 
-from .registry import format_stage1_token
+
+def format_stage1_token(prefix: str, index: int) -> str:
+    if prefix == "i":
+        return f"<i{index}>"
+    return f"<{prefix}_{index:03d}>"
 
 HISTORY_START_TOKEN = "<|traj_history_start|>"
 HISTORY_PLACEHOLDER_TOKEN = "<|traj_history|>"

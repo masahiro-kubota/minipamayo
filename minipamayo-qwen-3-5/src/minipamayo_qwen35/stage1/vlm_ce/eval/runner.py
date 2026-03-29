@@ -37,12 +37,12 @@ from ....utils.run_metadata import (
     collect_gpu_info,
     collect_processor_settings,
 )
-from ... import CanonicalStage1Spec, Stage1TaskSpec
+from ....contract.task_spec import CanonicalStage1Spec, Stage1TaskSpec
 from ...data.dataset import Stage1JsonlDataset
 from ...data.canonical_action import rollout_waypoints_from_action_tensor
-from ...common.prompt import add_prompt_special_tokens
-from ...tokenization.history import HistoryTokenRegistry, HistoryTrajectoryQuantizer
-from ...tokenization.registry import Stage1TokenRegistry
+from ....contract.prompt import add_prompt_special_tokens
+from ....contract.history_tokens import HistoryTokenRegistry, HistoryTrajectoryQuantizer
+from ....contract.trajectory_tokens import Stage1TokenRegistry
 from ..train import (
     CHECKPOINT_KIND_FULL,
     CHECKPOINT_KIND_MODEL_ONLY,

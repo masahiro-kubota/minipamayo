@@ -1,6 +1,6 @@
 """Canonical Stage 1 eval entrypoint."""
 
-from ... import CanonicalStage1Spec
+from ....contract.task_spec import CanonicalStage1Spec
 from .runner import main as run_stage1_eval
 
 
