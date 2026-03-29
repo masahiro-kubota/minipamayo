@@ -134,7 +134,7 @@ diff -u \
 
 注意:
 - `record_adapter.py` は Alpamayo loader 不在を埋める層
-- `action_expert.py` は end-to-end wrapper 未導入の間の shared 実装
+- `action_expert.py` は Stage1B train/eval/inference と wrapper の両方が使う shared 実装
 
 ### 2. wrapper builder をどこに残すか決める
 
@@ -150,7 +150,6 @@ diff -u \
 対象:
 - `models/base_model.py`
 - `models/alpamayo_r1.py`
-- `helper.py`
 
 注意:
 - `Qwen3.5-0.8B` を使う前提を維持する限り、Alpamayo 純正のままでは通らない可能性が高い
