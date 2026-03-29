@@ -58,6 +58,7 @@ diff -u \
 - `diffusion/base.py`
 - `diffusion/__init__.py`
 - `geometry/rotation.py`
+- `helper.py`
 - `models/action_in_proj.py`
 - `models/delta_tokenizer.py`
 - `models/token_utils.py`
@@ -85,10 +86,6 @@ diff -u \
   - これは `transformers==5.4.0 + Qwen3.5-0.8B + flash_attention_2` の expert path が 2D padding mask を期待するため
   - `prompt_cache.crop(...)` を `hasattr` で guard する
   - いずれも `Qwen3.5-0.8B + transformers 5.4` の cache / flash-attn runtime 差のための shim
-- `helper.py`
-  - Alpamayo は `BASE_PROCESSOR_NAME = "Qwen/Qwen3-VL-2B-Instruct"` を使う
-  - こちらは Stage1A checkpoint 横の saved processor を読む
-  - system/user text も current canonical contract に合わせている
 - `test_inference.py`
   - Alpamayo は `load_physical_aiavdataset.py` から直接 tensor を作る
   - こちらは `samples_reasoning_sft.jsonl` と `record_adapter` 系の契約を使う
