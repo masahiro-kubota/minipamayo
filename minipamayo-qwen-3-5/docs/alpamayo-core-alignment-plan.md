@@ -142,10 +142,6 @@ diff -u \
 - `Qwen3.5-0.8B` を使う前提を維持する限り、Alpamayo 純正との差分は runtime shim として受容する
 - 差分ゼロは目指さず、「なぜ必要かが説明できる shim だけ残す」を採用する
 
-補足:
-- `stage2` wrapper inference の expert hard-coded `sdpa` は削除済み
-- `stage1B` eval / inference / train は同じ 2D expert mask helper に揃った
-
 ## 優先順位
 
 優先度の高い残件は、このメモの範囲では基本的に解消済み。
