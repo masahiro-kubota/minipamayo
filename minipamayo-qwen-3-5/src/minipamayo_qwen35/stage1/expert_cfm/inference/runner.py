@@ -9,6 +9,10 @@ from pathlib import Path
 
 import torch
 
+from ....action_space.record_adapter import (
+    canonicalize_future_batch_from_action_space,
+    canonicalize_history_batch_for_action_space,
+)
 from ....stage1.data.dataset import Stage1JsonlDataset
 from ....utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
@@ -162,12 +166,17 @@ def main() -> None:
         prompt_cache=prompt_cache,
         prompt_attention_mask=prompt_attention_mask,
     ).reshape(1, -1, 2)
+    history_xyz, history_rot = canonicalize_history_batch_for_action_space(
+        batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
+        batch["ego_history_rot"].to(device=device, dtype=torch.float32),
+    )
     pred_xyz, _pred_rot = action_space.action_to_traj(
-        traj_history_xyz=batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
-        traj_history_rot=batch["ego_history_rot"].to(device=device, dtype=torch.float32),
+        traj_history_xyz=history_xyz,
+        traj_history_rot=history_rot,
         action=pred_action,
     )
-    pred_waypoints = pred_xyz[0, 0, :, :2].detach().cpu()
+    pred_xyz, _pred_rot = canonicalize_future_batch_from_action_space(pred_xyz, _pred_rot)
+    pred_waypoints = pred_xyz[0, :, :2].detach().cpu()
     gt_waypoints = batch["gt_waypoints"][0].to(dtype=torch.float32)
     errors = torch.norm(pred_waypoints.cpu() - gt_waypoints, dim=1)
     payload = {

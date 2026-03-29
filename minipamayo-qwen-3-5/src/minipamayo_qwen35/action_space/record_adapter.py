@@ -48,6 +48,47 @@ def canonicalize_future_sample_tensors(
     return future_xyz, future_rot
 
 
+def canonicalize_history_batch_for_action_space(
+    history_xyz: torch.Tensor,
+    history_rot: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    history_xyz, history_rot = canonicalize_history_batch_tensors(history_xyz, history_rot)
+    return history_xyz[:, 0], history_rot[:, 0]
+
+
+def canonicalize_future_batch_for_action_space(
+    future_xyz: torch.Tensor,
+    future_rot: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if future_xyz.dim() == 3 and future_xyz.shape[-1] == 3:
+        pass
+    elif future_xyz.dim() == 4 and future_xyz.shape[1] == 1 and future_xyz.shape[-1] == 3:
+        future_xyz = future_xyz[:, 0]
+    else:
+        raise RuntimeError(
+            "Expected future xyz shaped (batch, T, 3) or (batch, 1, T, 3).\n"
+            f"found={tuple(future_xyz.shape)!r}"
+        )
+
+    if future_rot.dim() == 4 and future_rot.shape[-2:] == (3, 3):
+        pass
+    elif future_rot.dim() == 5 and future_rot.shape[1] == 1 and future_rot.shape[-2:] == (3, 3):
+        future_rot = future_rot[:, 0]
+    else:
+        raise RuntimeError(
+            "Expected future rot shaped (batch, T, 3, 3) or (batch, 1, T, 3, 3).\n"
+            f"found={tuple(future_rot.shape)!r}"
+        )
+    return future_xyz, future_rot
+
+
+def canonicalize_future_batch_from_action_space(
+    future_xyz: torch.Tensor,
+    future_rot: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    return canonicalize_future_batch_for_action_space(future_xyz, future_rot)
+
+
 def derive_future_tensors_from_global_poses(record: dict) -> tuple[torch.Tensor, torch.Tensor]:
     if "ego_pose" not in record or "future_poses_global" not in record:
         raise RuntimeError(
@@ -175,7 +216,7 @@ def rollout_waypoints_from_action_tensor(
     history_rot: torch.Tensor,
     dt: float,
 ) -> torch.Tensor:
-    history_xyz, history_rot = canonicalize_history_batch_tensors(history_xyz, history_rot)
+    history_xyz, history_rot = canonicalize_history_batch_for_action_space(history_xyz, history_rot)
     if action.dim() == 1:
         if action.numel() % 2 != 0:
             raise RuntimeError(
@@ -206,4 +247,8 @@ def rollout_waypoints_from_action_tensor(
         history_xyz.to(dtype=torch.float32),
         history_rot.to(dtype=torch.float32),
     )
-    return future_xyz[:, 0, :, :2].to(torch.float32)
+    future_xyz, _future_rot = canonicalize_future_batch_from_action_space(
+        future_xyz,
+        _future_rot,
+    )
+    return future_xyz[:, :, :2].to(torch.float32)

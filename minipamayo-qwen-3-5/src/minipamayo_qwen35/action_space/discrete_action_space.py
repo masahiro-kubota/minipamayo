@@ -7,6 +7,11 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
+from .record_adapter import (
+    canonicalize_future_batch_for_action_space,
+    canonicalize_future_batch_from_action_space,
+    canonicalize_history_batch_for_action_space,
+)
 from .unicycle_accel_curvature import UnicycleAccelCurvatureActionSpace
 
 
@@ -52,8 +57,8 @@ class DiscreteTrajectoryTokenizer:
     def dims_max(self) -> list[float]:
         return [float(self.a_range[1]), float(self.kappa_range[1])]
 
-    def _build_action_space(self, *, k: int) -> UnicycleAccelCurvatureActionSpace:
-        return UnicycleAccelCurvatureActionSpace(k=int(k))
+    def _build_action_space(self, *, n_waypoints: int) -> UnicycleAccelCurvatureActionSpace:
+        return UnicycleAccelCurvatureActionSpace(n_waypoints=int(n_waypoints))
 
     def quantize_bin(self, value: float, v_min: float, v_max: float) -> int:
         clamped = max(v_min, min(v_max - 1e-8, float(value)))
@@ -93,12 +98,15 @@ class DiscreteTrajectoryTokenizer:
         fut_tstamp: torch.Tensor | None = None,
     ) -> torch.LongTensor:
         del hist_tstamp, fut_tstamp
-        future_xyz = _canonicalize_future_xyz(fut_xyz)
-        future_rot = _canonicalize_future_rot(fut_rot)
-        action_space = self._build_action_space(k=int(future_xyz.shape[1]))
+        history_xyz, history_rot = canonicalize_history_batch_for_action_space(hist_xyz, hist_rot)
+        future_xyz, future_rot = canonicalize_future_batch_for_action_space(
+            _canonicalize_future_xyz(fut_xyz),
+            _canonicalize_future_rot(fut_rot),
+        )
+        action_space = self._build_action_space(n_waypoints=int(future_xyz.shape[1]))
         action = action_space.traj_to_action(
-            traj_history_xyz=hist_xyz,
-            traj_history_rot=hist_rot,
+            traj_history_xyz=history_xyz,
+            traj_history_rot=history_rot,
             traj_future_xyz=future_xyz,
             traj_future_rot=future_rot,
         )
@@ -128,7 +136,8 @@ class DiscreteTrajectoryTokenizer:
         dims_max = torch.tensor(self.dims_max, device=action.device, dtype=action.dtype)
         action = action / float(self.n_bins - 1)
         action = action * (dims_max - dims_min) + dims_min
-        action_space = self._build_action_space(k=k)
-        fut_xyz, fut_rot = action_space.action_to_traj(action, hist_xyz, hist_rot)
+        history_xyz, history_rot = canonicalize_history_batch_for_action_space(hist_xyz, hist_rot)
+        action_space = self._build_action_space(n_waypoints=k)
+        fut_xyz, fut_rot = action_space.action_to_traj(action, history_xyz, history_rot)
+        fut_xyz, fut_rot = canonicalize_future_batch_from_action_space(fut_xyz, fut_rot)
         return fut_xyz, fut_rot, None
-

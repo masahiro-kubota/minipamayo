@@ -12,6 +12,10 @@ from torch.utils.data import DataLoader
 
 from ....stage1.data.dataset import Stage1JsonlDataset
 from ....stage1.vlm_ce.train import stage1_collate
+from ....action_space.record_adapter import (
+    canonicalize_future_batch_from_action_space,
+    canonicalize_history_batch_for_action_space,
+)
 from ....utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
@@ -190,12 +194,17 @@ def main() -> None:
                 prompt_attention_mask=prompt_attention_mask,
             ).reshape(gt_action.shape[0], -1, 2)
             gt_waypoints = batch["gt_waypoints"].to(device=device, dtype=torch.float32)
+            history_xyz, history_rot = canonicalize_history_batch_for_action_space(
+                batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
+                batch["ego_history_rot"].to(device=device, dtype=torch.float32),
+            )
             pred_xyz, _pred_rot = action_space.action_to_traj(
-                traj_history_xyz=batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
-                traj_history_rot=batch["ego_history_rot"].to(device=device, dtype=torch.float32),
+                traj_history_xyz=history_xyz,
+                traj_history_rot=history_rot,
                 action=pred_action,
             )
-            pred_waypoints = pred_xyz[:, 0, :, :2]
+            pred_xyz, _pred_rot = canonicalize_future_batch_from_action_space(pred_xyz, _pred_rot)
+            pred_waypoints = pred_xyz[:, :, :2]
             displacement = torch.norm(pred_waypoints - gt_waypoints, dim=2)
 
             batch_size = gt_action.shape[0]
