@@ -21,11 +21,11 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader
 
-from ...stage1.vlm_ce.eval import load_components
-from ...models.trajectory_decoder import cfm_sample, load_decoder_from_checkpoint
-from ...sequence.rollout_parser import parse_generated_sequence
-from ...sequence.stage3_builder import build_stage3_prompt_text, build_reasoning_text
-from ...stage1.vlm_ce.train import (
+from minipamayo_qwen35.models.trajectory_decoder import cfm_sample, load_decoder_from_checkpoint
+from minipamayo_qwen35.sequence.rollout_parser import parse_generated_sequence
+from minipamayo_qwen35.sequence.stage3_builder import build_stage3_prompt_text, build_reasoning_text
+from minipamayo_qwen35.stage1.vlm_ce.eval import load_components
+from minipamayo_qwen35.stage1.vlm_ce.train import (
     format_gib,
     log_gpu_preflight,
     maybe_wandb_finish,
@@ -34,18 +34,22 @@ from ...stage1.vlm_ce.train import (
     set_seed,
     write_run_config,
 )
-from ...utils.dynamics import forward_dynamics_batch
-from ...utils.image_budget import (
+from minipamayo_qwen35.utils.dynamics import forward_dynamics_batch
+from minipamayo_qwen35.utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
-from ...utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
-from ...utils.preflight import enforce_training_prerequisites
-from ...utils.run_metadata import collect_dataset_view_fingerprint, collect_git_metadata, collect_gpu_info
-from ...utils.stage34_dataset import Stage34JsonlDataset, stage34_collate
+from minipamayo_qwen35.utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
+from minipamayo_qwen35.utils.preflight import enforce_training_prerequisites
+from minipamayo_qwen35.utils.run_metadata import (
+    collect_dataset_view_fingerprint,
+    collect_git_metadata,
+    collect_gpu_info,
+)
+from minipamayo_qwen35.utils.stage34_dataset import Stage34JsonlDataset, stage34_collate
 
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
+PROJECT_ROOT = Path(__file__).resolve().parents[6]
 CONFIG_PATH_KEYS = {
     "stage3_checkpoint",
     "stage2_checkpoint",

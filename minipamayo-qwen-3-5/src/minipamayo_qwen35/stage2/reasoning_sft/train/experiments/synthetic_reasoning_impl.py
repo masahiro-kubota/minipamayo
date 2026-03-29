@@ -18,9 +18,9 @@ import torch.nn.functional as F
 from PIL import Image
 from torch.utils.data import DataLoader, random_split
 
-from ...stage1.vlm_ce.eval import load_components
-from ...sequence.stage3_builder import ACTION_SECTION_HEADER, build_stage3_prompt_text
-from ...stage1.vlm_ce.train import (
+from minipamayo_qwen35.sequence.stage3_builder import ACTION_SECTION_HEADER, build_stage3_prompt_text
+from minipamayo_qwen35.stage1.vlm_ce.eval import load_components
+from minipamayo_qwen35.stage1.vlm_ce.train import (
     first_record_from_dataset,
     format_gib,
     log_gpu_preflight,
@@ -32,22 +32,22 @@ from ...stage1.vlm_ce.train import (
     set_seed,
     write_run_config,
 )
-from ...utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
-from ...utils.image_budget import (
+from minipamayo_qwen35.utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
-from ...utils.preflight import enforce_training_prerequisites
-from ...utils.run_metadata import (
+from minipamayo_qwen35.utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
+from minipamayo_qwen35.utils.preflight import enforce_training_prerequisites
+from minipamayo_qwen35.utils.run_metadata import (
     collect_dataset_view_fingerprint,
     collect_git_metadata,
     collect_gpu_info,
     collect_processor_settings,
 )
-from ...utils.stage34_dataset import Stage34JsonlDataset, stage34_collate
+from minipamayo_qwen35.utils.stage34_dataset import Stage34JsonlDataset, stage34_collate
 
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
+PROJECT_ROOT = Path(__file__).resolve().parents[6]
 CONFIG_PATH_KEYS = {
     "stage1_checkpoint",
     "train_jsonl",
