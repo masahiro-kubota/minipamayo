@@ -194,38 +194,19 @@ class CanonicalStage1Spec(Stage1TaskSpec):
         *,
         stage1_metadata: dict | None = None,
     ) -> DiscreteTrajectoryTokenizer:
-        if "num_bins" in quantizer_payload:
-            required_keys = ["num_bins", "dims_min", "dims_max", "action_space_cfg"]
-        else:
-            required_keys = ["n_bins", "a_range", "kappa_range"]
+        del stage1_metadata
+        required_keys = ["num_bins", "dims_min", "dims_max", "action_space_cfg"]
         missing_keys = [key for key in required_keys if key not in quantizer_payload]
         if missing_keys:
             raise RuntimeError(
                 "Canonical Stage 1 checkpoint is missing quantizer metadata:\n" + "\n".join(missing_keys)
             )
-        if "num_bins" in quantizer_payload:
-            action_space_cfg = dict(quantizer_payload["action_space_cfg"])
-            return DiscreteTrajectoryTokenizer(
-                action_space=_build_canonical_action_space(action_space_cfg),
-                dims_min=list(quantizer_payload["dims_min"]),
-                dims_max=list(quantizer_payload["dims_max"]),
-                num_bins=int(quantizer_payload["num_bins"]),
-            )
-        if stage1_metadata is None or "k" not in stage1_metadata or "dt" not in stage1_metadata:
-            raise RuntimeError(
-                "Legacy canonical Stage 1 checkpoint is missing the metadata needed to rebuild the action space.\n"
-                "required: stage1_metadata['k'], stage1_metadata['dt']"
-            )
-        legacy_action_space_cfg = {
-            "_target_": "minipamayo_qwen35.action_space.unicycle_accel_curvature.UnicycleAccelCurvatureActionSpace",
-            "n_waypoints": int(stage1_metadata["k"]),
-            "dt": float(stage1_metadata["dt"]),
-        }
+        action_space_cfg = dict(quantizer_payload["action_space_cfg"])
         return DiscreteTrajectoryTokenizer(
-            action_space=_build_canonical_action_space(legacy_action_space_cfg),
-            dims_min=[float(quantizer_payload["a_range"][0]), float(quantizer_payload["kappa_range"][0])],
-            dims_max=[float(quantizer_payload["a_range"][1]), float(quantizer_payload["kappa_range"][1])],
-            num_bins=int(quantizer_payload["n_bins"]),
+            action_space=_build_canonical_action_space(action_space_cfg),
+            dims_min=list(quantizer_payload["dims_min"]),
+            dims_max=list(quantizer_payload["dims_max"]),
+            num_bins=int(quantizer_payload["num_bins"]),
         )
 
     def target_from_action_array(self, action: np.ndarray) -> np.ndarray:

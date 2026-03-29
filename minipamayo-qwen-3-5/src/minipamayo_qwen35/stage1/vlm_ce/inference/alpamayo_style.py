@@ -186,16 +186,30 @@ def main() -> None:
         raise RuntimeError("Checkpoint is missing canonical `history_registry` metadata.")
     history_cfg = checkpoint["history_registry"]
     token_cfg = checkpoint["token_registry"]
+    required_token_cfg_keys = ["n_bins", "token_prefix", "start_index"]
+    missing_token_cfg_keys = [key for key in required_token_cfg_keys if key not in token_cfg]
+    if missing_token_cfg_keys:
+        raise RuntimeError(
+            "Checkpoint token_registry is missing canonical fields:\n"
+            + "\n".join(missing_token_cfg_keys)
+        )
+    required_history_cfg_keys = ["n_bins", "token_prefix", "start_index"]
+    missing_history_cfg_keys = [key for key in required_history_cfg_keys if key not in history_cfg]
+    if missing_history_cfg_keys:
+        raise RuntimeError(
+            "Checkpoint history_registry is missing canonical fields:\n"
+            + "\n".join(missing_history_cfg_keys)
+        )
     registry = Stage1TokenRegistry(
         n_bins=int(token_cfg["n_bins"]),
         token_prefix=str(token_cfg["token_prefix"]),
-        start_index=int(token_cfg.get("start_index", 0)),
+        start_index=int(token_cfg["start_index"]),
     )
     registry.add_to_tokenizer(tokenizer)
     history_registry = HistoryTokenRegistry(
         n_bins=int(history_cfg["n_bins"]),
         token_prefix=str(history_cfg["token_prefix"]),
-        start_index=int(history_cfg.get("start_index", 0)),
+        start_index=int(history_cfg["start_index"]),
     )
     history_registry.add_to_tokenizer(tokenizer)
     processor_settings = collect_processor_settings(
@@ -209,18 +223,35 @@ def main() -> None:
     ):
         raise RuntimeError("Checkpoint is missing canonical `history_quantizer` metadata.")
     history_quantizer_cfg = checkpoint["history_quantizer"]
+    required_history_quantizer_keys = [
+        "history_steps",
+        "n_bins",
+        "x_range",
+        "y_range",
+        "z_range",
+        "yaw_range",
+        "quantization_mode",
+    ]
+    missing_history_quantizer_keys = [
+        key for key in required_history_quantizer_keys if key not in history_quantizer_cfg
+    ]
+    if missing_history_quantizer_keys:
+        raise RuntimeError(
+            "Checkpoint history_quantizer is missing canonical fields:\n"
+            + "\n".join(missing_history_quantizer_keys)
+        )
     history_quantizer = HistoryTrajectoryQuantizer(
         history_steps=int(history_quantizer_cfg["history_steps"]),
         n_bins=int(history_quantizer_cfg["n_bins"]),
         x_range=tuple(history_quantizer_cfg["x_range"]),
         y_range=tuple(history_quantizer_cfg["y_range"]),
-        z_range=tuple(history_quantizer_cfg.get("z_range", (-10.0, 10.0))),
+        z_range=tuple(history_quantizer_cfg["z_range"]),
         yaw_range=(
             tuple(history_quantizer_cfg["yaw_range"])
-            if history_quantizer_cfg.get("yaw_range") is not None
+            if history_quantizer_cfg["yaw_range"] is not None
             else None
         ),
-        quantization_mode=str(history_quantizer_cfg.get("quantization_mode", "xy_yaw")),
+        quantization_mode=str(history_quantizer_cfg["quantization_mode"]),
     )
 
     if "quantizer" not in checkpoint or not isinstance(checkpoint["quantizer"], dict):

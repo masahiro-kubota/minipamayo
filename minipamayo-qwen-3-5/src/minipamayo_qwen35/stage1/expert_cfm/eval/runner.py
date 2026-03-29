@@ -154,13 +154,12 @@ def main() -> None:
         )
     dt = float(stage1b_metadata["dt"])
     diffusion = FlowMatchingDiffusion(n_steps=args.flow_steps)
-    action_space_cfg = dict(stage1b_metadata.get("action_space_cfg") or {})
+    if "action_space_cfg" not in stage1b_metadata or not isinstance(
+        stage1b_metadata["action_space_cfg"], dict
+    ):
+        raise RuntimeError("Stage 1B checkpoint metadata is missing canonical `action_space_cfg`.")
+    action_space_cfg = dict(stage1b_metadata["action_space_cfg"])
     action_space_cfg.pop("_target_", None)
-    action_space_cfg.setdefault(
-        "n_waypoints",
-        int(stage1b_metadata["k"]) if "k" in stage1b_metadata else int(dataset[0]["action"].shape[0] // 2),
-    )
-    action_space_cfg.setdefault("dt", dt)
     action_space = UnicycleAccelCurvatureActionSpace(**action_space_cfg)
 
     total_loss = 0.0
