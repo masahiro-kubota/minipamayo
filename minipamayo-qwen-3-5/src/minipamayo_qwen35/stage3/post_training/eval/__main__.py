@@ -1,4 +1,4 @@
-"""Run canonical Stage 3 post-training evaluation."""
+"""Run canonical Stage 3 evaluation."""
 
 from .canonical import main
 

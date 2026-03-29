@@ -1,2 +1,5 @@
-"""Stage 3 post-training eval entrypoints."""
+"""Canonical Stage 3 evaluation entrypoint."""
 
+from .runner import main
+
+__all__ = ["main"]

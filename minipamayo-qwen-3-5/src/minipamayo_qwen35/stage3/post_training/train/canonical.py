@@ -1,4 +1,4 @@
-"""Canonical Stage 3 post-training entrypoint."""
+"""Canonical Stage 3 train entrypoint."""
 
 from .runner import main
 
