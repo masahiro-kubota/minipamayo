@@ -57,6 +57,7 @@ CONFIG_PATH_KEYS = {
     "stage1a_checkpoint",
     "train_jsonl",
     "val_jsonl",
+    "handoff_probe_jsonl",
     "save_dir",
 }
 
@@ -86,7 +87,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image-min-pixels", type=int, default=CANONICAL_IMAGE_MIN_PIXELS)
     parser.add_argument("--image-max-pixels", type=int, default=CANONICAL_IMAGE_MAX_PIXELS)
     parser.add_argument("--handoff-loss-weight", type=float, default=8.0)
+    parser.add_argument("--handoff-probe-jsonl", type=str, default="")
     parser.add_argument("--handoff-probe-samples", type=int, default=0)
+    parser.add_argument("--handoff-probe-max-per-jsonl", type=int, default=0)
     parser.add_argument("--handoff-probe-max-reasoning-tokens", type=int, default=256)
     parser.add_argument("--gradient-checkpointing", action="store_true", default=True)
     parser.add_argument("--wandb-project", type=str, default="minipamayo-qwen35")
@@ -115,7 +118,7 @@ def _load_config_args(config_json: str, parser: argparse.ArgumentParser) -> tupl
         parser,
         exclude_dests={"help", "config_json"},
         path_keys=CONFIG_PATH_KEYS,
-        list_keys={"train_jsonl", "val_jsonl"},
+        list_keys={"train_jsonl", "val_jsonl", "handoff_probe_jsonl"},
         base_dir=base_dir,
     )
     return str(config_path), payload, config_args
@@ -148,6 +151,8 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`handoff_loss_weight` must be > 0.")
     if args.handoff_probe_samples < 0:
         raise RuntimeError("`handoff_probe_samples` must be >= 0.")
+    if args.handoff_probe_max_per_jsonl < 0:
+        raise RuntimeError("`handoff_probe_max_per_jsonl` must be >= 0.")
     if args.handoff_probe_max_reasoning_tokens <= 0:
         raise RuntimeError("`handoff_probe_max_reasoning_tokens` must be > 0.")
     if args.early_stopping_patience < 0:
@@ -214,6 +219,25 @@ def build_stage2_metadata(dataset, args: argparse.Namespace) -> dict:
         "dt": float(sample["dt"]),
         "handoff_loss_weight": args.handoff_loss_weight,
     }
+
+
+def build_handoff_probe_dataset(args: argparse.Namespace):
+    if args.handoff_probe_jsonl:
+        max_per_jsonl = args.handoff_probe_max_per_jsonl
+        if max_per_jsonl <= 0:
+            raise RuntimeError(
+                "`handoff_probe_max_per_jsonl` must be > 0 when `handoff_probe_jsonl` is set."
+            )
+        probe_samples = []
+        for jsonl_path in args.handoff_probe_jsonl:
+            source_dataset = ReasoningSftJsonlDataset(jsonl_path)
+            source_count = min(max_per_jsonl, len(source_dataset))
+            for idx in range(source_count):
+                probe_samples.append(source_dataset[idx])
+        if not probe_samples:
+            raise RuntimeError("Explicit handoff probe dataset resolved to zero samples.")
+        return probe_samples
+    return None
 
 
 def _build_target_rows(
@@ -603,6 +627,7 @@ def main() -> None:
         train_loader, val_loader, train_size, val_size = build_dataloaders(args)
         if len(train_loader) == 0:
             raise RuntimeError("Train DataLoader is empty.")
+        explicit_handoff_probe_dataset = build_handoff_probe_dataset(args)
         train_dataset_fingerprint = collect_dataset_view_fingerprint(train_loader.dataset)
         val_dataset_fingerprint = (
             collect_dataset_view_fingerprint(val_loader.dataset) if val_loader is not None else None
@@ -642,7 +667,10 @@ def main() -> None:
 
         stage2_metadata = build_stage2_metadata(train_loader.dataset, args)
         stage2_metadata["processor_settings"] = processor_settings
+        if args.handoff_probe_jsonl:
+            stage2_metadata["handoff_probe_jsonl"] = args.handoff_probe_jsonl
         stage2_metadata["handoff_probe_samples"] = int(args.handoff_probe_samples)
+        stage2_metadata["handoff_probe_max_per_jsonl"] = int(args.handoff_probe_max_per_jsonl)
         stage2_metadata["handoff_probe_max_reasoning_tokens"] = int(
             args.handoff_probe_max_reasoning_tokens
         )
@@ -840,7 +868,11 @@ def main() -> None:
                 val_token_accuracy = None
                 metric_to_track = train_loss
 
-            probe_dataset = val_loader.dataset if val_loader is not None else train_loader.dataset
+            probe_dataset = (
+                explicit_handoff_probe_dataset
+                if explicit_handoff_probe_dataset is not None
+                else (val_loader.dataset if val_loader is not None else train_loader.dataset)
+            )
             handoff_probe = evaluate_handoff_probe(
                 model=model,
                 dataset=probe_dataset,

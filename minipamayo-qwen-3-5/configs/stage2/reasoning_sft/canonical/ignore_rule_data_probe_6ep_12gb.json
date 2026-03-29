@@ -8,6 +8,11 @@
       "datasets/processed/stage1/ignore_rule_data/20260327_231917_town01_perimeter_cw_expert_eval_0025824a9fa8/samples_reasoning_sft.jsonl"
     ],
     "save_dir": "checkpoints/stage2/reasoning_sft/canonical/ignore_rule_data_probe_6ep_12gb",
+    "handoff_probe_jsonl": [
+      "datasets/processed/stage1/ignore_rule_data/20260327_231917_town01_intersection_weave_ccw_expert_eval_0025824a9fa8/samples_reasoning_sft.jsonl",
+      "datasets/processed/stage1/ignore_rule_data/20260327_231917_town01_intersection_weave_cw_expert_eval_0025824a9fa8/samples_reasoning_sft.jsonl",
+      "datasets/processed/stage1/ignore_rule_data/20260327_231917_town01_perimeter_cw_expert_eval_0025824a9fa8/samples_reasoning_sft.jsonl"
+    ],
     "batch_size": 1,
     "grad_accum_steps": 1,
     "max_epochs": 6,
@@ -25,7 +30,8 @@
     "image_min_pixels": 163840,
     "image_max_pixels": 196608,
     "handoff_loss_weight": 8.0,
-    "handoff_probe_samples": 8,
+    "handoff_probe_samples": 0,
+    "handoff_probe_max_per_jsonl": 5,
     "handoff_probe_max_reasoning_tokens": 256,
     "gradient_checkpointing": true,
     "wandb_project": "minipamayo-qwen35",
