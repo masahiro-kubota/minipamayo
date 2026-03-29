@@ -1,8 +1,7 @@
 """Synthetic-reasoning Stage 2 evaluation experiment."""
 
-from .....eval.stage3.canonical import main
+from .synthetic_reasoning_impl import main
 
 
 if __name__ == "__main__":
     main()
-

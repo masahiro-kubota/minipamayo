@@ -1,4 +1,4 @@
-"""Stage 3 evaluation is not implemented yet."""
+"""Synthetic-reasoning Stage 2 evaluation placeholder."""
 
 
 def main() -> None:
