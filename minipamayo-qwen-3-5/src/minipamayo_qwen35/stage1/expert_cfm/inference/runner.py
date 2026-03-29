@@ -25,6 +25,7 @@ from ....utils.preflight import require_expected_cuda_toolkit
 from ....diffusion.action_expert import FlowMatchingDiffusion
 from ....models.action_expert import load_action_expert_from_checkpoint
 from ..common import (
+    apply_longitudinal_pid_override,
     extract_prompt_cache,
     freeze_module,
     infer_prompt_text,
@@ -49,6 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image-min-pixels", type=int, default=CANONICAL_IMAGE_MIN_PIXELS)
     parser.add_argument("--image-max-pixels", type=int, default=CANONICAL_IMAGE_MAX_PIXELS)
     parser.add_argument("--flow-steps", type=int, default=10)
+    parser.add_argument("--include-pid-override", action="store_true")
+    parser.add_argument("--pid-target-speed-kmh", type=float, default=24.0)
+    parser.add_argument("--pid-kp", type=float, default=1.0)
+    parser.add_argument("--pid-ki", type=float, default=0.05)
+    parser.add_argument("--pid-kd", type=float, default=0.0)
     return parser
 
 
@@ -97,6 +103,8 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`flow_steps` must be > 0.")
     if args.sample_index < 0:
         raise RuntimeError("`sample_index` must be >= 0.")
+    if args.pid_target_speed_kmh <= 0.0:
+        raise RuntimeError("`pid_target_speed_kmh` must be > 0.")
     return args
 
 
@@ -183,6 +191,7 @@ def main() -> None:
     pred_waypoints = pred_xyz[0, :, :2].detach().cpu()
     gt_waypoints = batch["gt_waypoints"][0].to(dtype=torch.float32)
     errors = torch.norm(pred_waypoints.cpu() - gt_waypoints, dim=1)
+    lateral_error = (pred_waypoints[:, 1] - gt_waypoints[:, 1]).abs()
     payload = {
         "sample_id": sample["sample_id"],
         "image_path": sample["image_path"],
@@ -193,7 +202,41 @@ def main() -> None:
         "gt_waypoints": gt_waypoints.tolist(),
         "ade_m": float(errors.mean().item()),
         "fde_m": float(errors[-1].item()),
+        "max_lateral_error_m": float(lateral_error.max().item()),
     }
+    if args.include_pid_override:
+        pid_action = apply_longitudinal_pid_override(
+            pred_action=pred_action,
+            v0=batch["v0"].to(device=device, dtype=torch.float32),
+            dt=dt,
+            target_speed_kmh=args.pid_target_speed_kmh,
+            kp=args.pid_kp,
+            ki=args.pid_ki,
+            kd=args.pid_kd,
+            accel_bounds=action_space.accel_bounds,
+        )
+        pid_xyz, pid_rot = action_space.action_to_traj(
+            traj_history_xyz=history_xyz,
+            traj_history_rot=history_rot,
+            action=pid_action,
+        )
+        pid_xyz, pid_rot = canonicalize_future_batch_from_action_space(pid_xyz, pid_rot)
+        pid_waypoints = pid_xyz[0, :, :2].detach().cpu()
+        pid_errors = torch.norm(pid_waypoints - gt_waypoints, dim=1)
+        pid_lateral_error = (pid_waypoints[:, 1] - gt_waypoints[:, 1]).abs()
+        payload["pid_override"] = {
+            "target_speed_kmh": float(args.pid_target_speed_kmh),
+            "pid_gains": {
+                "kp": float(args.pid_kp),
+                "ki": float(args.pid_ki),
+                "kd": float(args.pid_kd),
+            },
+            "pred_action": pid_action[0].detach().cpu().tolist(),
+            "pred_waypoints": pid_waypoints.tolist(),
+            "ade_m": float(pid_errors.mean().item()),
+            "fde_m": float(pid_errors[-1].item()),
+            "max_lateral_error_m": float(pid_lateral_error.max().item()),
+        }
     if args.output_json:
         output_path = Path(args.output_json).resolve()
         output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -32,6 +32,7 @@ from ....utils.preflight import require_expected_cuda_toolkit
 from ....diffusion.action_expert import FlowMatchingDiffusion
 from ....models.action_expert import load_action_expert_from_checkpoint
 from ..common import (
+    apply_longitudinal_pid_override,
     extract_prompt_cache,
     freeze_module,
     infer_prompt_text,
@@ -58,6 +59,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image-min-pixels", type=int, default=CANONICAL_IMAGE_MIN_PIXELS)
     parser.add_argument("--image-max-pixels", type=int, default=CANONICAL_IMAGE_MAX_PIXELS)
     parser.add_argument("--flow-steps", type=int, default=10)
+    parser.add_argument("--include-pid-override", action="store_true")
+    parser.add_argument("--pid-target-speed-kmh", type=float, default=24.0)
+    parser.add_argument("--pid-kp", type=float, default=1.0)
+    parser.add_argument("--pid-ki", type=float, default=0.05)
+    parser.add_argument("--pid-kd", type=float, default=0.0)
     return parser
 
 
@@ -108,6 +114,8 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`stage1_checkpoint` must be defined in the config JSON.")
     if args.flow_steps <= 0:
         raise RuntimeError("`flow_steps` must be > 0.")
+    if args.pid_target_speed_kmh <= 0.0:
+        raise RuntimeError("`pid_target_speed_kmh` must be > 0.")
     return args
 
 
@@ -168,6 +176,17 @@ def main() -> None:
     total_ade = 0.0
     total_fde = 0.0
     total_samples = 0
+    total_action_steps = 0
+    canonical_total_mean_max_lateral = 0.0
+    canonical_global_max_lateral = 0.0
+    pid_total_ade = 0.0
+    pid_total_fde = 0.0
+    pid_total_mean_max_lateral = 0.0
+    pid_global_max_lateral = 0.0
+    pid_total_action_mae_accel = 0.0
+    pid_total_action_mae_kappa = 0.0
+    canonical_total_action_mae_accel = 0.0
+    canonical_total_action_mae_kappa = 0.0
     amp_context = (
         torch.autocast("cuda", dtype=torch.bfloat16) if device.type == "cuda" else nullcontext()
     )
@@ -185,6 +204,7 @@ def main() -> None:
             )
             prompt_cache, prompt_attention_mask = extract_prompt_cache(model, prompt_inputs)
             gt_action = batch["action"].to(device=device, dtype=torch.float32)
+            gt_action_seq = gt_action.reshape(gt_action.shape[0], -1, 2)
             with amp_context:
                 loss = diffusion.loss(
                     expert=expert,
@@ -197,6 +217,18 @@ def main() -> None:
                     prompt_cache=prompt_cache,
                     prompt_attention_mask=prompt_attention_mask,
                 ).reshape(gt_action.shape[0], -1, 2)
+            pid_action = None
+            if args.include_pid_override:
+                pid_action = apply_longitudinal_pid_override(
+                    pred_action=pred_action,
+                    v0=batch["v0"].to(device=device, dtype=torch.float32),
+                    dt=dt,
+                    target_speed_kmh=args.pid_target_speed_kmh,
+                    kp=args.pid_kp,
+                    ki=args.pid_ki,
+                    kd=args.pid_kd,
+                    accel_bounds=action_space.accel_bounds,
+                )
             gt_waypoints = batch["gt_waypoints"].to(device=device, dtype=torch.float32)
             history_xyz, history_rot = canonicalize_history_batch_for_action_space(
                 batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
@@ -210,6 +242,17 @@ def main() -> None:
             pred_xyz, _pred_rot = canonicalize_future_batch_from_action_space(pred_xyz, _pred_rot)
             pred_waypoints = pred_xyz[:, :, :2]
             displacement = torch.norm(pred_waypoints - gt_waypoints, dim=2)
+            lateral_error = (pred_waypoints[:, :, 1] - gt_waypoints[:, :, 1]).abs()
+            if pid_action is not None:
+                pid_xyz, pid_rot = action_space.action_to_traj(
+                    traj_history_xyz=history_xyz,
+                    traj_history_rot=history_rot,
+                    action=pid_action,
+                )
+                pid_xyz, pid_rot = canonicalize_future_batch_from_action_space(pid_xyz, pid_rot)
+                pid_waypoints = pid_xyz[:, :, :2]
+                pid_displacement = torch.norm(pid_waypoints - gt_waypoints, dim=2)
+                pid_lateral_error = (pid_waypoints[:, :, 1] - gt_waypoints[:, :, 1]).abs()
 
             batch_size = gt_action.shape[0]
             total_loss += float(loss.detach().cpu())
@@ -217,6 +260,28 @@ def main() -> None:
             total_ade += float(displacement.mean(dim=1).sum().item())
             total_fde += float(displacement[:, -1].sum().item())
             total_samples += batch_size
+            total_action_steps += batch_size * int(gt_action_seq.shape[1])
+            canonical_total_mean_max_lateral += float(lateral_error.max(dim=1).values.sum().item())
+            canonical_global_max_lateral = max(
+                canonical_global_max_lateral, float(lateral_error.max().item())
+            )
+            canonical_total_action_mae_accel += float(
+                (pred_action[:, :, 0] - gt_action_seq[:, :, 0]).abs().sum().item()
+            )
+            canonical_total_action_mae_kappa += float(
+                (pred_action[:, :, 1] - gt_action_seq[:, :, 1]).abs().sum().item()
+            )
+            if pid_action is not None:
+                pid_total_ade += float(pid_displacement.mean(dim=1).sum().item())
+                pid_total_fde += float(pid_displacement[:, -1].sum().item())
+                pid_total_mean_max_lateral += float(pid_lateral_error.max(dim=1).values.sum().item())
+                pid_global_max_lateral = max(pid_global_max_lateral, float(pid_lateral_error.max().item()))
+                pid_total_action_mae_accel += float(
+                    (pid_action[:, :, 0] - gt_action_seq[:, :, 0]).abs().sum().item()
+                )
+                pid_total_action_mae_kappa += float(
+                    (pid_action[:, :, 1] - gt_action_seq[:, :, 1]).abs().sum().item()
+                )
 
     summary = {
         "checkpoint": str(Path(args.checkpoint).resolve()),
@@ -225,9 +290,29 @@ def main() -> None:
         "cfm_loss": total_loss / max(1, total_batches),
         "ade_m": total_ade / max(1, total_samples),
         "fde_m": total_fde / max(1, total_samples),
+        "mean_max_lateral_error_m": canonical_total_mean_max_lateral / max(1, total_samples),
+        "global_max_lateral_error_m": canonical_global_max_lateral,
         "flow_steps": args.flow_steps,
         "condition_source": stage1b_metadata["condition_source"],
+        "pid_override_enabled": bool(args.include_pid_override),
+        "action_mae_accel": canonical_total_action_mae_accel / max(1, total_action_steps),
+        "action_mae_kappa": canonical_total_action_mae_kappa / max(1, total_action_steps),
     }
+    if args.include_pid_override:
+        summary["pid_override"] = {
+            "target_speed_kmh": float(args.pid_target_speed_kmh),
+            "pid_gains": {
+                "kp": float(args.pid_kp),
+                "ki": float(args.pid_ki),
+                "kd": float(args.pid_kd),
+            },
+            "ade_m": pid_total_ade / max(1, total_samples),
+            "fde_m": pid_total_fde / max(1, total_samples),
+            "mean_max_lateral_error_m": pid_total_mean_max_lateral / max(1, total_samples),
+            "global_max_lateral_error_m": pid_global_max_lateral,
+            "action_mae_accel": pid_total_action_mae_accel / max(1, total_action_steps),
+            "action_mae_kappa": pid_total_action_mae_kappa / max(1, total_action_steps),
+        }
     if args.output_json:
         output_path = Path(args.output_json).resolve()
         output_path.parent.mkdir(parents=True, exist_ok=True)
