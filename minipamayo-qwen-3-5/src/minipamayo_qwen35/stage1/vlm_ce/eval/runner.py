@@ -39,7 +39,7 @@ from ....utils.run_metadata import (
 )
 from ....contract.task_spec import CanonicalStage1Spec, Stage1TaskSpec
 from ...data.dataset import Stage1JsonlDataset
-from ....action_space.unicycle_accel_curvature import rollout_waypoints_from_action_tensor
+from ....action_space.record_adapter import rollout_waypoints_from_action_tensor
 from ....contract.prompt import add_prompt_special_tokens
 from ....contract.history_tokens import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ....contract.trajectory_tokens import Stage1TokenRegistry

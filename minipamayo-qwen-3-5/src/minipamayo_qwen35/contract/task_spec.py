@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from torch.utils.data import Subset
 
-from ..action_space.unicycle_accel_curvature import saved_action_array_from_record
+from ..action_space.record_adapter import saved_action_array_from_record
 from .trajectory_tokens import ActionQuantizer
 
 

@@ -10,7 +10,7 @@ from pathlib import Path
 import torch
 
 from ...utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
-from ...action_space.unicycle_accel_curvature import (
+from ...action_space.record_adapter import (
     canonical_action_tensor_from_record,
     saved_action_tensor_from_record,
 )
