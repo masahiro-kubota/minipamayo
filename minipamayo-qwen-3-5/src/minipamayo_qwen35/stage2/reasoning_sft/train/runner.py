@@ -15,23 +15,16 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import torch
-import torch.nn.functional as F
-from PIL import Image
 from torch.utils.data import DataLoader, random_split
 
-from ....contract.prompt import COT_END_TOKEN, TRAJ_FUTURE_START_TOKEN
 from ....contract.sequence_layout import STAGE2_PROMPT_CONTRACT, STAGE2_TARGET_LAYOUT
 from ....stage1.vlm_ce.eval import load_components
 from ....stage1.vlm_ce.train import (
     format_gib,
-    inject_history_inputs_embeds,
     log_gpu_preflight,
     maybe_wandb_finish,
     maybe_wandb_log,
     metric_improved,
-    model_forward_inputs,
-    move_inputs_to_device,
-    prepare_prompt_inputs_with_history,
     release_cuda_memory,
     set_seed,
     write_run_config,
@@ -49,9 +42,15 @@ from ....utils.run_metadata import (
     collect_gpu_info,
     collect_processor_settings,
 )
-from ..data import ReasoningSftJsonlDataset, reasoning_sft_collate
-from ..inference.runner import generate_reasoning_handoff
-from ..prompt import build_stage2_prompt_text
+from ..common import (
+    build_handoff_probe_dataset,
+    compute_token_metrics,
+    compute_weighted_loss,
+    evaluate,
+    evaluate_handoff_probe,
+    prepare_stage2_batch,
+)
+from ..dataset import ReasoningSftJsonlDataset, reasoning_sft_collate
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {
@@ -222,253 +221,6 @@ def build_stage2_metadata(dataset, args: argparse.Namespace) -> dict:
     }
 
 
-def build_handoff_probe_dataset(args: argparse.Namespace):
-    if args.handoff_probe_jsonl:
-        max_per_jsonl = args.handoff_probe_max_per_jsonl
-        if max_per_jsonl <= 0:
-            raise RuntimeError(
-                "`handoff_probe_max_per_jsonl` must be > 0 when `handoff_probe_jsonl` is set."
-            )
-        probe_samples = []
-        for jsonl_path in args.handoff_probe_jsonl:
-            source_dataset = ReasoningSftJsonlDataset(jsonl_path)
-            source_count = min(max_per_jsonl, len(source_dataset))
-            for idx in range(source_count):
-                probe_samples.append(source_dataset[idx])
-        if not probe_samples:
-            raise RuntimeError("Explicit handoff probe dataset resolved to zero samples.")
-        return probe_samples
-    return None
-
-
-def _build_target_rows(
-    tokenizer, batch: dict
-) -> list[list[int]]:
-    if tokenizer.eos_token_id is None:
-        raise RuntimeError("Tokenizer is missing `eos_token_id`, which Stage 2 requires.")
-    cot_end_token_id = int(tokenizer.convert_tokens_to_ids(COT_END_TOKEN))
-    if cot_end_token_id < 0:
-        raise RuntimeError("Tokenizer is missing canonical `<|cot_end|>`.")
-    traj_future_start_token_id = int(tokenizer.convert_tokens_to_ids(TRAJ_FUTURE_START_TOKEN))
-    if traj_future_start_token_id < 0:
-        raise RuntimeError("Tokenizer is missing canonical `<|traj_future_start|>`.")
-    target_rows: list[list[int]] = []
-    for reasoning_text in batch["reasoning_text"]:
-        reasoning_prefix = tokenizer(reasoning_text, add_special_tokens=False)
-        reasoning_ids = reasoning_prefix["input_ids"]
-        if not isinstance(reasoning_ids, list):
-            raise RuntimeError("Tokenizer returned a non-list `input_ids` payload for Stage 2.")
-        row = list(reasoning_ids) + [
-            cot_end_token_id,
-            traj_future_start_token_id,
-            int(tokenizer.eos_token_id),
-        ]
-        target_rows.append(row)
-    return target_rows
-
-
-def prepare_stage2_batch(
-    model,
-    batch: dict,
-    processor,
-    history_registry,
-    history_quantizer,
-    device: torch.device,
-    handoff_loss_weight: float,
-) -> tuple[dict, torch.Tensor, torch.Tensor]:
-    images = [Image.open(path).convert("RGB") for path in batch["image_path"]]
-    try:
-        prompt_texts = [
-            build_stage2_prompt_text(
-                processor,
-                float(v0.item()),
-                history_token_count=history_quantizer.token_count,
-            )
-            for v0 in batch["v0"]
-        ]
-        prompt_inputs = processor(
-            text=prompt_texts,
-            images=images,
-            return_tensors="pt",
-            padding=True,
-        )
-        prompt_inputs = move_inputs_to_device(prompt_inputs, device)
-        prompt_inputs = inject_history_inputs_embeds(
-            model=model,
-            prompt_inputs=prompt_inputs,
-            history_registry=history_registry,
-            history_quantizer=history_quantizer,
-            history_xyz=batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
-            history_rot=batch["ego_history_rot"].to(device=device, dtype=torch.float32),
-        )
-        target_rows = _build_target_rows(
-            processor.tokenizer,
-            batch,
-        )
-        if processor.tokenizer.pad_token_id is None:
-            raise RuntimeError("Tokenizer is missing `pad_token_id`, which Stage 2 requires.")
-        batch_size = len(target_rows)
-        max_len = max(len(row) for row in target_rows)
-        target_ids = torch.full(
-            (batch_size, max_len),
-            fill_value=int(processor.tokenizer.pad_token_id),
-            dtype=torch.long,
-            device=device,
-        )
-        target_mask = torch.zeros(
-            (batch_size, max_len),
-            dtype=prompt_inputs["attention_mask"].dtype,
-            device=device,
-        )
-        weight_tensor = torch.ones((batch_size, max_len), dtype=torch.float32, device=device)
-        cot_end_token_id = int(processor.tokenizer.convert_tokens_to_ids(COT_END_TOKEN))
-        traj_future_start_token_id = int(
-            processor.tokenizer.convert_tokens_to_ids(TRAJ_FUTURE_START_TOKEN)
-        )
-        if processor.tokenizer.eos_token_id is None:
-            raise RuntimeError("Tokenizer is missing `eos_token_id`, which Stage 2 requires.")
-        handoff_token_ids = {
-            int(processor.tokenizer.eos_token_id),
-            cot_end_token_id,
-            traj_future_start_token_id,
-        }
-
-        for row_idx, row in enumerate(target_rows):
-            row_len = len(row)
-            target_ids[row_idx, :row_len] = torch.tensor(row, dtype=torch.long, device=device)
-            target_mask[row_idx, :row_len] = 1
-            for token_idx, token_id in enumerate(row):
-                token_id = int(row[token_idx])
-                if token_id in handoff_token_ids:
-                    weight_tensor[row_idx, token_idx] = handoff_loss_weight
-                else:
-                    weight_tensor[row_idx, token_idx] = 1.0
-
-        input_ids = torch.cat([prompt_inputs["input_ids"], target_ids], dim=1)
-        attention_mask = torch.cat([prompt_inputs["attention_mask"], target_mask], dim=1)
-        full_inputs = {
-            key: value
-            for key, value in prompt_inputs.items()
-            if key not in {"input_ids", "attention_mask", "inputs_embeds"}
-        }
-        full_inputs["input_ids"] = input_ids
-        full_inputs["attention_mask"] = attention_mask
-        if "inputs_embeds" in prompt_inputs:
-            target_embeds = model.get_input_embeddings()(target_ids)
-            full_inputs["inputs_embeds"] = torch.cat(
-                [prompt_inputs["inputs_embeds"], target_embeds], dim=1
-            )
-        if "mm_token_type_ids" in full_inputs:
-            full_inputs["mm_token_type_ids"] = torch.cat(
-                [
-                    full_inputs["mm_token_type_ids"],
-                    torch.zeros(
-                        (batch_size, max_len),
-                        dtype=full_inputs["mm_token_type_ids"].dtype,
-                        device=full_inputs["mm_token_type_ids"].device,
-                    ),
-                ],
-                dim=1,
-            )
-        labels = torch.full_like(input_ids, -100)
-        offset = prompt_inputs["input_ids"].shape[1]
-        labels[:, offset:] = target_ids
-
-        full_loss_weights = torch.ones_like(labels, dtype=torch.float32)
-        full_loss_weights[:, offset:] = weight_tensor
-
-        return (
-            full_inputs,
-            labels,
-            full_loss_weights,
-        )
-    finally:
-        for image in images:
-            image.close()
-
-
-def compute_weighted_loss(
-    logits: torch.Tensor,
-    labels: torch.Tensor,
-    loss_weights: torch.Tensor,
-) -> torch.Tensor:
-    shifted_logits = logits[:, :-1, :].contiguous()
-    shifted_labels = labels[:, 1:].contiguous()
-    shifted_weights = loss_weights[:, 1:].contiguous()
-    vocab_size = shifted_logits.shape[-1]
-
-    token_loss = F.cross_entropy(
-        shifted_logits.view(-1, vocab_size),
-        shifted_labels.view(-1),
-        reduction="none",
-        ignore_index=-100,
-    ).view_as(shifted_labels)
-    valid_mask = shifted_labels != -100
-    weighted_loss = token_loss[valid_mask] * shifted_weights[valid_mask]
-    denominator = shifted_weights[valid_mask].sum().clamp_min(1.0)
-    return weighted_loss.sum() / denominator
-
-
-def compute_token_metrics(
-    logits: torch.Tensor,
-    labels: torch.Tensor,
-) -> dict[str, int]:
-    shifted_preds = logits[:, :-1, :].argmax(dim=-1)
-    shifted_labels = labels[:, 1:]
-    valid_mask = shifted_labels != -100
-
-    total = int(valid_mask.sum().item())
-    correct = int(((shifted_preds == shifted_labels) & valid_mask).sum().item())
-    return {
-        "correct": correct,
-        "total": total,
-    }
-
-
-@torch.no_grad()
-def evaluate(
-    model,
-    dataloader: DataLoader,
-    processor,
-    history_registry,
-    history_quantizer,
-    device: torch.device,
-    model_dtype: torch.dtype,
-    handoff_loss_weight: float,
-) -> dict:
-    model.eval()
-    total_loss = 0.0
-    total_batches = 0
-    total_correct = 0
-    total_tokens = 0
-
-    for batch in dataloader:
-        full_inputs, labels, loss_weights = prepare_stage2_batch(
-            model=model,
-            batch=batch,
-            processor=processor,
-            history_registry=history_registry,
-            history_quantizer=history_quantizer,
-            device=device,
-            handoff_loss_weight=handoff_loss_weight,
-        )
-        with torch.autocast("cuda", dtype=model_dtype):
-            outputs = model(**model_forward_inputs(full_inputs))
-            loss = compute_weighted_loss(outputs.logits, labels, loss_weights)
-
-        metrics = compute_token_metrics(outputs.logits, labels)
-        total_loss += float(loss.detach().cpu())
-        total_batches += 1
-        total_correct += metrics["correct"]
-        total_tokens += metrics["total"]
-
-    model.train()
-    return {
-        "loss": total_loss / max(total_batches, 1),
-        "token_accuracy": total_correct / max(total_tokens, 1),
-    }
-
-
 def checkpoint_payload(
     model,
     optimizer,
@@ -498,105 +250,6 @@ def checkpoint_payload(
         "initial_eval": initial_eval,
         "metrics_history": metrics_history,
         "run_metadata": run_metadata,
-    }
-
-
-@torch.inference_mode()
-def evaluate_handoff_probe(
-    *,
-    model,
-    dataset,
-    processor,
-    registry,
-    history_registry,
-    history_quantizer,
-    device: torch.device,
-    max_samples: int,
-    max_reasoning_tokens: int,
-    seed: int,
-) -> dict | None:
-    if max_samples <= 0 or len(dataset) == 0:
-        return None
-
-    num_samples = min(max_samples, len(dataset))
-    stop_token_id = int(processor.tokenizer.convert_tokens_to_ids(TRAJ_FUTURE_START_TOKEN))
-    if stop_token_id < 0:
-        raise RuntimeError("Tokenizer is missing canonical `<|traj_future_start|>`.")
-
-    prev_use_cache = bool(getattr(model.config, "use_cache", False))
-    was_training = model.training
-    model.config.use_cache = True
-    model.eval()
-
-    success_count = 0
-    failure_sample_ids: list[str] = []
-    success_positions: list[int] = []
-    failure_reasons: list[str] = []
-    try:
-        for sample_idx in range(num_samples):
-            sample = dataset[sample_idx]
-            torch.manual_seed(seed + sample_idx)
-            torch.cuda.manual_seed_all(seed + sample_idx)
-
-            batch = {
-                "sample_id": [sample["sample_id"]],
-                "image_path": [sample["image_path"]],
-                "action": sample["action"].unsqueeze(0),
-                "v0": sample["v0"].unsqueeze(0),
-                "gt_waypoints": sample["gt_waypoints"].unsqueeze(0),
-                "ego_history_xyz": sample["ego_history_xyz"].unsqueeze(0),
-                "ego_history_rot": sample["ego_history_rot"].unsqueeze(0),
-                "dt": [sample["dt"]],
-                "reasoning_text": [sample["reasoning_text"]],
-            }
-            prompt_text = build_stage2_prompt_text(
-                processor,
-                float(sample["v0"].item()),
-                history_token_count=history_quantizer.token_count,
-            )
-            prompt_inputs = prepare_prompt_inputs_with_history(
-                model=model,
-                batch=batch,
-                processor=processor,
-                history_registry=history_registry,
-                history_quantizer=history_quantizer,
-                prompt_text=prompt_text,
-                device=device,
-            )
-            try:
-                _, _, _, stop_positions = generate_reasoning_handoff(
-                    model=model,
-                    tokenizer=processor.tokenizer,
-                    prompt_inputs=prompt_inputs,
-                    traj_registry=registry,
-                    stop_token_id=stop_token_id,
-                    max_new_tokens=max_reasoning_tokens,
-                    temperature=0.6,
-                    top_p=0.98,
-                    top_k=0,
-                )
-                success_count += 1
-                success_positions.append(int(stop_positions[0].item()))
-            except RuntimeError as exc:
-                failure_sample_ids.append(str(sample["sample_id"]))
-                failure_reasons.append(str(exc))
-    finally:
-        model.config.use_cache = prev_use_cache
-        if was_training:
-            model.train()
-
-    success_rate = success_count / max(num_samples, 1)
-    mean_stop_position = (
-        sum(success_positions) / len(success_positions) if success_positions else None
-    )
-    first_failure_reason = failure_reasons[0] if failure_reasons else ""
-    return {
-        "num_samples": num_samples,
-        "num_success": success_count,
-        "success_rate": success_rate,
-        "mean_stop_position": mean_stop_position,
-        "failure_sample_ids": failure_sample_ids,
-        "first_failure_reason": first_failure_reason,
     }
 
 

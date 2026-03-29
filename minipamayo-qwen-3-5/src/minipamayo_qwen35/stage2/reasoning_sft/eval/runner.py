@@ -21,8 +21,8 @@ from ....utils.image_budget import (
 from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
 from ....utils.preflight import require_expected_cuda_toolkit
 from ....utils.run_metadata import collect_dataset_view_fingerprint, collect_processor_settings
-from ..data import ReasoningSftJsonlDataset, reasoning_sft_collate
-from ..train.runner import evaluate
+from ..common import evaluate
+from ..dataset import ReasoningSftJsonlDataset, reasoning_sft_collate
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {"checkpoint", "eval_jsonl", "output_json"}

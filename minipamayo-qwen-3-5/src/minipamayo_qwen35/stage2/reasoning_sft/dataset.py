@@ -12,12 +12,12 @@ from typing import TYPE_CHECKING
 import torch
 from torch.utils.data import Dataset
 
-from ....stage1.dataset import normalize_jsonl_paths, read_jsonl
-from ....action_space.record_adapter import (
+from ...stage1.dataset import normalize_jsonl_paths, read_jsonl
+from ...action_space.record_adapter import (
     derive_future_tensors_from_global_poses,
     saved_action_tensor_from_record,
 )
-from ....contract.history_tokens import canonicalize_history_sample_tensors
+from ...contract.history_tokens import canonicalize_history_sample_tensors
 
 if TYPE_CHECKING:
     from pathlib import Path

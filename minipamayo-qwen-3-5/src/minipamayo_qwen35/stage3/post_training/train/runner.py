@@ -40,7 +40,7 @@ from ....utils.image_budget import (
 from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
 from ....utils.preflight import enforce_training_prerequisites
 from ....utils.run_metadata import collect_dataset_view_fingerprint, collect_git_metadata, collect_gpu_info
-from ....stage2.reasoning_sft.data import ReasoningSftJsonlDataset, reasoning_sft_collate
+from ....stage2.reasoning_sft.dataset import ReasoningSftJsonlDataset, reasoning_sft_collate
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {
