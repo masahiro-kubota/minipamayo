@@ -392,7 +392,7 @@ def main() -> None:
             accel_std=action_stats["accel_std"],
             kappa_mean=action_stats["kappa_mean"],
             kappa_std=action_stats["kappa_std"],
-        ).to(device=device, dtype=next(model.parameters()).dtype)
+        ).to(device=device)
         diffusion = FlowMatchingDiffusion()
         stage1b_metadata = build_stage1b_metadata(
             train_loader.dataset,
