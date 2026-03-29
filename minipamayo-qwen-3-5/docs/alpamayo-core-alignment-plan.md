@@ -73,9 +73,9 @@ diff -u \
 - `config.py`
 - `diffusion/flow_matching.py`
 
-### 3. runtime shim を含む差分
+### 3. runtime shim / entrypoint 差分
 
-以下は Alpamayo 実装をほぼ持ち込んでいるが、`minipamayo-qwen-3-5` の runtime 差を吸収するための shim が残っている。
+以下は Alpamayo 実装をほぼ持ち込んでいるが、`minipamayo-qwen-3-5` の runtime 差や入力契約差を吸収するための差分が残っている。
 
 - `models/base_model.py`
   - `tie_weights(self, *args, **kwargs)` の互換 shim がある
@@ -91,6 +91,7 @@ diff -u \
   - Alpamayo は `load_physical_aiavdataset.py` から直接 tensor を作る
   - こちらは `samples_reasoning_sft.jsonl` と `record_adapter` 系の契約を使う
   - wrapper 呼び出し自体は揃えたが、入力 loader は別物
+  - これは runtime shim ではなく、demo entrypoint の入力契約差分
 
 ### 4. repo 固有として残している差分
 
@@ -164,7 +165,7 @@ diff -u \
 残り:
 - repo 固有 core (`record_adapter.py`, `diffusion/action_expert.py`, `models/action_expert.py`) の最終位置づけ
 - wrapper builder の最終配置
-- runtime shim (`base_model.py`, `alpamayo_r1.py`, `helper.py`) の整理
+- runtime shim (`base_model.py`, `alpamayo_r1.py`) の整理
 
 ## 各段階の確認
 
