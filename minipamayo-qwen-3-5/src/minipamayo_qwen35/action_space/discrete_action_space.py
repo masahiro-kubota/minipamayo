@@ -32,7 +32,6 @@ class DiscreteTrajectoryTokenizer:
         **kwargs: Any,
     ) -> None:
         """Initializes the tokenizer."""
-        del kwargs
         self.action_space: ActionSpace = action_space
         assert len(dims_min) == len(dims_max) == self.action_space.get_action_space_dims()[-1]
         self.dims_min = dims_min
@@ -68,7 +67,6 @@ class DiscreteTrajectoryTokenizer:
         Returns:
             tokens: The encoded tokens. Shape: (B, num_tokens_per_trajectory).
         """
-        del hist_tstamp, fut_tstamp
         batch_size = fut_xyz.shape[0]
         action = self.action_space.traj_to_action(hist_xyz, hist_rot, fut_xyz, fut_rot)
         dims_min = torch.tensor(self.dims_min, device=action.device, dtype=action.dtype)
@@ -100,7 +98,6 @@ class DiscreteTrajectoryTokenizer:
             fut_rot: The decoded future rotation matrices.
             None: The future timestamps are not decoded.
         """
-        del hist_tstamp
         action = tokens.reshape(-1, *self.action_space.get_action_space_dims()).to(hist_xyz.dtype)
         dims_min = torch.tensor(self.dims_min, device=action.device, dtype=action.dtype)
         dims_max = torch.tensor(self.dims_max, device=action.device, dtype=action.dtype)
