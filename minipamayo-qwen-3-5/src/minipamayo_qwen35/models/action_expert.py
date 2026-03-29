@@ -271,6 +271,8 @@ class Stage1ActionExpert(nn.Module):
         noisy_action = noisy_action.reshape(batch_size, self.k, self.action_dims[-1])
         future_token_embeds = self.action_in_proj(noisy_action, t)
 
+        # Qwen3_5DynamicCache does not implement crop(), so keep the prefill
+        # cache immutable and hand each expert call its own clone.
         expert_prompt_cache = clone_prompt_cache_for_expert(prompt_cache, self.expert_num_layers)
         prefill_seq_len = prompt_cache_seq_length(
             expert_prompt_cache, prompt_attention_mask.shape[1]
@@ -294,8 +296,6 @@ class Stage1ActionExpert(nn.Module):
             return_dict=True,
             **forward_kwargs,
         )
-        if hasattr(expert_prompt_cache, "crop"):
-            expert_prompt_cache.crop(prefill_seq_len)
         last_hidden = expert_out.last_hidden_state[:, -self.k :]
         pred = self.action_out_proj(last_hidden).reshape(batch_size, self.action_dim)
         return pred

@@ -27,6 +27,7 @@ from transformers.generation.logits_process import LogitsProcessor, LogitsProces
 from minipamayo_qwen35.action_space.action_space import ActionSpace
 from minipamayo_qwen35.config import AlpamayoR1Config
 from minipamayo_qwen35.diffusion.base import BaseDiffusion
+from minipamayo_qwen35.models.action_expert import clone_prompt_cache_for_expert
 from minipamayo_qwen35.models.base_model import ReasoningVLA
 from minipamayo_qwen35.models.token_utils import (
     StopAfterEOS,
@@ -264,18 +265,21 @@ class AlpamayoR1(ReasoningVLA):
             if future_token_embeds.dim() == 2:
                 future_token_embeds = future_token_embeds.view(b_star, n_diffusion_tokens, -1)
 
+            # Qwen3_5DynamicCache does not implement crop(), so clone the prefill
+            # cache for each diffusion step instead of mutating and rewinding it.
+            expert_prompt_cache = clone_prompt_cache_for_expert(
+                prompt_cache, self.expert.config.num_hidden_layers
+            )
+
             # Run expert with cached prefill, only on the future tokens
             expert_out_base = self.expert(
                 inputs_embeds=future_token_embeds,
                 position_ids=position_ids,
-                past_key_values=prompt_cache,
+                past_key_values=expert_prompt_cache,
                 attention_mask=attention_mask,
                 use_cache=True,
                 **forward_kwargs,
             )
-            # crop the prompt cache to remove the newly added tokens
-            if hasattr(prompt_cache, "crop"):
-                prompt_cache.crop(prefill_seq_len)
             last_hidden = expert_out_base.last_hidden_state  # (b*, Tf, hidden_size)
             last_hidden = last_hidden[:, -n_diffusion_tokens:]
             pred = self.action_out_proj(last_hidden).view(
