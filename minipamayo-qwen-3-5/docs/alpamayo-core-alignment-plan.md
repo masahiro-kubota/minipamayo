@@ -106,55 +106,41 @@ diff -u \
 - `models/action_expert.py`
   - `Stage1B` 用 shared action expert 本体
 
-### 5. まだ未移植の大物
+## 確定した方針
 
-大物の未移植は解消済み。
-
-- `config.py`
-- `models/alpamayo_r1.py`
-
-はどちらも repo に入り、`stage2/reasoning_sft/inference/runner.py` は manual handoff ではなく wrapper を組み立てて呼ぶ形に変わった。
-
-一方で、Alpamayo 側にある以下はまだそのままの形では持ってきていない。
-
-- `load_physical_aiavdataset.py`
-  - こちらは JSONL + `record_adapter.py` 経由なので未移植
-
-## 残りの実装方針
-
-### 1. repo 固有 core の位置づけを固定する
+### 1. repo 固有 core は top-level shared に残す
 
 対象:
 - `action_space/record_adapter.py`
 - `diffusion/action_expert.py`
 - `models/action_expert.py`
 
-やること:
-- これらを「Alpamayo に無い repo 固有 core」と明示的に扱う
-- pure Alpamayo mirror と混ぜない
+方針:
+- これらは「Alpamayo に無い repo 固有 core」として top-level shared に残す
+- stage 配下へ戻さず、pure Alpamayo mirror と混ぜない
 
 注意:
 - `record_adapter.py` は Alpamayo loader 不在を埋める層
 - `action_expert.py` は Stage1B train/eval/inference と wrapper の両方が使う shared 実装
 
-### 2. wrapper builder をどこに残すか決める
+### 2. wrapper builder は当面 runner に残す
 
 対象:
 - `stage2/reasoning_sft/inference/runner.py` の wrapper 組み立て部分
 
-注意:
-- いまは Stage1A / Stage1B checkpoint 契約を読んで `AlpamayoR1` を構成する repo 固有 builder が runner に残っている
-- 再利用が必要になった時点で shared helper へ出す
+方針:
+- Stage1A / Stage1B checkpoint 契約を読んで `AlpamayoR1` を構成する builder は、当面 `runner.py` に残す
+- 2つ目の明確な caller が出た時点で shared helper へ切り出す
 
-### 3. runtime shim をどこまで残すか決める
+### 3. runtime shim は Qwen3.5 runtime 差として維持する
 
 対象:
 - `models/base_model.py`
 - `models/alpamayo_r1.py`
 
-注意:
-- `Qwen3.5-0.8B` を使う前提を維持する限り、Alpamayo 純正のままでは通らない可能性が高い
-- 差分ゼロを目指すのではなく、「なぜ必要かが説明できる shim だけ残す」が現実的
+方針:
+- `Qwen3.5-0.8B` を使う前提を維持する限り、Alpamayo 純正との差分は runtime shim として受容する
+- 差分ゼロは目指さず、「なぜ必要かが説明できる shim だけ残す」を採用する
 
 補足:
 - `stage2` wrapper inference の expert hard-coded `sdpa` は削除済み
@@ -162,10 +148,12 @@ diff -u \
 
 ## 優先順位
 
-残り:
-- repo 固有 core (`record_adapter.py`, `diffusion/action_expert.py`, `models/action_expert.py`) の最終位置づけ
-- wrapper builder の最終配置
-- runtime shim (`base_model.py`, `alpamayo_r1.py`) の整理
+優先度の高い残件は、このメモの範囲では基本的に解消済み。
+以後は以下を必要に応じて進める。
+
+- `load_physical_aiavdataset.py` 相当を追加して、Alpamayo と同じ demo 入力経路も持つかどうか
+- wrapper builder を shared helper に切り出すだけの再利用需要が出るかどうか
+- `Qwen3.5` runtime shim が将来の `transformers` / model stack 更新で不要になるかどうか
 
 ## 各段階の確認
 
