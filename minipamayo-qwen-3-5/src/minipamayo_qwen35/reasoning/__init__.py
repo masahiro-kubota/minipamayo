@@ -9,6 +9,7 @@ from .synthetic import (
     infer_driving_decision,
     normalize_label,
 )
+from .synthetic_dataset import SyntheticReasoningJsonlDataset, synthetic_reasoning_collate
 
 __all__ = [
     "ACTION_SECTION_HEADER",
@@ -18,4 +19,6 @@ __all__ = [
     "build_stage3_user_prompt",
     "infer_driving_decision",
     "normalize_label",
+    "SyntheticReasoningJsonlDataset",
+    "synthetic_reasoning_collate",
 ]

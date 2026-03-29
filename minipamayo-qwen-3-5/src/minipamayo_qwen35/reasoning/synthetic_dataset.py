@@ -1,4 +1,4 @@
-"""Shared JSONL dataset for the Qwen3.5 Stage 2-4 path."""
+"""Synthetic-reasoning JSONL dataset shared by Stage 2 and Stage 3 experiments."""
 
 from __future__ import annotations
 
@@ -7,15 +7,18 @@ from pathlib import Path
 import torch
 from torch.utils.data import Dataset
 
-from ..reasoning.synthetic import build_reasoning_text, infer_driving_decision
 from ..stage1.data.dataset import normalize_jsonl_paths, read_jsonl
+from .synthetic import build_reasoning_text, infer_driving_decision
 
 
-class Stage34JsonlDataset(Dataset):
-    """Stage 1 JSONL records with synthetic reasoning targets."""
+class SyntheticReasoningJsonlDataset(Dataset):
+    """Stage 1 JSONL records augmented with deterministic synthetic reasoning."""
 
     def __init__(self, jsonl_path: str | Path | list[str] | list[Path], max_samples: int = 0):
-        self.jsonl_paths = normalize_jsonl_paths(jsonl_path, dataset_name="Stage34JsonlDataset")
+        self.jsonl_paths = normalize_jsonl_paths(
+            jsonl_path,
+            dataset_name="SyntheticReasoningJsonlDataset",
+        )
         if len(self.jsonl_paths) == 1:
             self.jsonl_path = self.jsonl_paths[0]
 
@@ -52,7 +55,7 @@ class Stage34JsonlDataset(Dataset):
         missing_keys = [key for key in required_keys if key not in record]
         if missing_keys:
             raise RuntimeError(
-                "Stage 2-4 dataset record is missing canonical fields:\n"
+                "Synthetic reasoning dataset record is missing canonical fields:\n"
                 + "\n".join(missing_keys)
             )
 
@@ -79,8 +82,8 @@ class Stage34JsonlDataset(Dataset):
         }
 
 
-def stage34_collate(samples: list[dict]) -> dict:
-    """Collate function shared across Stage 2-4."""
+def synthetic_reasoning_collate(samples: list[dict]) -> dict:
+    """Collate synthetic reasoning records for Stage 2/3 experiments."""
 
     return {
         "sample_id": [sample["sample_id"] for sample in samples],

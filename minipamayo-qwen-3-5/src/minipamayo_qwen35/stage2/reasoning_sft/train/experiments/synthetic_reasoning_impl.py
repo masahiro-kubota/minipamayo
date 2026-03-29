@@ -19,6 +19,10 @@ from PIL import Image
 from torch.utils.data import DataLoader, random_split
 
 from minipamayo_qwen35.reasoning.synthetic import ACTION_SECTION_HEADER, build_stage3_prompt_text
+from minipamayo_qwen35.reasoning.synthetic_dataset import (
+    SyntheticReasoningJsonlDataset,
+    synthetic_reasoning_collate,
+)
 from minipamayo_qwen35.stage1.vlm_ce.eval import load_components
 from minipamayo_qwen35.stage1.vlm_ce.train import (
     first_record_from_dataset,
@@ -45,8 +49,6 @@ from minipamayo_qwen35.utils.run_metadata import (
     collect_gpu_info,
     collect_processor_settings,
 )
-from minipamayo_qwen35.utils.stage34_dataset import Stage34JsonlDataset, stage34_collate
-
 PROJECT_ROOT = Path(__file__).resolve().parents[6]
 CONFIG_PATH_KEYS = {
     "stage1_checkpoint",
@@ -145,12 +147,12 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader | None, int, int]:
-    train_dataset = Stage34JsonlDataset(args.train_jsonl, max_samples=args.max_samples)
+    train_dataset = SyntheticReasoningJsonlDataset(args.train_jsonl, max_samples=args.max_samples)
     if len(train_dataset) == 0:
         raise RuntimeError("Training dataset is empty.")
 
     if args.val_jsonl:
-        val_dataset = Stage34JsonlDataset(args.val_jsonl)
+        val_dataset = SyntheticReasoningJsonlDataset(args.val_jsonl)
         if len(val_dataset) == 0:
             raise RuntimeError("Validation dataset is empty.")
     elif len(train_dataset) >= 2 and args.val_fraction > 0:
@@ -166,7 +168,7 @@ def build_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader 
         "batch_size": args.batch_size,
         "num_workers": args.num_workers,
         "pin_memory": True,
-        "collate_fn": stage34_collate,
+        "collate_fn": synthetic_reasoning_collate,
         "persistent_workers": args.num_workers > 0,
     }
     train_loader = DataLoader(train_dataset, shuffle=True, drop_last=False, **loader_kwargs)
