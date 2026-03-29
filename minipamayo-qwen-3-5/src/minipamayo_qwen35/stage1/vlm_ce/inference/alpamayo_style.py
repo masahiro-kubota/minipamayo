@@ -45,7 +45,7 @@ from ..train import (
     inject_history_inputs_embeds,
     load_checkpoint,
 )
-from .helper import (
+from ....helper import (
     MAX_PIXELS,
     MIN_PIXELS,
     create_message,
@@ -285,9 +285,8 @@ def main() -> None:
         f"{stage1_metadata['question']}"
     )
     with Image.open(image_path).convert("RGB") as image:
-        frame_tensor = torch.from_numpy(np.asarray(image)).permute(2, 0, 1).unsqueeze(0)
-        messages = create_message(frame_tensor)
-        messages[1]["content"][-1]["text"] = user_text
+        frame_tensor = torch.from_numpy(np.array(image, copy=True)).permute(2, 0, 1).unsqueeze(0)
+        messages = create_message(frame_tensor, user_text=user_text)
         messages = messages[:2]
         inputs = processor.apply_chat_template(
             messages,

@@ -1,4 +1,4 @@
-"""Alpamayo helper-compatible Stage 1 inference utilities."""
+"""Alpamayo-style helper utilities shared by inference entrypoints."""
 
 from __future__ import annotations
 
@@ -8,26 +8,33 @@ from typing import Any
 import torch
 from transformers import AutoProcessor
 
-from ....contract.history_tokens import HistoryTrajectoryQuantizer
-from ....contract.prompt import (
+from .contract.history_tokens import HistoryTrajectoryQuantizer
+from .contract.prompt import (
     ALPAMAYO_REASONING_USER_TEXT,
     COT_START_TOKEN,
     DEFAULT_SYSTEM_PROMPT,
     build_history_placeholder,
 )
-from ....utils.image_budget import CANONICAL_IMAGE_MAX_PIXELS, CANONICAL_IMAGE_MIN_PIXELS
+from .utils.image_budget import CANONICAL_IMAGE_MAX_PIXELS, CANONICAL_IMAGE_MIN_PIXELS
 
 MIN_PIXELS = CANONICAL_IMAGE_MIN_PIXELS
 MAX_PIXELS = CANONICAL_IMAGE_MAX_PIXELS
 
 
-def create_message(frames: torch.Tensor):
+def create_message(
+    frames: torch.Tensor,
+    *,
+    num_traj_token: int | None = None,
+    user_text: str | None = None,
+):
     """Construct the Alpamayo-style message using images and CoT prefill."""
     if frames.ndim != 4:
         raise ValueError(f"{frames.ndim=}, expected 4 (N, C, H, W)")
 
-    num_traj_token = HistoryTrajectoryQuantizer().token_count
-    hist_traj_placeholder = build_history_placeholder(num_traj_token)
+    if num_traj_token is None:
+        num_traj_token = HistoryTrajectoryQuantizer().token_count
+    if user_text is None:
+        user_text = f"{build_history_placeholder(num_traj_token)}{ALPAMAYO_REASONING_USER_TEXT}"
 
     return [
         {
@@ -45,10 +52,7 @@ def create_message(frames: torch.Tensor):
             + [
                 {
                     "type": "text",
-                    "text": (
-                        f"{hist_traj_placeholder}"
-                        f"{ALPAMAYO_REASONING_USER_TEXT}"
-                    ),
+                    "text": user_text,
                 }
             ],
         },
@@ -64,14 +68,16 @@ def create_message(frames: torch.Tensor):
     ]
 
 
-def get_processor(processor_path: str) -> AutoProcessor:
-    """Load the saved canonical processor with Alpamayo-style pixel settings."""
+def get_processor(processor_path: str, tokenizer: Any | None = None) -> AutoProcessor:
+    """Load the canonical processor with Alpamayo-style pixel settings."""
     processor = AutoProcessor.from_pretrained(
         processor_path,
         trust_remote_code=True,
         min_pixels=MIN_PIXELS,
         max_pixels=MAX_PIXELS,
     )
+    if tokenizer is not None:
+        processor.tokenizer = tokenizer
     return processor
 
 

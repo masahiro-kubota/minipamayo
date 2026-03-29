@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 from PIL import Image
 from transformers import LogitsProcessor, LogitsProcessorList, StoppingCriteriaList
@@ -17,13 +18,13 @@ from ....contract.prompt import TRAJ_FUTURE_START_TOKEN
 from ....action_space.record_adapter import (
     canonicalize_history_batch_for_action_space,
 )
+from ....helper import create_message, get_processor, to_device
 from ....models.alpamayo_r1 import AlpamayoR1
 from ....models.base_model import SPECIAL_TOKENS, TRAJ_TOKEN
 from ....models.token_utils import StopAfterEOS
-from ....stage1.vlm_ce.eval import load_components
+from ....stage1.vlm_ce.eval.runner import load_components, resolve_processor_path
 from ....stage1.vlm_ce.train import (
     load_checkpoint,
-    move_inputs_to_device,
 )
 from ....utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
@@ -34,7 +35,6 @@ from ....utils.json_config import load_json_payload, normalize_arg_config, resol
 from ....utils.preflight import require_expected_cuda_toolkit
 from ....utils.run_metadata import collect_processor_settings
 from ..data import ReasoningSftJsonlDataset
-from ..prompt import build_stage2_prompt_text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {
@@ -461,37 +461,42 @@ def _build_alpamayo_wrapper(
     return wrapper
 
 
-def main() -> None:
-    args = parse_args()
-    device = torch.device(
-        args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
-    )
-    if device.type != "cuda":
-        raise RuntimeError("Canonical Stage 2 inference currently expects CUDA.")
-    require_expected_cuda_toolkit()
-
-    checkpoint = load_checkpoint(Path(args.checkpoint))
+def load_stage2_inference_bundle(
+    *,
+    stage2_checkpoint_path: str | Path,
+    stage1b_checkpoint_path: str | Path,
+    image_min_pixels: int,
+    image_max_pixels: int,
+    flow_steps: int,
+    device: torch.device,
+) -> dict[str, Any]:
+    checkpoint = load_checkpoint(Path(stage2_checkpoint_path))
     checkpoint_args = checkpoint.get("args")
     if not isinstance(checkpoint_args, dict) or "stage1a_checkpoint" not in checkpoint_args:
         raise RuntimeError(
             "Stage 2 checkpoint is missing canonical `stage1a_checkpoint` args metadata."
         )
 
+    stage1a_checkpoint_path = Path(str(checkpoint_args["stage1a_checkpoint"]))
     stage1_args = argparse.Namespace(
-        checkpoint=str(checkpoint_args["stage1a_checkpoint"]),
-        image_min_pixels=args.image_min_pixels,
-        image_max_pixels=args.image_max_pixels,
+        checkpoint=str(stage1a_checkpoint_path),
+        image_min_pixels=image_min_pixels,
+        image_max_pixels=image_max_pixels,
     )
     (
         stage1_checkpoint,
         model,
-        processor,
+        loaded_processor,
         registry,
         history_registry,
         history_quantizer,
         quantizer,
         _model_dtype,
     ) = load_components(stage1_args)
+    processor = get_processor(
+        str(resolve_processor_path(stage1a_checkpoint_path)),
+        tokenizer=loaded_processor.tokenizer,
+    )
     stage2_embed_rows = int(
         checkpoint["model_state_dict"]["model.language_model.embed_tokens.weight"].shape[0]
     )
@@ -504,7 +509,12 @@ def main() -> None:
     model.config.use_cache = True
     model.to(device)
     model.eval()
-    stage1b_checkpoint = torch.load(Path(args.stage1b_checkpoint), map_location="cpu", weights_only=False)
+
+    stage1b_checkpoint = torch.load(
+        Path(stage1b_checkpoint_path),
+        map_location="cpu",
+        weights_only=False,
+    )
     wrapper = _build_alpamayo_wrapper(
         stage1_checkpoint=stage1_checkpoint,
         stage1_model=model,
@@ -514,50 +524,93 @@ def main() -> None:
         history_quantizer=history_quantizer,
         quantizer=quantizer,
         stage1b_checkpoint=stage1b_checkpoint,
+        image_min_pixels=image_min_pixels,
+        image_max_pixels=image_max_pixels,
+        flow_steps=flow_steps,
+        device=device,
+    )
+    return {
+        "checkpoint": checkpoint,
+        "checkpoint_args": checkpoint_args,
+        "stage1_checkpoint": stage1_checkpoint,
+        "stage1b_checkpoint": stage1b_checkpoint,
+        "stage1a_checkpoint_path": stage1a_checkpoint_path,
+        "model": model,
+        "processor": processor,
+        "registry": registry,
+        "history_registry": history_registry,
+        "history_quantizer": history_quantizer,
+        "quantizer": quantizer,
+        "wrapper": wrapper,
+    }
+
+
+def load_reasoning_sample(sample_jsonl: str | Path, sample_index: int) -> dict[str, Any]:
+    dataset = ReasoningSftJsonlDataset(sample_jsonl)
+    if sample_index >= len(dataset):
+        raise RuntimeError(
+            f"`sample_index` {sample_index} is out of range for dataset size {len(dataset)}."
+        )
+    return dataset[sample_index]
+
+
+def build_wrapper_inputs_for_sample(
+    *,
+    processor,
+    sample: dict[str, Any],
+    history_token_count: int,
+    device: torch.device,
+) -> dict[str, Any]:
+    image_path = Path(sample["image_path"])
+    with Image.open(image_path) as raw_image:
+        image = raw_image.convert("RGB")
+        frame_tensor = torch.from_numpy(np.array(image, copy=True)).permute(2, 0, 1).unsqueeze(0)
+    messages = create_message(frame_tensor, num_traj_token=history_token_count)
+    tokenized_data = processor.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=False,
+        continue_final_message=True,
+        return_dict=True,
+        return_tensors="pt",
+    )
+    wrapper_inputs = {
+        "ego_history_xyz": sample["ego_history_xyz"].unsqueeze(0).to(dtype=torch.float32),
+        "ego_history_rot": sample["ego_history_rot"].unsqueeze(0).to(dtype=torch.float32),
+        "tokenized_data": tokenized_data,
+    }
+    return to_device(wrapper_inputs, device=device)
+
+
+def main() -> None:
+    args = parse_args()
+    device = torch.device(
+        args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
+    )
+    if device.type != "cuda":
+        raise RuntimeError("Canonical Stage 2 inference currently expects CUDA.")
+    require_expected_cuda_toolkit()
+
+    bundle = load_stage2_inference_bundle(
+        stage2_checkpoint_path=args.checkpoint,
+        stage1b_checkpoint_path=args.stage1b_checkpoint,
         image_min_pixels=args.image_min_pixels,
         image_max_pixels=args.image_max_pixels,
         flow_steps=args.flow_steps,
         device=device,
     )
-
-    dataset = ReasoningSftJsonlDataset(args.sample_jsonl)
-    if args.sample_index >= len(dataset):
-        raise RuntimeError(
-            f"`sample_index` {args.sample_index} is out of range for dataset size {len(dataset)}."
-        )
-    sample = dataset[args.sample_index]
-    batch = {
-        "sample_id": [sample["sample_id"]],
-        "image_path": [sample["image_path"]],
-        "action": sample["action"].unsqueeze(0),
-        "v0": sample["v0"].unsqueeze(0),
-        "gt_waypoints": sample["gt_waypoints"].unsqueeze(0),
-        "ego_history_xyz": sample["ego_history_xyz"].unsqueeze(0),
-        "ego_history_rot": sample["ego_history_rot"].unsqueeze(0),
-        "dt": [sample["dt"]],
-        "reasoning_text": [sample["reasoning_text"]],
-    }
-
-    prompt_text = build_stage2_prompt_text(
-        processor,
-        float(sample["v0"].item()),
-        history_token_count=history_quantizer.token_count,
+    checkpoint = bundle["checkpoint"]
+    checkpoint_args = bundle["checkpoint_args"]
+    processor = bundle["processor"]
+    history_quantizer = bundle["history_quantizer"]
+    wrapper = bundle["wrapper"]
+    sample = load_reasoning_sample(args.sample_jsonl, args.sample_index)
+    wrapper_inputs = build_wrapper_inputs_for_sample(
+        processor=processor,
+        sample=sample,
+        history_token_count=int(history_quantizer.token_count),
+        device=device,
     )
-    with Image.open(sample["image_path"]) as raw_image:
-        image = raw_image.convert("RGB")
-        tokenized_data = processor(
-            text=[prompt_text],
-            images=[image],
-            return_tensors="pt",
-            padding=True,
-        )
-        image.close()
-    tokenized_data = move_inputs_to_device(tokenized_data, device)
-    wrapper_inputs = {
-        "ego_history_xyz": batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
-        "ego_history_rot": batch["ego_history_rot"].to(device=device, dtype=torch.float32),
-        "tokenized_data": tokenized_data,
-    }
     pred_xyz, pred_rot, extra = wrapper.sample_trajectories_from_data_with_vlm_rollout(
         wrapper_inputs,
         top_p=args.top_p,
@@ -574,8 +627,8 @@ def main() -> None:
     reasoning_text = str(extra["cot"][0, 0, 0])
 
     history_xyz, history_rot = canonicalize_history_batch_for_action_space(
-        batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
-        batch["ego_history_rot"].to(device=device, dtype=torch.float32),
+        sample["ego_history_xyz"].unsqueeze(0).to(device=device, dtype=torch.float32),
+        sample["ego_history_rot"].unsqueeze(0).to(device=device, dtype=torch.float32),
     )
     pred_action = wrapper.action_space.traj_to_action(
         traj_history_xyz=history_xyz,
