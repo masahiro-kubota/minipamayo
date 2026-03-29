@@ -1,0 +1,22 @@
+{
+  "path_base": "project_root",
+  "args": {
+    "checkpoint": "checkpoints/stage1/expert_cfm/canonical/perimeter_cw_curve2048_12gb/best.pt",
+    "stage1_checkpoint": "checkpoints/stage1/vlm_ce/canonical/perimeter_cw_curve2048_12gb/best.pt",
+    "eval_jsonl": [
+      "artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/curve_holdout.jsonl"
+    ],
+    "output_json": "artifacts/eval/stage1/expert_cfm/canonical/perimeter_cw_curve2048_eval.json",
+    "device": "cuda",
+    "batch_size": 1,
+    "num_workers": 2,
+    "image_min_pixels": 163840,
+    "image_max_pixels": 196608,
+    "flow_steps": 10,
+    "include_pid_override": true,
+    "pid_target_speed_kmh": 24.0,
+    "pid_kp": 1.0,
+    "pid_ki": 0.05,
+    "pid_kd": 0.0
+  }
+}

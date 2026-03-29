@@ -1,0 +1,39 @@
+{
+  "path_base": "project_root",
+  "args": {
+    "stage1_checkpoint": "checkpoints/stage1/vlm_ce/canonical/perimeter_cw_curve2048_12gb/best.pt",
+    "train_jsonl": [
+      "artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/train_2048.jsonl"
+    ],
+    "val_jsonl": [
+      "artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/curve_holdout.jsonl"
+    ],
+    "save_dir": "checkpoints/stage1/expert_cfm/canonical/perimeter_cw_curve2048_12gb",
+    "batch_size": 1,
+    "grad_accum_steps": 1,
+    "max_epochs": 10,
+    "lr": 1e-04,
+    "weight_decay": 0.01,
+    "warmup_ratio": 0.05,
+    "max_grad_norm": 1.0,
+    "early_stopping_patience": 2,
+    "early_stopping_min_delta": 0.0,
+    "val_fraction": 0.0,
+    "num_workers": 2,
+    "log_every": 10,
+    "seed": 7,
+    "image_min_pixels": 163840,
+    "image_max_pixels": 196608,
+    "decoder_hidden_size": 0,
+    "decoder_num_layers": 6,
+    "decoder_num_attention_heads": 0,
+    "decoder_intermediate_size": 2048,
+    "decoder_attention_dropout": 0.0,
+    "num_fourier_feats": 20,
+    "fourier_max_freq": 100.0,
+    "mlp_hidden_size": 1024,
+    "mlp_num_layers": 4,
+    "wandb_project": "minipamayo-qwen35",
+    "wandb_run_name": "stage1-expert-cfm-perimeter-cw-curve2048-12gb"
+  }
+}
