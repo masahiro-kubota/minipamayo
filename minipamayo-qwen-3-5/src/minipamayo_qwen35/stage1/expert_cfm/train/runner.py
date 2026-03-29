@@ -44,8 +44,8 @@ from ....utils.run_metadata import (
     collect_gpu_info,
     collect_processor_settings,
 )
-from ....diffusion import FlowMatchingDiffusion
-from ....models import Stage1ActionExpert
+from ....diffusion.action_expert import FlowMatchingDiffusion
+from ....models.action_expert import Stage1ActionExpert
 from ..core.common import (
     build_stage1b_metadata,
     compute_action_stats,

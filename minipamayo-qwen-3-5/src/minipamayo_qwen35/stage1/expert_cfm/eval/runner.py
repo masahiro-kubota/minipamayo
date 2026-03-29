@@ -28,8 +28,8 @@ from ....utils.json_config import (
     resolve_path_base,
 )
 from ....utils.preflight import require_expected_cuda_toolkit
-from ....diffusion import FlowMatchingDiffusion
-from ....models import load_action_expert_from_checkpoint
+from ....diffusion.action_expert import FlowMatchingDiffusion
+from ....models.action_expert import load_action_expert_from_checkpoint
 from ..core.common import (
     extract_prompt_cache,
     freeze_module,

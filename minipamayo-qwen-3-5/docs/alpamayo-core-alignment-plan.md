@@ -74,18 +74,7 @@ diff -ru \
 - `models/action_expert.py`
   - `Stage1B` 用 shared action expert 本体
 
-### 4. package file の差分
-
-以下は Alpamayo 側では package export を持っていないか、export 内容が違う。
-
-- `action_space/__init__.py`
-- `diffusion/__init__.py`
-- `models/__init__.py`
-- `geometry/__init__.py`
-
-この差分は pure core の numerics 差ではなく、`minipamayo-qwen-3-5` 側の import 整理のための差分。
-
-### 5. まだ未移植の大物
+### 4. まだ未移植の大物
 
 残っている本質的な未移植はこれ。
 
@@ -95,22 +84,7 @@ diff -ru \
 
 ## 残りの実装方針
 
-### 1. package file の扱いを決める
-
-対象:
-- `action_space/__init__.py`
-- `diffusion/__init__.py`
-- `models/__init__.py`
-- `geometry/__init__.py`
-
-やること:
-- Alpamayo mirror を優先するなら、export を減らす
-- repo 内 import 利便性を優先するなら、この差分は許容する
-
-注意:
-- ここはロジック差ではなく package 境界の差なので、優先度は低い
-
-### 2. repo 固有 core の位置づけを固定する
+### 1. repo 固有 core の位置づけを固定する
 
 対象:
 - `action_space/record_adapter.py`
@@ -125,7 +99,7 @@ diff -ru \
 - `record_adapter.py` は Alpamayo loader 不在を埋める層
 - `action_expert.py` は end-to-end wrapper 未導入の間の shared 実装
 
-### 3. 最後に end-to-end wrapper を考える
+### 2. 最後に end-to-end wrapper を考える
 
 対象:
 - Alpamayo `models/alpamayo_r1.py`
@@ -141,7 +115,6 @@ diff -ru \
 
 残り:
 - `models/alpamayo_r1.py` 相当
-- package file 差分を詰めるかどうかの判断
 - repo 固有 core (`record_adapter.py`, `diffusion/action_expert.py`, `models/action_expert.py`) の最終位置づけ
 
 ## 各段階の確認
