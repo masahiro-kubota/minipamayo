@@ -83,7 +83,6 @@ diff -u \
   - pure import path 差に加えて以下が残っている
   - expert attention mask を `self.expert.dtype` で作る
   - expert が `sdpa` の場合は `attention_mask=None` に逃がす
-  - `future_token_embeds` と `last_hidden` の dtype を projection 前に明示的に合わせる
   - `prompt_cache.crop(...)` を `hasattr` で guard する
   - いずれも `Qwen3.5-0.8B + transformers 5.4 + sdpa fallback` のための shim
 - `helper.py`
