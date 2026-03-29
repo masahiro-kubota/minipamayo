@@ -15,7 +15,7 @@ canonical Stage2 は論文上の reasoning SFT に対応する。
   - `o_image`
   - `o_egomotion`
 - 追加 supervision として `reasoning_text` を持つ
-- action token target も引き続き持つ
+- record には canonical `action` と future trajectory も引き続き持つ
 
 つまり Stage2 record は
 
@@ -78,7 +78,7 @@ canonical Stage2 では、`reasoning_text` は dataset が明示的に持つ必�
 - `command` と `planner_state` からその場で synthetic reasoning を生成する
 - planner label だけから teacher text を即席で組み立てる
 
-それらは `experiments/synthetic_reasoning/` に閉じ込める。
+それらは canonical Stage2 package の外で扱う。
 
 ## prompt 契約
 
@@ -100,13 +100,15 @@ Stage2 prompt は Stage1A と同じ history placeholder を持つ。
 teacher target は
 
 1. `reasoning_text`
-2. action section header
-3. action token 列
+2. `<|cot_end|>`
+3. `<|traj_future_start|>`
 4. `eos`
 
 の順で連結する。
 
-action 部分は loss weight を上げてもよいが、canonical target の系列順は固定する。
+つまり current canonical Stage2 は、離散 action token 列そのものではなく、
+reasoning text と handoff boundary token を supervision する。
+ただし dataset record 自体は canonical `action` を保持し、Stage1/Stage3 との契約を崩さない。
 
 ## smoke 用 dataset
 
@@ -118,5 +120,5 @@ smoke 検証では Stage1 smoke JSONL に `reasoning_text` を足した派生 JS
 
 現在の canonical loader はこれを前提にしている。
 
-- [dataset.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage2/reasoning_sft/data/dataset.py)
+- [dataset.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage2/reasoning_sft/dataset.py)
 - [runner.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage2/reasoning_sft/train/runner.py)
