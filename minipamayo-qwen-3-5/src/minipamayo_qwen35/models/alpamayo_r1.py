@@ -28,7 +28,6 @@ from minipamayo_qwen35.action_space.action_space import ActionSpace
 from minipamayo_qwen35.config import AlpamayoR1Config
 from minipamayo_qwen35.diffusion.base import BaseDiffusion
 from minipamayo_qwen35.models.base_model import ReasoningVLA
-from minipamayo_qwen35.models.action_expert import build_expert_attention_mask_from_offsets
 from minipamayo_qwen35.models.token_utils import (
     StopAfterEOS,
     extract_text_tokens,
@@ -238,11 +237,14 @@ class AlpamayoR1(ReasoningVLA):
         position_ids += delta.to(position_ids.device)
 
         # modify the attention_masks to remove padding tokens
-        attention_mask = build_expert_attention_mask_from_offsets(
-            offsets=offset,
-            prefill_seq_len=prompt_cache.get_seq_length(),
-            future_token_count=n_diffusion_tokens,
+        attention_mask = torch.zeros(
+            (b_star, prefill_seq_len + n_diffusion_tokens),
+            dtype=torch.long,
+            device=device,
         )
+        for i in range(b_star):
+            attention_mask[i, : offset[i]] = 1
+        attention_mask[:, prefill_seq_len:] = 1
 
         forward_kwargs = {}
         if self.config.expert_non_causal_attention:

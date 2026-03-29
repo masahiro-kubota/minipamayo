@@ -81,7 +81,7 @@ diff -u \
   - これは `transformers==5.4.0` 側の追加引数を受けるため
 - `models/alpamayo_r1.py`
   - pure import path 差に加えて以下が残っている
-  - Alpamayo の inline 4D additive mask ではなく、`build_expert_attention_mask_from_offsets(...)` を使う
+  - Alpamayo の inline 4D additive mask ではなく、inline の 2D padding mask を使う
   - これは `transformers==5.4.0 + Qwen3.5-0.8B + flash_attention_2` の expert path が 2D padding mask を期待するため
   - `prompt_cache.crop(...)` を `hasattr` で guard する
   - いずれも `Qwen3.5-0.8B + transformers 5.4` の cache / flash-attn runtime 差のための shim
