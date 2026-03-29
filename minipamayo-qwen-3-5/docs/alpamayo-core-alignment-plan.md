@@ -18,45 +18,112 @@
 
 各 stage はそれらを import するだけに寄せる。
 
-## 未完の実装順
+## 現状の diff 状況
 
-### 1. `stage1/expert_cfm/core` を薄くする
+2026-03-29 時点で、以下の `diff -ru` を使って Alpamayo 側と比較した。
+
+```bash
+diff -ru \
+  /home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/action_space \
+  /home/masa/minipamayo/related_repos/alpamayo/src/alpamayo_r1/action_space
+
+diff -ru \
+  /home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/diffusion \
+  /home/masa/minipamayo/related_repos/alpamayo/src/alpamayo_r1/diffusion
+
+diff -ru \
+  /home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/models \
+  /home/masa/minipamayo/related_repos/alpamayo/src/alpamayo_r1/models
+
+diff -ru \
+  /home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/geometry \
+  /home/masa/minipamayo/related_repos/alpamayo/src/alpamayo_r1/geometry
+```
+
+### 1. 差分なし
+
+以下は Alpamayo 側と一致している。
+
+- `action_space/action_space.py`
+- `diffusion/base.py`
+- `geometry/rotation.py`
+- `models/action_in_proj.py`
+- `models/base_model.py`
+- `models/delta_tokenizer.py`
+- `models/token_utils.py`
+
+### 2. import path 差だけ
+
+以下は実質 import path 差だけで、ロジック差は残っていない。
+
+- `action_space/discrete_action_space.py`
+- `action_space/unicycle_accel_curvature.py`
+- `action_space/utils.py`
+- `diffusion/flow_matching.py`
+
+### 3. repo 固有として残している差分
+
+以下は Alpamayo には無いが、`minipamayo-qwen-3-5` 側の stage 分割や JSONL record 契約のために残している。
+
+- `action_space/record_adapter.py`
+  - record から tensor を読む
+  - shape adapter
+  - canonical action / waypoint payload の橋渡し
+- `diffusion/action_expert.py`
+  - `Stage1B` の expert decoding に必要な diffusion adapter
+- `models/action_expert.py`
+  - `Stage1B` 用 shared action expert 本体
+
+### 4. package file の差分
+
+以下は Alpamayo 側では package export を持っていないか、export 内容が違う。
+
+- `action_space/__init__.py`
+- `diffusion/__init__.py`
+- `models/__init__.py`
+- `geometry/__init__.py`
+
+この差分は pure core の numerics 差ではなく、`minipamayo-qwen-3-5` 側の import 整理のための差分。
+
+### 5. まだ未移植の大物
+
+残っている本質的な未移植はこれ。
+
+- Alpamayo `models/alpamayo_r1.py` 相当
+
+これは end-to-end wrapper なので、最後に触る。
+
+## 残りの実装方針
+
+### 1. package file の扱いを決める
 
 対象:
-- `src/minipamayo_qwen35/stage1/expert_cfm/core/model.py`
-- `src/minipamayo_qwen35/stage1/expert_cfm/core/common.py`
+- `action_space/__init__.py`
+- `diffusion/__init__.py`
+- `models/__init__.py`
+- `geometry/__init__.py`
 
 やること:
-- `diffusion/` と `action_space/` を top-level shared core として参照する
-- `stage1/expert_cfm/core` には stage1B 固有 wiring だけを残す
-
-ここでの狙い:
-- pure core を top-level に集約する
-- stage 固有の glue と shared numerics を分ける
-
-進捗:
-- `Stage1ActionExpert` 本体は `models/action_expert.py` に移した
-- `stage1/expert_cfm/core/model.py` は thin wrapper になった
-- `FlowMatchingDiffusion` も top-level `diffusion/action_expert.py` に移した
-- `stage1` / `stage2` の runner は top-level `models` / `diffusion` を直接参照するようにした
-
-### 2. `base_model.py` を使う側の整理
-
-現状:
-- `models/base_model.py` 自体は移植済み
-- ただし `stage1/stage2` はまだこの shared scaffold を使っていない
-
-ここでの狙い:
-- VLM + trajectory token fusion の shared contract をまとめる
+- Alpamayo mirror を優先するなら、export を減らす
+- repo 内 import 利便性を優先するなら、この差分は許容する
 
 注意:
-- 影響範囲が大きい
-- `stage1/stage2` の prompt / token / cache 契約に触れるので後回し
+- ここはロジック差ではなく package 境界の差なので、優先度は低い
 
-進捗:
-- history / future special token は `base_model.py` の定数を参照するようにした
-- history placeholder の置換は `base_model.replace_pad_token(...)` を使うようにした
-- Alpamayo-style inference helper の raw special token 文字列は shared contract 経由に寄せた
+### 2. repo 固有 core の位置づけを固定する
+
+対象:
+- `action_space/record_adapter.py`
+- `diffusion/action_expert.py`
+- `models/action_expert.py`
+
+やること:
+- これらを「Alpamayo に無い repo 固有 core」と明示的に扱う
+- pure Alpamayo mirror と混ぜない
+
+注意:
+- `record_adapter.py` は Alpamayo loader 不在を埋める層
+- `action_expert.py` は end-to-end wrapper 未導入の間の shared 実装
 
 ### 3. 最後に end-to-end wrapper を考える
 
@@ -73,7 +140,9 @@
 ## 優先順位
 
 残り:
-- `alpamayo_r1.py` 相当
+- `models/alpamayo_r1.py` 相当
+- package file 差分を詰めるかどうかの判断
+- repo 固有 core (`record_adapter.py`, `diffusion/action_expert.py`, `models/action_expert.py`) の最終位置づけ
 
 ## 各段階の確認
 
@@ -89,4 +158,4 @@
 
 - pure shared core は top-level `action_space/`, `diffusion/`, `models/`, `geometry/` にある
 - stage 配下には train/eval/inference と stage 固有 glue だけが残る
-- Alpamayo の同名 file と diff を見たとき、差分は import path と repo 固有 glue にほぼ限定される
+- Alpamayo の同名 file と diff を見たとき、差分は import path と repo 固有 glue に限定される
