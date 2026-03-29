@@ -302,6 +302,31 @@ PID は少なくとも以下を使う。
 - `cw / ccw` bucket ごとの成績
 - `gentle / medium / sharp` bucket ごとの成績
 
+## 実験結果の記録
+
+実験結果は、計画書とは別に次の markdown へ蓄積する。
+
+- [stage1b-lateral-pid-experiment-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/stage1b-lateral-pid-experiment-results.md)
+
+運用:
+
+- `probe16` 技術確認も含め、各 rung の終了後に 1 セクション追記する
+- 追記単位は
+  - `Stage1A train`
+  - `Stage1A gate`
+  - `Stage1B train`
+  - `Stage1B canonical vs PID`
+  をまとめた 1 セットにする
+- 少なくとも次を残す
+  - 使った config
+  - checkpoint path
+  - `Stage1A gate` 指標
+  - `Stage1B canonical` 指標
+  - `Stage1B + PID` 指標
+  - 次の rung へ進むかどうか
+
+この計画書は「何をやるか」を管理し、結果の時系列記録と比較表は結果ファイル側で管理する。
+
 ## Stage1A gate
 
 `Stage1B` に進む前に、`Stage1A` が離散 trajectory token を最低限学習できているかを
@@ -480,6 +505,9 @@ PID 置換で大きく悪化した場合、候補は主に 3 つ。
 注意:
 - この step は interface / metric の技術確認だけに使う
 - `probe16` の結果は、最終的な性能判断には使わない
+- 実行後は結果を
+  [stage1b-lateral-pid-experiment-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/stage1b-lateral-pid-experiment-results.md)
+  の `probe16 smoke` 欄に追記する
 
 ### 手順6. perimeter_cw 128 sample rung を回す
 
@@ -536,6 +564,9 @@ PID 置換で大きく悪化した場合、候補は主に 3 つ。
 次へ進む条件:
 - `Stage1A` gate を通る
 - それでも `Stage1B + PID` の結論がまだ曖昧なら、次の rung へ進む
+- 実行後は結果を
+  [stage1b-lateral-pid-experiment-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/stage1b-lateral-pid-experiment-results.md)
+  の `perimeter_cw_curve128` 欄に追記する
 
 ### 手順7. perimeter_cw 512 sample rung を回す
 
@@ -562,6 +593,9 @@ PID 置換で大きく悪化した場合、候補は主に 3 つ。
   - `PID 比較評価`
   を `512 sample` 条件で回す
 - `128 sample` rung の checkpoint は使い回さない
+- 実行後は結果を
+  [stage1b-lateral-pid-experiment-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/stage1b-lateral-pid-experiment-results.md)
+  の `perimeter_cw_curve512` 欄に追記する
 
 ### 手順8. perimeter_cw 2048 sample rung を回す
 
@@ -587,6 +621,9 @@ PID 置換で大きく悪化した場合、候補は主に 3 つ。
   - `PID 比較評価`
   を `2048 sample` 条件で回す
 - `512 sample` rung の checkpoint は使い回さない
+- 実行後は結果を
+  [stage1b-lateral-pid-experiment-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/stage1b-lateral-pid-experiment-results.md)
+  の `perimeter_cw_curve2048` 欄に追記する
 
 ### 手順9. perimeter_cw full rung を回す
 
@@ -612,6 +649,9 @@ PID 置換で大きく悪化した場合、候補は主に 3 つ。
 この rung でやること:
 - 手順6と同じ実験サイクルを、`perimeter_cw` full で回す
 - subset rung の checkpoint は使い回さない
+- 実行後は結果を
+  [stage1b-lateral-pid-experiment-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/stage1b-lateral-pid-experiment-results.md)
+  の `perimeter_cw_full` 欄に追記する
 
 ### 手順10. weave_cw, weave_ccw を順に追加する
 
@@ -632,6 +672,7 @@ PID 置換で大きく悪化した場合、候補は主に 3 つ。
 - `Stage1B`
 - `PID 比較評価`
 の順番は変えない
+- run を増やした各条件ごとに、結果ファイルへ独立したセクションを追加する
 
 ### 手順11. 必要なら full ignore_rule_data に広げる
 
@@ -653,6 +694,7 @@ PID 置換で大きく悪化した場合、候補は主に 3 つ。
 - `Stage1B`
 - `PID 比較評価`
 を同じ順で回す
+- full data での結果も、結果ファイルの `full_ignore_rule_data` 欄へ追記する
 
 ### 手順12. target speed を必要時だけ再 tuning する
 
