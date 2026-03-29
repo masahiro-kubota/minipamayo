@@ -18,50 +18,9 @@
 
 各 stage はそれらを import するだけに寄せる。
 
-## 実装順
+## 未完の実装順
 
-### 1. `hydra` 化を最小範囲で入れる
-
-対象:
-- `src/minipamayo_qwen35/action_space/discrete_action_space.py`
-- `src/minipamayo_qwen35/contract/task_spec.py`
-
-やること:
-- `DiscreteTrajectoryTokenizer` を `action_space_cfg` 受け取りに戻す
-- tokenizer 内で `hydra.instantiate(...)` を使う
-- `CanonicalStage1Spec` は instantiated object ではなく cfg を tokenizer に渡す
-
-ここでの狙い:
-- Alpamayo の config 契約に最小限で合わせる
-- `action_space` 周りから hydra の流儀を戻す
-
-注意:
-- checkpoint metadata の `action_space_cfg` はそのまま使える形を維持する
-- `record_adapter.py` は hydra 化しない
-
-### 2. top-level `diffusion/` を作る
-
-対象:
-- いまの `stage1/expert_cfm/core/diffusion.py`
-- Alpamayo の `diffusion/base.py`
-- Alpamayo の `diffusion/flow_matching.py`
-
-やること:
-- pure diffusion 部分を `src/minipamayo_qwen35/diffusion/` に出す
-- file 名も Alpamayo に寄せる
-
-想定:
-- `diffusion/base.py`
-- `diffusion/flow_matching.py`
-
-ここでの狙い:
-- `Stage1B` 専用 core と pure diffusion core を分ける
-- Alpamayo との diff を見やすくする
-
-注意:
-- train/eval/inference glue はまだ `stage1/expert_cfm/` に残す
-
-### 3. `stage1/expert_cfm/core` を薄くする
+### 1. `stage1/expert_cfm/core` を薄くする
 
 対象:
 - `src/minipamayo_qwen35/stage1/expert_cfm/core/model.py`
@@ -75,34 +34,11 @@
 - pure core を top-level に集約する
 - stage 固有の glue と shared numerics を分ける
 
-### 4. top-level `models/` を作る
+### 2. `base_model.py` を使う側の整理
 
-最初に持ってくる候補:
-- Alpamayo `models/action_in_proj.py`
-- Alpamayo `models/token_utils.py`
-- 必要なら Alpamayo `models/delta_tokenizer.py`
-
-ここでの狙い:
-- shared model utilities を stage 配下から切り離す
-- Alpamayo の `models/` 構造に寄せる
-
-注意:
-- まずは軽い shared file から
-- `alpamayo_r1.py` 相当はまだ持ち込まない
-
-進捗:
-- `action_in_proj.py`
-- `token_utils.py`
-- `delta_tokenizer.py`
-- `base_model.py`
-は top-level `models/` に移植済み。
-- `stage1B` の action projection は `models/action_in_proj.py` を参照する。
-- `stage2` inference の `StopAfterEOS` は `models/token_utils.py` を参照する。
-
-### 5. 必要なら `base_model.py` 相当を作る
-
-対象:
-- Alpamayo `models/base_model.py`
+現状:
+- `models/base_model.py` 自体は移植済み
+- ただし `stage1/stage2` はまだこの shared scaffold を使っていない
 
 ここでの狙い:
 - VLM + trajectory token fusion の shared contract をまとめる
@@ -111,7 +47,7 @@
 - 影響範囲が大きい
 - `stage1/stage2` の prompt / token / cache 契約に触れるので後回し
 
-### 6. 最後に end-to-end wrapper を考える
+### 3. 最後に end-to-end wrapper を考える
 
 対象:
 - Alpamayo `models/alpamayo_r1.py`
@@ -125,13 +61,9 @@
 
 ## 優先順位
 
-先にやる:
-- `hydra` 化
-- `diffusion/` 切り出し
-- `models/` の shared file 移植
-
-後でやる:
-- `base_model.py`
+残り:
+- `stage1/expert_cfm/core` の薄型化
+- `base_model.py` を使う側の整理
 - `alpamayo_r1.py` 相当
 
 ## 各段階の確認
