@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..models.base_model import SPECIAL_TOKENS, TRAJ_TOKEN
 from .history_tokens import (
     HISTORY_END_TOKEN,
     HISTORY_PLACEHOLDER_TOKEN,
@@ -14,10 +15,10 @@ ALPAMAYO_REASONING_USER_TEXT = (
     "output the chain-of-thought reasoning of the driving process, "
     "then output the future trajectory."
 )
-COT_START_TOKEN = "<|cot_start|>"
-COT_END_TOKEN = "<|cot_end|>"
-TRAJ_FUTURE_START_TOKEN = "<|traj_future_start|>"
-TRAJ_FUTURE_END_TOKEN = "<|traj_future_end|>"
+COT_START_TOKEN = SPECIAL_TOKENS["cot_start"]
+COT_END_TOKEN = SPECIAL_TOKENS["cot_end"]
+TRAJ_FUTURE_START_TOKEN = TRAJ_TOKEN["future_start"]
+TRAJ_FUTURE_END_TOKEN = TRAJ_TOKEN["future_end"]
 PROMPT_SPECIAL_TOKENS = [
     COT_START_TOKEN,
     COT_END_TOKEN,

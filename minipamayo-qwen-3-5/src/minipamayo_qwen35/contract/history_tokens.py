@@ -8,15 +8,17 @@ from dataclasses import dataclass, field
 import numpy as np
 import torch
 
+from ..models.base_model import TRAJ_TOKEN, replace_pad_token
+
 
 def format_stage1_token(prefix: str, index: int) -> str:
     if prefix == "i":
         return f"<i{index}>"
     return f"<{prefix}_{index:03d}>"
 
-HISTORY_START_TOKEN = "<|traj_history_start|>"
-HISTORY_PLACEHOLDER_TOKEN = "<|traj_history|>"
-HISTORY_END_TOKEN = "<|traj_history_end|>"
+HISTORY_START_TOKEN = TRAJ_TOKEN["history_start"]
+HISTORY_PLACEHOLDER_TOKEN = TRAJ_TOKEN["history"]
+HISTORY_END_TOKEN = TRAJ_TOKEN["history_end"]
 HISTORY_SPECIAL_TOKENS = [
     HISTORY_START_TOKEN,
     HISTORY_PLACEHOLDER_TOKEN,
@@ -308,10 +310,9 @@ class HistoryTokenRegistry:
     ) -> torch.Tensor:
         if self.placeholder_token_id is None:
             raise RuntimeError("History token registry is not attached to a tokenizer yet.")
-        fused = input_ids.clone()
         for row_idx, row_token_ids in enumerate(history_token_id_rows):
             placeholder_positions = torch.nonzero(
-                fused[row_idx] == self.placeholder_token_id,
+                input_ids[row_idx] == self.placeholder_token_id,
                 as_tuple=False,
             ).flatten()
             if placeholder_positions.numel() != len(row_token_ids):
@@ -320,12 +321,12 @@ class HistoryTokenRegistry:
                     f"expected={len(row_token_ids)}\n"
                     f"found={int(placeholder_positions.numel())}"
                 )
-            fused[row_idx, placeholder_positions] = torch.tensor(
-                row_token_ids,
-                dtype=fused.dtype,
-                device=fused.device,
-            )
-        return fused
+        replacement_ids = torch.tensor(
+            history_token_id_rows,
+            dtype=input_ids.dtype,
+            device=input_ids.device,
+        )
+        return replace_pad_token(input_ids.clone(), replacement_ids, self.placeholder_token_id)
 
     def metadata(self) -> dict:
         return {

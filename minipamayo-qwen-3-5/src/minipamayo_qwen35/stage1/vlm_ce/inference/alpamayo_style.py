@@ -26,7 +26,7 @@ from ....utils.json_config import load_json_payload, normalize_arg_config, resol
 from ....utils.preflight import require_expected_cuda_toolkit
 from ....utils.run_metadata import collect_processor_settings
 from ....contract.task_spec import CanonicalStage1Spec, KappaOnlyStage1Spec, Stage1TaskSpec
-from ....contract.prompt import add_prompt_special_tokens
+from ....contract.prompt import add_prompt_special_tokens, build_history_placeholder
 from ....action_space.record_adapter import rollout_waypoints_from_action_tensor
 from ...data.dataset import Stage1JsonlDataset
 from ..eval.runner import (
@@ -281,8 +281,8 @@ def main() -> None:
 
     image_path = Path(sample["image_path"])
     user_text = (
-        f"<|traj_history_start|>{'<|traj_history|>' * history_quantizer.token_count}"
-        f"<|traj_history_end|>{stage1_metadata['question']}"
+        f"{build_history_placeholder(history_quantizer.token_count)}"
+        f"{stage1_metadata['question']}"
     )
     with Image.open(image_path).convert("RGB") as image:
         frame_tensor = torch.from_numpy(np.asarray(image)).permute(2, 0, 1).unsqueeze(0)

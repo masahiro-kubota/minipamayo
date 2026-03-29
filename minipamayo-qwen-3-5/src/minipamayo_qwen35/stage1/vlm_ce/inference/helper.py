@@ -8,19 +8,26 @@ from typing import Any
 import torch
 from transformers import AutoProcessor
 
+from ....contract.history_tokens import HistoryTrajectoryQuantizer
+from ....contract.prompt import (
+    ALPAMAYO_REASONING_USER_TEXT,
+    COT_START_TOKEN,
+    DEFAULT_SYSTEM_PROMPT,
+    build_history_placeholder,
+)
 from ....utils.image_budget import CANONICAL_IMAGE_MAX_PIXELS, CANONICAL_IMAGE_MIN_PIXELS
 
 MIN_PIXELS = CANONICAL_IMAGE_MIN_PIXELS
 MAX_PIXELS = CANONICAL_IMAGE_MAX_PIXELS
+
+
 def create_message(frames: torch.Tensor):
     """Construct the Alpamayo-style message using images and CoT prefill."""
     if frames.ndim != 4:
         raise ValueError(f"{frames.ndim=}, expected 4 (N, C, H, W)")
 
-    num_traj_token = 48
-    hist_traj_placeholder = (
-        f"<|traj_history_start|>{'<|traj_history|>' * num_traj_token}<|traj_history_end|>"
-    )
+    num_traj_token = HistoryTrajectoryQuantizer().token_count
+    hist_traj_placeholder = build_history_placeholder(num_traj_token)
 
     return [
         {
@@ -28,7 +35,7 @@ def create_message(frames: torch.Tensor):
             "content": [
                 {
                     "type": "text",
-                    "text": "You are a driving assistant that generates safe and accurate actions.",
+                    "text": DEFAULT_SYSTEM_PROMPT,
                 }
             ],
         },
@@ -40,8 +47,7 @@ def create_message(frames: torch.Tensor):
                     "type": "text",
                     "text": (
                         f"{hist_traj_placeholder}"
-                        "output the chain-of-thought reasoning of the driving process, "
-                        "then output the future trajectory."
+                        f"{ALPAMAYO_REASONING_USER_TEXT}"
                     ),
                 }
             ],
@@ -51,7 +57,7 @@ def create_message(frames: torch.Tensor):
             "content": [
                 {
                     "type": "text",
-                    "text": "<|cot_start|>",
+                    "text": COT_START_TOKEN,
                 }
             ],
         },

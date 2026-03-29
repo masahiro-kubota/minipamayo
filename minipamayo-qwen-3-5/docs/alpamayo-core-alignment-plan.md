@@ -34,6 +34,12 @@
 - pure core を top-level に集約する
 - stage 固有の glue と shared numerics を分ける
 
+進捗:
+- `Stage1ActionExpert` 本体は `models/action_expert.py` に移した
+- `stage1/expert_cfm/core/model.py` は thin wrapper になった
+- `FlowMatchingDiffusion` も top-level `diffusion/action_expert.py` に移した
+- `stage1` / `stage2` の runner は top-level `models` / `diffusion` を直接参照するようにした
+
 ### 2. `base_model.py` を使う側の整理
 
 現状:
@@ -46,6 +52,11 @@
 注意:
 - 影響範囲が大きい
 - `stage1/stage2` の prompt / token / cache 契約に触れるので後回し
+
+進捗:
+- history / future special token は `base_model.py` の定数を参照するようにした
+- history placeholder の置換は `base_model.replace_pad_token(...)` を使うようにした
+- Alpamayo-style inference helper の raw special token 文字列は shared contract 経由に寄せた
 
 ### 3. 最後に end-to-end wrapper を考える
 
@@ -62,8 +73,6 @@
 ## 優先順位
 
 残り:
-- `stage1/expert_cfm/core` の薄型化
-- `base_model.py` を使う側の整理
 - `alpamayo_r1.py` 相当
 
 ## 各段階の確認
