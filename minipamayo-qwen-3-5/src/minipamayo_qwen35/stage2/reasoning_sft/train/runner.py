@@ -873,6 +873,9 @@ def main() -> None:
                 if explicit_handoff_probe_dataset is not None
                 else (val_loader.dataset if val_loader is not None else train_loader.dataset)
             )
+            probe_max_samples = int(args.handoff_probe_samples)
+            if probe_max_samples <= 0 and explicit_handoff_probe_dataset is not None:
+                probe_max_samples = len(probe_dataset)
             handoff_probe = evaluate_handoff_probe(
                 model=model,
                 dataset=probe_dataset,
@@ -881,7 +884,7 @@ def main() -> None:
                 history_registry=history_registry,
                 history_quantizer=history_quantizer,
                 device=device,
-                max_samples=args.handoff_probe_samples,
+                max_samples=probe_max_samples,
                 max_reasoning_tokens=args.handoff_probe_max_reasoning_tokens,
                 seed=args.seed,
             )
