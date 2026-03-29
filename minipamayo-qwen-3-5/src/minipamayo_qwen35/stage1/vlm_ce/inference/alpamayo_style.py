@@ -27,7 +27,7 @@ from ....utils.preflight import require_expected_cuda_toolkit
 from ....utils.run_metadata import collect_processor_settings
 from ....contract.task_spec import CanonicalStage1Spec, KappaOnlyStage1Spec, Stage1TaskSpec
 from ....contract.prompt import add_prompt_special_tokens
-from ...data.canonical_action import rollout_waypoints_from_action_tensor
+from ....action_space.unicycle_accel_curvature import rollout_waypoints_from_action_tensor
 from ...data.dataset import Stage1JsonlDataset
 from ..eval.runner import (
     greedy_generate_action_tokens,

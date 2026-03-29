@@ -13,7 +13,7 @@ import torch
 from torch.utils.data import Dataset
 
 from ....stage1.data.dataset import normalize_jsonl_paths, read_jsonl
-from ....stage1.data.canonical_action import (
+from ....action_space.unicycle_accel_curvature import (
     derive_future_tensors_from_global_poses,
     saved_action_tensor_from_record,
 )

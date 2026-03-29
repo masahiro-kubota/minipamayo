@@ -16,7 +16,7 @@ from mcap.reader import make_reader
 from ...utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
 from ...utils.preflight import require_clean_git_worktree
 from ...utils.dynamics import to_ego_centric
-from .canonical_action import canonical_action_tensor_from_tensors
+from ...action_space.unicycle_accel_curvature import canonical_action_tensor_from_tensors
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 DATASETS_ROOT = PROJECT_ROOT / "datasets"

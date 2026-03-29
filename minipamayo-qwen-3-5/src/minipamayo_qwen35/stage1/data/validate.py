@@ -10,7 +10,10 @@ from pathlib import Path
 import torch
 
 from ...utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
-from .canonical_action import canonical_action_tensor_from_record, saved_action_tensor_from_record
+from ...action_space.unicycle_accel_curvature import (
+    canonical_action_tensor_from_record,
+    saved_action_tensor_from_record,
+)
 from .dataset import read_jsonl
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]

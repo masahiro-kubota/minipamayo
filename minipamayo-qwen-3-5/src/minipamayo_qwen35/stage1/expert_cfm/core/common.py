@@ -156,7 +156,7 @@ def build_stage1b_metadata(dataset, args, expert_config: dict) -> dict:
         "diffusion_architecture": "flow_matching",
         "action_space_contract": "alpamayo_unicycle_accel_curvature_single_traj_group",
         "action_space_cfg": {
-            "_target_": "minipamayo_qwen35.stage1.expert_cfm.core.action_space.UnicycleAccelCurvatureActionSpace",
+            "_target_": "minipamayo_qwen35.action_space.unicycle_accel_curvature.UnicycleAccelCurvatureActionSpace",
             "dt": dt_value,
             "n_waypoints": len(gt_waypoints),
             "theta_lambda": 1e-6,

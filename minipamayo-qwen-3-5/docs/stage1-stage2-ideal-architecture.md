@@ -38,7 +38,7 @@ src/minipamayo_qwen35/
     data/
       extract.py
       dataset.py
-      canonical_action.py
+      unicycle_accel_curvature.py
       __init__.py
 
     vlm_ce/
@@ -59,7 +59,7 @@ src/minipamayo_qwen35/
     expert_cfm/
       core/
         action_space.py
-        action_space_utils.py
+        utils.py
         diffusion.py
         model.py
         common.py

@@ -11,7 +11,7 @@ import torch
 from transformers import LogitsProcessor, LogitsProcessorList, StoppingCriteria, StoppingCriteriaList
 
 from ....contract.prompt import COT_END_TOKEN, TRAJ_FUTURE_START_TOKEN
-from ....stage1.expert_cfm.core.action_space import UnicycleAccelCurvatureActionSpace
+from ....action_space.unicycle_accel_curvature import UnicycleAccelCurvatureActionSpace
 from ....stage1.expert_cfm.core.diffusion import FlowMatchingDiffusion
 from ....stage1.expert_cfm.core.model import load_action_expert_from_checkpoint
 from ....stage1.vlm_ce.eval import load_components
