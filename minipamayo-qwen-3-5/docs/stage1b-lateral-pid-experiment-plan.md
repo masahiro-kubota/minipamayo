@@ -196,23 +196,18 @@ anchor block を前後秒へ展開して holdout を作る。
   - `max |kappa_gt|`: p75 `0.1080`, p90 `0.1539`
   - `|yaw change|`: p75 `1.2217 rad`, p90 `1.5457 rad`
 
-この分布から、初期候補としては
+この分布から、現在の運用値は次のとおり。
 
-- `max |kappa_gt| >= 0.08`
-  または
-- `|yaw change| >= 0.5 rad`
-
-あたりが自然だが、最終値は histogram と block coverage を見て固定する。
-
-block 展開の初期値:
-
+- anchor mode:
+  - `or`
 - anchor 条件:
   - `max |kappa_gt| >= 0.08`
+  - または `|yaw change| >= 0.5 rad`
 - expansion:
   - `pre = 1.0s`
   - `post = 2.0s`
 
-最初は `kappa` anchor を主に使い、`yaw change` は sanity check と bucket 分けに使う。
+この設定は、現在の threshold JSON / plot artifact と一致する。
 
 holdout の切り方は random split ではなく、時系列 block 単位にする。
 少なくとも `curve-only holdout` は、threshold に掛かった sample そのものだけでなく
@@ -259,7 +254,21 @@ PID は少なくとも以下を使う。
 - target speed を固定値にする
 - stop / slow-down rule は入れない
 
+初期値は `24 km/h` にする。
+
+理由:
+
+- `ignore_rule_data` の raw MCAP summary では 3 run とも平均速度がほぼ `23.9 km/h`
+- 抽出済み `Stage1` sample の `v0 * 3.6` を見ても、全体と curve-only block の中心はほぼ `24 km/h`
+
 この simple PID で curve tracking が成立するかを見る。
+
+補足:
+
+- 最初から広い sweep はしない
+- まず `24 km/h` だけで確認する
+- 結果が微妙なときだけ `23 / 24 / 25 km/h` の狭い sweep を追加する
+- sweep の目的は最適化というより、結論を 1 点の target speed に依存させないこと
 
 必要なら次段で、
 
@@ -293,6 +302,34 @@ PID は少なくとも以下を使う。
 - `cw / ccw` bucket ごとの成績
 - `gentle / medium / sharp` bucket ごとの成績
 
+## Stage1A gate
+
+`Stage1B` に進む前に、`Stage1A` が離散 trajectory token を最低限学習できているかを
+`curve-only holdout` で確認する。
+
+見るもの:
+
+- `teacher_forced_token_accuracy`
+- `autoregressive_token_accuracy`
+- `action_mae_kappa`
+- `ade_m`
+- `fde_m`
+
+使う runner:
+
+- [runner.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/vlm_ce/eval/runner.py)
+
+考え方:
+
+- `Stage1A` の離散 token と decode 後 trajectory が `curve-only holdout` で明らかに崩れているなら、
+  その条件付けから `Stage1B` だけで横方向性能を回復したとしても解釈しにくい
+- そのため、`Stage1B` 実験の前に `Stage1A` を gate として確認する
+
+運用:
+
+- `Stage1A` eval が明らかに悪い場合は、その data size では `Stage1B` へ進まない
+- その場合は `128 -> 512 -> 2048` の ladder を次段へ進めるか、split / holdout 定義を見直す
+
 ## 成功条件
 
 この実験の主成功条件は、`curve-only holdout` で次を満たすこと。
@@ -319,19 +356,320 @@ PID 置換で大きく悪化した場合、候補は主に 3 つ。
 
 を並べて比較する。
 
-## 実施順
+## 実施手順
 
-1. `ignore_rule_data` raw から canonical Stage1 dataset を再抽出する
-2. `Stage1B` inference/eval に PID longitudinal override を追加する
-3. raw MCAP 由来 GT から `max |kappa_gt|` と `|yaw change|` の分布を見て、`curve-only` threshold を固定する
-4. `perimeter_cw` の train / curve-only holdout split を作る
-5. 既存の canonical `probe16` checkpoint を使って、`PID override` 実装と評価指標が正しく動くか確認する
-6. `perimeter_cw` の `128 sample` で `Stage1A` を学習する
-7. その `Stage1A` checkpoint から `Stage1B` を学習する
-8. `128 sample` で canonical baseline と PID 置換版を比較評価する
-9. まだ判断できなければ、同じ `perimeter_cw` で `512 sample` に増やして `Stage1A -> Stage1B -> 評価` を回す
-10. さらに必要なら、同じ `perimeter_cw` で `2048 sample` に増やして `Stage1A -> Stage1B -> 評価` を回す
-11. それでも不十分な場合だけ `perimeter_cw` full に広げる
-12. さらに必要なら `weave_cw`, `weave_ccw` を順に追加する
-13. それでも不十分な場合だけ full `ignore_rule_data` に広げる
-14. 結果を見て `target speed` 設計を詰める
+### 手順1. canonical Stage1 dataset を用意する
+
+目的:
+- `ignore_rule_data` raw から canonical `Stage1` samples を揃える
+
+使うもの:
+- raw data: [ignore_rule_data](/home/masa/minipamayo/minipamayo-qwen-3-5/datasets/raw/ignore_rule_data)
+- extraction config: [ignore_rule_data_k64_dt01.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/data/ignore_rule_data_k64_dt01.json)
+- extractor: [extract.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/preprocess/extract.py)
+
+出力:
+- processed samples は `datasets/processed/stage1/ignore_rule_data_k64_dt01/.../samples.jsonl`
+- 各 run の `extract_summary.json`
+
+補足:
+- 今回の実施では full extraction はすでに完了している
+- 以後の実験では、この再抽出済み `samples.jsonl` を subset / holdout の正本として使う
+
+### 手順2. Stage1B の PID override を実装する
+
+目的:
+- `Stage1B` の予測 `(accel, kappa)` から `kappa` だけを使い、`accel` を longitudinal PID で置換できるようにする
+- その際の初期 `target speed` は `24 km/h` 固定にする
+
+触る場所:
+- inference runner: [runner.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/expert_cfm/inference/runner.py)
+- eval runner: [runner.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/expert_cfm/eval/runner.py)
+- action rollout 側:
+  [record_adapter.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/action_space/record_adapter.py)
+  と
+  [action_expert.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/models/action_expert.py)
+  の契約に合わせる
+
+到達条件:
+- canonical baseline
+- PID 置換版
+を同じ runner から比較できる
+- 初期条件として `24 km/h` 固定で rollout / 指標 / 可視化が通る
+
+### 手順3. curve-only holdout の threshold と block 定義を固定する
+
+目的:
+- `curve-only holdout` の定義を sample 単位ではなく `anchor + 前後秒` の block として固定する
+
+使うもの:
+- 集計 script: [curve_thresholds.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/preprocess/curve_thresholds.py)
+- plot script: [plot_curve_blocks.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/preprocess/plot_curve_blocks.py)
+
+固定する初期値:
+- anchor: `max |kappa_gt| >= 0.08`
+- `pre = 1.0s`
+- `post = 2.0s`
+
+正本出力:
+- threshold JSON:
+  [ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_thresholds/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2.json)
+- overview plot:
+  [overview.png](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_block_plots/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2/overview.png)
+
+到達条件:
+- 地図上で見て、侵入前から脱出後までを含む curve block が概ね妥当に抽出されている
+
+### 手順4. perimeter_cw の train / curve-only holdout split を作る
+
+目的:
+- 最初の本命 run を `perimeter_cw` に固定して、train と `curve-only holdout` を block 単位で分ける
+
+入力:
+- threshold/block 正本:
+  [ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_thresholds/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2.json)
+- `perimeter_cw` samples:
+  `/media/masa/ssd_data/minipamayo_data/minipamayo-qwen-3-5/datasets/processed/stage1/ignore_rule_data_k64_dt01/20260327_231917_town01_perimeter_cw_expert_eval_0025824a9fa8/samples.jsonl`
+
+方針:
+- holdout は `curve_blocks.blocks` の block 単位で取る
+- train 側は、それ以外の sample から作る
+- random split は使わない
+
+使う script:
+- [build_curve_split.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/preprocess/build_curve_split.py)
+
+現在の split 設定:
+- `holdout_stride = 4`
+- `holdout_offset = 0`
+- `subset_sizes = 128,512,2048`
+- 出力先:
+  [perimeter_cw_holdout_v1](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1)
+- manifest:
+  [split_manifest.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/split_manifest.json)
+
+この step の出力:
+- `curve-only holdout` block manifest
+- `perimeter_cw` train subset manifest
+  - `128 sample`
+  - `512 sample`
+  - `2048 sample`
+
+以後の rung は、この manifest 群を正本として使う
+
+### 手順5. 既存 probe16 checkpoint で PID override の技術確認をする
+
+目的:
+- 学習を回し直す前に、PID override と評価指標が壊れていないことを確認する
+- ここでは新しい学習はしない
+
+使うもの:
+- 既存 `Stage1A` checkpoint:
+  [best.pt](/media/masa/ssd_data/minipamayo_data/minipamayo-qwen-3-5/checkpoints/stage1/vlm_ce/canonical/ignore_rule_data_probe16_12gb/best.pt)
+- 既存 `Stage1B` checkpoint:
+  [best.pt](/media/masa/ssd_data/minipamayo_data/minipamayo-qwen-3-5/checkpoints/stage1/expert_cfm/canonical/ignore_rule_data_probe16_12gb/best.pt)
+- Stage1B inference config:
+  [ignore_rule_data_probe16_pid_sample.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/expert_cfm/inference/canonical/ignore_rule_data_probe16_pid_sample.json)
+- Stage1B eval config:
+  [ignore_rule_data_probe16_pid_eval.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/expert_cfm/eval/canonical/ignore_rule_data_probe16_pid_eval.json)
+
+到達条件:
+- canonical baseline と PID 置換版の両方が落ちずに走る
+- 指標と可視化が出る
+
+注意:
+- この step は interface / metric の技術確認だけに使う
+- `probe16` の結果は、最終的な性能判断には使わない
+
+### 手順6. perimeter_cw 128 sample rung を回す
+
+目的:
+- 最小の本命 dataset で、`Stage1A -> Stage1A gate -> Stage1B -> PID 比較評価` の 1 サイクルを回す
+
+対象データ:
+- `perimeter_cw` train split のうち `128 sample`
+- 手順4で作った `128 sample` train subset manifest を使う
+
+ベースにするもの:
+- `Stage1A` train config の雛形:
+  [ignore_rule_data_probe16_12gb.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/vlm_ce/train/canonical/ignore_rule_data_probe16_12gb.json)
+  または
+  [ignore_rule_data_k64_dt01_12gb.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/vlm_ce/train/canonical/ignore_rule_data_k64_dt01_12gb.json)
+- `Stage1B` train config の雛形:
+  [ignore_rule_data_probe16_12gb.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/expert_cfm/train/canonical/ignore_rule_data_probe16_12gb.json)
+  または
+  [ignore_rule_data_k64_dt01_12gb.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/expert_cfm/train/canonical/ignore_rule_data_k64_dt01_12gb.json)
+
+使う config:
+- `configs/stage1/vlm_ce/train/canonical/perimeter_cw_curve128_12gb.json`
+- `configs/stage1/vlm_ce/eval/canonical/perimeter_cw_curve128_eval.json`
+- `configs/stage1/expert_cfm/train/canonical/perimeter_cw_curve128_12gb.json`
+- `configs/stage1/expert_cfm/eval/canonical/perimeter_cw_curve128_eval.json`
+- `configs/stage1/expert_cfm/inference/canonical/perimeter_cw_curve128_sample.json`
+
+この rung でやること:
+
+1. `Stage1A` を学習する
+2. [runner.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/vlm_ce/eval/runner.py) で
+   `Stage1A` を `curve-only holdout` で評価して gate 判定する
+3. gate を通ったら、その `Stage1A` checkpoint から `Stage1B` を学習する
+4. canonical baseline と PID 置換版を比較評価する
+
+重要:
+- 各 rung は独立に回す
+- 前の rung の `Stage1A` / `Stage1B` checkpoint は流用しない
+- data size を増やしたら、その data size で `Stage1A` から作り直す
+
+この rung で確認する主指標:
+- `Stage1A`
+  - `teacher_forced_token_accuracy`
+  - `autoregressive_token_accuracy`
+  - `action_mae_kappa`
+  - `ade_m`
+  - `fde_m`
+- `Stage1B + PID`
+  - `curve-only holdout ADE`
+  - `curve-only holdout FDE`
+  - `curve-only holdout max lateral error`
+  - 定性 plot
+
+次へ進む条件:
+- `Stage1A` gate を通る
+- それでも `Stage1B + PID` の結論がまだ曖昧なら、次の rung へ進む
+
+### 手順7. perimeter_cw 512 sample rung を回す
+
+目的:
+- `128 sample` では判断できない場合に、同じ `perimeter_cw` で data size を増やして
+  同じ実験サイクルを繰り返す
+
+対象データ:
+- `perimeter_cw` train split のうち `512 sample`
+- 手順4で作った `512 sample` train subset manifest を使う
+
+使う config:
+- `configs/stage1/vlm_ce/train/canonical/perimeter_cw_curve512_12gb.json`
+- `configs/stage1/vlm_ce/eval/canonical/perimeter_cw_curve512_eval.json`
+- `configs/stage1/expert_cfm/train/canonical/perimeter_cw_curve512_12gb.json`
+- `configs/stage1/expert_cfm/eval/canonical/perimeter_cw_curve512_eval.json`
+- `configs/stage1/expert_cfm/inference/canonical/perimeter_cw_curve512_sample.json`
+
+この rung でやること:
+- 手順6と同じく
+  - `Stage1A`
+  - `Stage1A gate`
+  - `Stage1B`
+  - `PID 比較評価`
+  を `512 sample` 条件で回す
+- `128 sample` rung の checkpoint は使い回さない
+
+### 手順8. perimeter_cw 2048 sample rung を回す
+
+目的:
+- `512 sample` でも不十分なら、同じ run のまま data size を増やして同じ実験サイクルを回す
+
+対象データ:
+- `perimeter_cw` train split のうち `2048 sample`
+- 手順4で作った `2048 sample` train subset manifest を使う
+
+使う config:
+- `configs/stage1/vlm_ce/train/canonical/perimeter_cw_curve2048_12gb.json`
+- `configs/stage1/vlm_ce/eval/canonical/perimeter_cw_curve2048_eval.json`
+- `configs/stage1/expert_cfm/train/canonical/perimeter_cw_curve2048_12gb.json`
+- `configs/stage1/expert_cfm/eval/canonical/perimeter_cw_curve2048_eval.json`
+- `configs/stage1/expert_cfm/inference/canonical/perimeter_cw_curve2048_sample.json`
+
+この rung でやること:
+- 手順6と同じく
+  - `Stage1A`
+  - `Stage1A gate`
+  - `Stage1B`
+  - `PID 比較評価`
+  を `2048 sample` 条件で回す
+- `512 sample` rung の checkpoint は使い回さない
+
+### 手順9. perimeter_cw full rung を回す
+
+目的:
+- subset ladder でも判断できない場合に、同じ run の full data で見る
+
+ベースにするもの:
+- `Stage1A` train config の雛形:
+  [ignore_rule_data_k64_dt01_12gb.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/vlm_ce/train/canonical/ignore_rule_data_k64_dt01_12gb.json)
+- `Stage1B` train config の雛形:
+  [ignore_rule_data_k64_dt01_12gb.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/expert_cfm/train/canonical/ignore_rule_data_k64_dt01_12gb.json)
+
+使う config:
+- `configs/stage1/vlm_ce/train/canonical/perimeter_cw_full_12gb.json`
+- `configs/stage1/vlm_ce/eval/canonical/perimeter_cw_full_eval.json`
+- `configs/stage1/expert_cfm/train/canonical/perimeter_cw_full_12gb.json`
+- `configs/stage1/expert_cfm/eval/canonical/perimeter_cw_full_eval.json`
+- `configs/stage1/expert_cfm/inference/canonical/perimeter_cw_full_sample.json`
+
+注意:
+- ここでも holdout は step4 の curve block 定義に従う
+
+この rung でやること:
+- 手順6と同じ実験サイクルを、`perimeter_cw` full で回す
+- subset rung の checkpoint は使い回さない
+
+### 手順10. weave_cw, weave_ccw を順に追加する
+
+目的:
+- `perimeter_cw` だけでは見えない一般化を確認する
+
+順番:
+- `perimeter_cw + weave_cw`
+- `perimeter_cw + weave_cw + weave_ccw`
+
+評価:
+- `cw / ccw` bucket を分けて見る
+- `curve-only holdout` を主指標のまま維持する
+
+この step でも:
+- `Stage1A`
+- `Stage1A gate`
+- `Stage1B`
+- `PID 比較評価`
+の順番は変えない
+
+### 手順11. 必要なら full ignore_rule_data に広げる
+
+目的:
+- 上の段階でも判断できない場合だけ full data へ行く
+
+入力:
+- 3 run 全部
+  - `perimeter_cw`
+  - `weave_cw`
+  - `weave_ccw`
+
+注意:
+- ここは最後の段階とし、初手では使わない
+
+この step でも:
+- `Stage1A`
+- `Stage1A gate`
+- `Stage1B`
+- `PID 比較評価`
+を同じ順で回す
+
+### 手順12. target speed を必要時だけ再 tuning する
+
+目的:
+- `24 km/h` 固定では解釈しにくい場合にだけ、PID 置換版の longitudinal 設計を改善する
+
+比較対象:
+- fixed target speed PID
+- curvature-aware speed cap
+- 必要なら command-aware target speed
+
+初手:
+
+- まず `24 km/h` 固定で確認する
+- 必要な場合だけ `23 / 24 / 25 km/h` を比較する
+
+判断:
+- `Stage1B lateral weakness`
+- `longitudinal coupling loss`
+のどちらが主要因かを見ながら詰める
