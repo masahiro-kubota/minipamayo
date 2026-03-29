@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -60,6 +61,20 @@ def _count_non_empty_lines(path: str | Path) -> int:
     return count
 
 
+def _read_jsonl_records(path: str | Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    with Path(path).open("r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line:
+                continue
+            payload = json.loads(line)
+            if not isinstance(payload, dict):
+                raise RuntimeError(f"Dataset JSONL must contain object records: {path}")
+            records.append(payload)
+    return records
+
+
 def _sha256_int_sequence(values: Iterable[int]) -> str:
     digest = hashlib.sha256()
     for value in values:
@@ -74,24 +89,54 @@ def _jsonl_source_fingerprint(jsonl_path: str | Path) -> dict[str, Any]:
 
     extract_summary_path = path.parent / "extract_summary.json"
     image_dir = path.parent / "images"
-    if not image_dir.exists():
-        raise RuntimeError(f"Dataset image directory does not exist: {image_dir}")
-    if not extract_summary_path.exists():
-        raise RuntimeError(f"Dataset extract summary does not exist: {extract_summary_path}")
+    if image_dir.exists() and extract_summary_path.exists():
+        image_files = sorted(child for child in image_dir.iterdir() if child.is_file())
 
-    image_files = sorted(child for child in image_dir.iterdir() if child.is_file())
+        fingerprint = {
+            "jsonl_path": str(path),
+            "jsonl_sha256": _sha256_file(path),
+            "jsonl_size_bytes": path.stat().st_size,
+            "num_records": _count_non_empty_lines(path),
+            "dataset_root": str(path.parent),
+            "image_path_mode": "relative",
+            "image_dir": str(image_dir),
+            "image_file_count": len(image_files),
+            "extract_summary_path": str(extract_summary_path),
+            "extract_summary_sha256": _sha256_file(extract_summary_path),
+            "extract_summary_size_bytes": extract_summary_path.stat().st_size,
+        }
+        return fingerprint
+
+    records = _read_jsonl_records(path)
+    if not records:
+        raise RuntimeError(f"Dataset JSONL is empty: {path}")
+
+    image_parent_dirs: set[str] = set()
+    sample_image_path = None
+    for record in records:
+        raw_image_path = record.get("image_path")
+        if not isinstance(raw_image_path, str) or not raw_image_path:
+            raise RuntimeError(f"Dataset record is missing `image_path`: {path}")
+        resolved_image_path = Path(raw_image_path)
+        if not resolved_image_path.is_absolute():
+            resolved_image_path = (path.parent / resolved_image_path).resolve()
+        if not resolved_image_path.exists():
+            raise RuntimeError(f"Dataset image does not exist: {resolved_image_path}")
+        image_parent_dirs.add(str(resolved_image_path.parent))
+        if sample_image_path is None:
+            sample_image_path = str(resolved_image_path)
 
     fingerprint = {
         "jsonl_path": str(path),
         "jsonl_sha256": _sha256_file(path),
         "jsonl_size_bytes": path.stat().st_size,
-        "num_records": _count_non_empty_lines(path),
+        "num_records": len(records),
         "dataset_root": str(path.parent),
-        "image_dir": str(image_dir),
-        "image_file_count": len(image_files),
-        "extract_summary_path": str(extract_summary_path),
-        "extract_summary_sha256": _sha256_file(extract_summary_path),
-        "extract_summary_size_bytes": extract_summary_path.stat().st_size,
+        "image_path_mode": "absolute_or_mixed",
+        "image_parent_dirs": sorted(image_parent_dirs),
+        "num_image_parent_dirs": len(image_parent_dirs),
+        "sample_image_path": sample_image_path,
+        "extract_summary_path": None,
     }
     return fingerprint
 
