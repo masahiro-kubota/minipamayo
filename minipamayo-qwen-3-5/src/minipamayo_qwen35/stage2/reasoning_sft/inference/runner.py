@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 import torch
-from transformers import LogitsProcessor, LogitsProcessorList, StoppingCriteria, StoppingCriteriaList
+from transformers import LogitsProcessor, LogitsProcessorList, StoppingCriteriaList
 
 from ....contract.prompt import COT_END_TOKEN, TRAJ_FUTURE_START_TOKEN
 from ....action_space.record_adapter import (
@@ -16,6 +16,7 @@ from ....action_space.record_adapter import (
     canonicalize_history_batch_for_action_space,
 )
 from ....action_space.unicycle_accel_curvature import UnicycleAccelCurvatureActionSpace
+from ....models.token_utils import StopAfterEOS
 from ....stage1.expert_cfm.core.diffusion import FlowMatchingDiffusion
 from ....stage1.expert_cfm.core.model import load_action_expert_from_checkpoint
 from ....stage1.vlm_ce.eval import load_components
@@ -137,25 +138,6 @@ class TrajectoryLogitsProcessor(LogitsProcessor):
             "-inf"
         )
         return scores
-
-
-class StopAfterEOS(StoppingCriteria):
-    """Stop one token after the first `<|traj_future_start|>` generation."""
-
-    def __init__(self, eos_token_id: int):
-        self.eos_token_id = int(eos_token_id)
-        self.eos_found = None
-
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
-        batch_size = input_ids.shape[0]
-        if self.eos_found is None:
-            self.eos_found = torch.zeros(batch_size, dtype=torch.bool, device=input_ids.device)
-        if self.eos_found.all():
-            return True
-        last_tokens = input_ids[:, -1]
-        current_has_eos = last_tokens == self.eos_token_id
-        self.eos_found = self.eos_found | current_has_eos
-        return False
 
 
 def generate_reasoning_handoff(
