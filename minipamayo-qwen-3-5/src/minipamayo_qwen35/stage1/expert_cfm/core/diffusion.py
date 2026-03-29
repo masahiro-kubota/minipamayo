@@ -1,9 +1,11 @@
-"""Alpamayo-style diffusion interface for canonical Stage 1B."""
+"""Stage 1B adapter over the shared Alpamayo-style diffusion core."""
 
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
+
+from ....diffusion.flow_matching import FlowMatching
 
 
 class BaseDiffusion(nn.Module):
@@ -83,25 +85,22 @@ class FlowMatchingDiffusion(BaseDiffusion):
         prompt_attention_mask: torch.Tensor,
     ) -> torch.Tensor:
         batch_size = prompt_attention_mask.shape[0]
-        current = torch.randn(
-            batch_size,
-            expert.action_dim,
-            device=prompt_attention_mask.device,
-            dtype=expert.action_out_proj.weight.dtype,
+        sampler = FlowMatching(
+            x_dims=expert.action_dim,
+            num_inference_steps=self.n_steps,
         )
-        dt = 1.0 / float(self.n_steps)
-        for step_idx in range(self.n_steps):
-            t = torch.full(
-                (batch_size,),
-                fill_value=float(step_idx) / float(self.n_steps),
-                device=current.device,
-                dtype=torch.float32,
-            )
-            velocity = expert(
-                noisy_action=current,
+
+        def step_fn(*, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+            return expert(
+                noisy_action=x,
                 t=t,
                 prompt_cache=prompt_cache,
                 prompt_attention_mask=prompt_attention_mask,
             )
-            current = current + dt * velocity
+
+        current = sampler.sample(
+            batch_size=batch_size,
+            step_fn=step_fn,
+            device=prompt_attention_mask.device,
+        )
         return expert.denormalize(current)
