@@ -239,7 +239,7 @@ class AlpamayoR1(ReasoningVLA):
         # modify the attention_masks to remove padding tokens
         attention_mask = torch.zeros(
             (b_star, 1, n_diffusion_tokens, prompt_cache.get_seq_length() + n_diffusion_tokens),
-            dtype=torch.float32,
+            dtype=self.expert.dtype,
             device=device,
         )
         for i in range(b_star):
@@ -250,6 +250,9 @@ class AlpamayoR1(ReasoningVLA):
         forward_kwargs = {}
         if self.config.expert_non_causal_attention:
             forward_kwargs["is_causal"] = False
+        expert_attention_mask = attention_mask
+        if getattr(self.expert.config, "_attn_implementation", "") == "sdpa":
+            expert_attention_mask = None
 
         # 2) Define denoising step that consumes noisy action and timestep
         def step_fn(
@@ -264,20 +267,23 @@ class AlpamayoR1(ReasoningVLA):
             future_token_embeds = self.action_in_proj(x, t)
             if future_token_embeds.dim() == 2:
                 future_token_embeds = future_token_embeds.view(b_star, n_diffusion_tokens, -1)
+            future_token_embeds = future_token_embeds.to(dtype=self.expert.dtype)
 
             # Run expert with cached prefill, only on the future tokens
             expert_out_base = self.expert(
                 inputs_embeds=future_token_embeds,
                 position_ids=position_ids,
                 past_key_values=prompt_cache,
-                attention_mask=attention_mask,
+                attention_mask=expert_attention_mask,
                 use_cache=True,
                 **forward_kwargs,
             )
             # crop the prompt cache to remove the newly added tokens
-            prompt_cache.crop(prefill_seq_len)
+            if hasattr(prompt_cache, "crop"):
+                prompt_cache.crop(prefill_seq_len)
             last_hidden = expert_out_base.last_hidden_state  # (b*, Tf, hidden_size)
             last_hidden = last_hidden[:, -n_diffusion_tokens:]
+            last_hidden = last_hidden.to(dtype=self.action_out_proj.weight.dtype)
             pred = self.action_out_proj(last_hidden).view(
                 -1, *self.action_space.get_action_space_dims()
             )  # (b*, Tf, C_action) -> noise/vector field

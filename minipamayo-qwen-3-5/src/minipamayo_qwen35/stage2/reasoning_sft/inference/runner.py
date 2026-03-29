@@ -302,10 +302,30 @@ def _patch_wrapper_token_contract(
     traj_token_start_id = int(tokenizer.convert_tokens_to_ids(registry.token_strings[0]))
     traj_token_end_id = int(tokenizer.convert_tokens_to_ids(registry.token_strings[-1]))
     history_token_start_id = int(tokenizer.convert_tokens_to_ids(history_registry.token_strings[0]))
-    traj_token_ids = {key: int(tokenizer.convert_tokens_to_ids(value)) for key, value in TRAJ_TOKEN.items()}
-    special_token_ids = {
-        key: int(tokenizer.convert_tokens_to_ids(value)) for key, value in SPECIAL_TOKENS.items()
+    traj_token_ids = {
+        key: int(token_id)
+        for key, value in TRAJ_TOKEN.items()
+        if (token_id := tokenizer.convert_tokens_to_ids(value)) is not None
     }
+    special_token_ids = {
+        key: int(token_id)
+        for key, value in SPECIAL_TOKENS.items()
+        if (token_id := tokenizer.convert_tokens_to_ids(value)) is not None
+    }
+    required_traj_keys = {"history", "future_start", "future_end"}
+    missing_traj_keys = sorted(required_traj_keys - set(traj_token_ids))
+    if missing_traj_keys:
+        raise RuntimeError(
+            "Tokenizer is missing required trajectory special tokens for Alpamayo wrapper:\n"
+            + "\n".join(missing_traj_keys)
+        )
+    required_special_keys = {"traj_future_start", "traj_future_end"}
+    missing_special_keys = sorted(required_special_keys - set(special_token_ids))
+    if missing_special_keys:
+        raise RuntimeError(
+            "Tokenizer is missing required special tokens for Alpamayo wrapper:\n"
+            + "\n".join(missing_special_keys)
+        )
 
     wrapper.tokenizer = tokenizer
     wrapper.traj_tokenizer = quantizer
@@ -388,6 +408,8 @@ def _build_alpamayo_wrapper(
     expert_state_dict = stage1b_checkpoint.get("expert_state_dict")
     if not isinstance(expert_state_dict, dict):
         raise RuntimeError("Stage 1B checkpoint is missing canonical `expert_state_dict`.")
+    expert_cfg = dict(expert_config["expert_cfg"])
+    expert_cfg["_attn_implementation"] = "sdpa"
 
     wrapper_config = AlpamayoR1Config(
         vlm_name_or_path=str(stage1_args["model_path"]),
@@ -409,7 +431,7 @@ def _build_alpamayo_wrapper(
         action_space_cfg=dict(action_space_cfg),
         action_in_proj_cfg=dict(expert_config["action_in_proj_cfg"]),
         action_out_proj_cfg=dict(expert_config["action_out_proj_cfg"]),
-        expert_cfg=dict(expert_config["expert_cfg"]),
+        expert_cfg=expert_cfg,
         keep_same_dtype=bool(expert_config["keep_same_dtype"]),
         expert_non_causal_attention=bool(expert_config["expert_non_causal_attention"]),
     )
