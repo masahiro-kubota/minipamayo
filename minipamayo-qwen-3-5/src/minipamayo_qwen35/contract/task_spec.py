@@ -10,12 +10,12 @@ import numpy as np
 import torch
 from torch.utils.data import Subset
 
-from ..stage1.data.canonical_action import canonical_action_array_from_record
+from ..stage1.data.canonical_action import saved_action_array_from_record
 from .trajectory_tokens import ActionQuantizer
 
 
 def _record_action_array(record: dict) -> np.ndarray:
-    action = canonical_action_array_from_record(record)
+    action = saved_action_array_from_record(record)
     if action.ndim != 1 or action.size == 0 or action.size % 2 != 0:
         raise RuntimeError(f"Stage 1 record has invalid `action` layout: {record!r}")
     return action

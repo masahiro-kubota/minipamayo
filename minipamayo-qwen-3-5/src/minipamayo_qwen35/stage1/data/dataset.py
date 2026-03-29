@@ -1,4 +1,4 @@
-"""Small JSONL dataset reader for Stage 1."""
+"""Small JSONL dataset reader for Stage 1 saved records."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from torch.utils.data import Dataset
 
 from ...contract.history_tokens import canonicalize_history_sample_tensors
 from .canonical_action import (
-    canonical_action_tensor_from_tensors,
     derive_future_tensors_from_global_poses,
+    saved_action_tensor_from_record,
 )
 
 
@@ -50,7 +50,7 @@ def read_jsonl(path: str | Path) -> list[dict]:
 
 
 class Stage1JsonlDataset(Dataset):
-    """Returns metadata and labels; image decoding is done at training time."""
+    """Returns metadata and saved canonical labels; image decoding is done at training time."""
 
     def __init__(self, jsonl_path: str | Path | list[str] | list[Path], max_samples: int = 0):
         self.jsonl_paths = normalize_jsonl_paths(jsonl_path, dataset_name="Stage1JsonlDataset")
@@ -80,6 +80,7 @@ class Stage1JsonlDataset(Dataset):
         required_keys = [
             "sample_id",
             "image_path",
+            "action",
             "v0",
             "dt",
             "gt_waypoints",
@@ -103,17 +104,10 @@ class Stage1JsonlDataset(Dataset):
             )
         else:
             ego_future_xyz, ego_future_rot = derive_future_tensors_from_global_poses(record)
-        canonical_action = canonical_action_tensor_from_tensors(
-            history_xyz=ego_history_xyz,
-            history_rot=ego_history_rot,
-            future_xyz=ego_future_xyz,
-            future_rot=ego_future_rot,
-            dt=float(record["dt"]),
-        )
         return {
             "sample_id": record["sample_id"],
             "image_path": str(root_dir / record["image_path"]),
-            "action": canonical_action,
+            "action": saved_action_tensor_from_record(record),
             "v0": torch.tensor(record["v0"], dtype=torch.float32),
             "dt": torch.tensor(record["dt"], dtype=torch.float32),
             "gt_waypoints": torch.tensor(record["gt_waypoints"], dtype=torch.float32),

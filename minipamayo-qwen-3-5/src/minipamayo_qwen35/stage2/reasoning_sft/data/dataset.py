@@ -14,8 +14,8 @@ from torch.utils.data import Dataset
 
 from ....stage1.data.dataset import normalize_jsonl_paths, read_jsonl
 from ....stage1.data.canonical_action import (
-    canonical_action_tensor_from_tensors,
     derive_future_tensors_from_global_poses,
+    saved_action_tensor_from_record,
 )
 from ....contract.history_tokens import canonicalize_history_sample_tensors
 
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 
 class ReasoningSftJsonlDataset(Dataset):
-    """Stage 1 JSONL records plus provided reasoning supervision."""
+    """Stage 1 JSONL records with saved canonical actions plus reasoning supervision."""
 
     def __init__(self, jsonl_path: str | Path | list[str] | list[Path], max_samples: int = 0):
         self.jsonl_paths = normalize_jsonl_paths(
@@ -57,6 +57,7 @@ class ReasoningSftJsonlDataset(Dataset):
         required_keys = [
             "sample_id",
             "image_path",
+            "action",
             "v0",
             "gt_waypoints",
             "dt",
@@ -82,17 +83,10 @@ class ReasoningSftJsonlDataset(Dataset):
             )
         else:
             ego_future_xyz, ego_future_rot = derive_future_tensors_from_global_poses(record)
-        canonical_action = canonical_action_tensor_from_tensors(
-            history_xyz=ego_history_xyz,
-            history_rot=ego_history_rot,
-            future_xyz=ego_future_xyz,
-            future_rot=ego_future_rot,
-            dt=float(record["dt"]),
-        )
         sample = {
             "sample_id": str(record["sample_id"]),
             "image_path": str(root_dir / str(record["image_path"])),
-            "action": canonical_action,
+            "action": saved_action_tensor_from_record(record),
             "v0": torch.tensor(record["v0"], dtype=torch.float32),
             "gt_waypoints": torch.tensor(record["gt_waypoints"], dtype=torch.float32),
             "dt": float(record["dt"]),

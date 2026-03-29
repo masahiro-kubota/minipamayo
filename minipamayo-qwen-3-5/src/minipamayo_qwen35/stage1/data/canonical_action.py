@@ -149,6 +149,30 @@ def canonical_action_array_from_record(record: dict) -> np.ndarray:
     return canonical_action_tensor_from_record(record).detach().cpu().numpy()
 
 
+def saved_action_tensor_from_record(record: dict) -> torch.Tensor:
+    if "action" not in record:
+        raise RuntimeError("Stage 1 record is missing canonical saved `action`.")
+    action = torch.tensor(record["action"], dtype=torch.float32).reshape(-1)
+    if action.numel() == 0 or action.numel() % 2 != 0:
+        raise RuntimeError(
+            "Stage 1 record has invalid saved `action` layout.\n"
+            f"found={tuple(action.shape)!r}"
+        )
+    if "gt_waypoints" in record and isinstance(record["gt_waypoints"], list) and record["gt_waypoints"]:
+        expected_dim = len(record["gt_waypoints"]) * 2
+        if action.numel() != expected_dim:
+            raise RuntimeError(
+                "Saved `action` length does not match canonical waypoint count.\n"
+                f"expected={expected_dim}\n"
+                f"found={action.numel()}"
+            )
+    return action
+
+
+def saved_action_array_from_record(record: dict) -> np.ndarray:
+    return saved_action_tensor_from_record(record).detach().cpu().numpy()
+
+
 def rollout_waypoints_from_action_tensor(
     *,
     action: torch.Tensor,
