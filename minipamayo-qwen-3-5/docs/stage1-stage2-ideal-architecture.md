@@ -122,10 +122,14 @@ src/minipamayo_qwen35/
   - steer_only
   - 将来の派生 experiment
 
-### `stage1/data`
+### `stage1/preprocess`, `stage1/dataset.py`, `stage1/validate.py`
 
-- raw dataset から canonical schema を作る
-- history / future trajectory / action / reasoning source を保存する
+- `stage1/preprocess`
+  - raw dataset から canonical schema を作る
+- `stage1/dataset.py`
+  - canonical Stage 1 JSONL を train / eval / inference で読む
+- `stage1/validate.py`
+  - saved canonical action と recomputed action の検証
 - token の意味は持たない
   - token 化は `contract/` 側でやる
 
@@ -135,11 +139,11 @@ src/minipamayo_qwen35/
 - VLM に discrete token 契約を注入する execution layer
 - token 意味論は `contract/` から import するだけにする
 
-### `stage1/expert_cfm/core`
+### `stage1/expert_cfm/common.py`
 
 - `stage1B`
-- continuous trajectory decoder
-- Alpamayo action-expert 寄せの model / diffusion / action space を置く
+- Stage1B 固有の prompt-cache / metadata helper
+- Alpamayo action-expert 本体は top-level `models/` / `diffusion/` に置く
 - prompt や token layout は持たない
 
 ### `stage2/reasoning_sft`

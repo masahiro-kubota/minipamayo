@@ -51,7 +51,8 @@ See `datasets/README.md` for the expected directory structure.
 
 Canonical entrypoints are:
 
-- `minipamayo_qwen35.stage1.data`
+- `minipamayo_qwen35.stage1.preprocess`
+- `minipamayo_qwen35.stage1.validate`
 - `minipamayo_qwen35.stage1.vlm_ce.train.profile`
 - `minipamayo_qwen35.stage1.vlm_ce.train`
 - `minipamayo_qwen35.stage1.vlm_ce.eval`
@@ -69,7 +70,7 @@ Stage 1 experiments live under the same stage package:
 
 Recorded-entrypoint examples:
 
-- `uv run python -m minipamayo_qwen35.stage1.data --config-json configs/stage1/data/ignore_rule_data.json`
+- `uv run python -m minipamayo_qwen35.stage1.preprocess --config-json configs/stage1/data/ignore_rule_data.json`
 - `uv run python -m minipamayo_qwen35.stage1.vlm_ce.train.profile --config-json configs/stage1/vlm_ce/profile/canonical/ignore_rule_data_k64_dt01_smoke_12gb_forward_only.json`
 - `uv run python -m minipamayo_qwen35.stage1.vlm_ce.train --config-json configs/stage1/vlm_ce/train/canonical/ignore_rule_data_k64_dt01_12gb.json`
 - `uv run python -m minipamayo_qwen35.stage1.vlm_ce.eval --config-json configs/stage1/vlm_ce/eval/canonical/ignore_rule_data_k64_dt01_12gb.json`
