@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from ....sequence.stage3_builder import build_reasoning_text, infer_driving_decision
+from ....reasoning.synthetic import build_reasoning_text, infer_driving_decision
 from ....utils.json_config import load_json_payload, resolve_path_base
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]

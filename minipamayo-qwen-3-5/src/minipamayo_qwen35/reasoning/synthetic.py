@@ -127,7 +127,7 @@ def build_chat_prompt_text(processor, user_prompt: str) -> str:
 
 
 def build_stage3_prompt_text(processor, v0: float) -> str:
-    return build_chat_prompt_text(processor, user_text=build_stage3_user_prompt(v0))
+    return build_chat_prompt_text(processor, user_prompt=build_stage3_user_prompt(v0))
 
 
 def build_stage3_target_text(reasoning_text: str, action_text: str) -> str:

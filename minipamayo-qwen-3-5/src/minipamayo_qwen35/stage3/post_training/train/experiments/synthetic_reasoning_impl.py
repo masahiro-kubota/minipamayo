@@ -21,9 +21,7 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader
 
-from minipamayo_qwen35.models.trajectory_decoder import cfm_sample, load_decoder_from_checkpoint
-from minipamayo_qwen35.sequence.rollout_parser import parse_generated_sequence
-from minipamayo_qwen35.sequence.stage3_builder import build_stage3_prompt_text, build_reasoning_text
+from minipamayo_qwen35.reasoning.synthetic import build_reasoning_text, build_stage3_prompt_text
 from minipamayo_qwen35.stage1.vlm_ce.eval import load_components
 from minipamayo_qwen35.stage1.vlm_ce.train import (
     format_gib,
@@ -48,6 +46,8 @@ from minipamayo_qwen35.utils.run_metadata import (
     collect_gpu_info,
 )
 from minipamayo_qwen35.utils.stage34_dataset import Stage34JsonlDataset, stage34_collate
+from ...core.rollout_parser import parse_generated_sequence
+from ...core.trajectory_decoder import cfm_sample, load_decoder_from_checkpoint
 
 PROJECT_ROOT = Path(__file__).resolve().parents[6]
 CONFIG_PATH_KEYS = {

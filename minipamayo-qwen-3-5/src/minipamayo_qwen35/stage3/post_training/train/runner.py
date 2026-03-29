@@ -18,9 +18,9 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader
 
-from ....models.trajectory_decoder import cfm_sample, load_decoder_from_checkpoint
-from ....sequence.rollout_parser import parse_generated_sequence
-from ....sequence.stage3_builder import build_stage3_prompt_text
+from ..core.rollout_parser import parse_generated_sequence
+from ..core.trajectory_decoder import cfm_sample, load_decoder_from_checkpoint
+from ....reasoning.synthetic import build_stage3_prompt_text
 from ....stage1.vlm_ce.eval import load_components
 from ....stage1.vlm_ce.train import (
     format_gib,

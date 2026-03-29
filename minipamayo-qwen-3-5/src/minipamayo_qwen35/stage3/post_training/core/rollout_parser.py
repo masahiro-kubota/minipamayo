@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..contract.trajectory_tokens import ActionQuantizer, Stage1TokenRegistry
-from .stage3_builder import normalize_label
+from ....contract.trajectory_tokens import ActionQuantizer, Stage1TokenRegistry
+from ....reasoning.synthetic import normalize_label
 
 
 def parse_decision_from_text(text: str) -> dict[str, str] | None:

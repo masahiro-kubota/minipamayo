@@ -1,4 +1,4 @@
-"""Hidden-state-conditioned Flow Matching decoder for the Qwen3.5 path."""
+"""Hidden-state-conditioned Flow Matching decoder for the Qwen3.5 Stage 3 path."""
 
 from __future__ import annotations
 

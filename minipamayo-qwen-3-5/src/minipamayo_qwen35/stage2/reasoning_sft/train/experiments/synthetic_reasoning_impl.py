@@ -18,7 +18,7 @@ import torch.nn.functional as F
 from PIL import Image
 from torch.utils.data import DataLoader, random_split
 
-from minipamayo_qwen35.sequence.stage3_builder import ACTION_SECTION_HEADER, build_stage3_prompt_text
+from minipamayo_qwen35.reasoning.synthetic import ACTION_SECTION_HEADER, build_stage3_prompt_text
 from minipamayo_qwen35.stage1.vlm_ce.eval import load_components
 from minipamayo_qwen35.stage1.vlm_ce.train import (
     first_record_from_dataset,
