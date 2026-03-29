@@ -137,7 +137,7 @@ def compute_action_stats(dataset) -> dict[str, float]:
     }
 
 
-def build_stage1b_metadata(dataset, args, expert_config: dict) -> dict:
+def build_stage1b_metadata(dataset, args, expert_config: dict, action_stats: dict) -> dict:
     record = dataset[0]
     action = record["action"]
     gt_waypoints = record["gt_waypoints"]
@@ -159,6 +159,10 @@ def build_stage1b_metadata(dataset, args, expert_config: dict) -> dict:
             "_target_": "minipamayo_qwen35.action_space.unicycle_accel_curvature.UnicycleAccelCurvatureActionSpace",
             "dt": dt_value,
             "n_waypoints": len(gt_waypoints),
+            "accel_mean": float(action_stats["accel_mean"]),
+            "accel_std": float(action_stats["accel_std"]),
+            "curvature_mean": float(action_stats["kappa_mean"]),
+            "curvature_std": float(action_stats["kappa_std"]),
             "theta_lambda": 1e-6,
             "theta_ridge": 1e-8,
             "v_lambda": 1e-6,

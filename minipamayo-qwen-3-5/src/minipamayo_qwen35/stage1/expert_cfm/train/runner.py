@@ -396,6 +396,7 @@ def main() -> None:
             train_loader.dataset,
             args,
             vars(expert.export_config()),
+            action_stats,
         )
 
         total_optimizer_steps = max(
