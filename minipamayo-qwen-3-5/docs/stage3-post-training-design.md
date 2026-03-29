@@ -27,6 +27,103 @@ o -> Reason tokens + discrete action tokens -> continuous trajectory for reward/
 
 であるべきです。
 
+## 論文だけでは決めきれない点と、この設計での採用判断
+
+論文だけでは implementation detail が十分に固定されていない箇所があります。この設計では、以下のように判断します。
+
+### 1. Stage3 の trainable policy をどこに置くか
+
+論文は `πθ(Reason, a | o)` を最適化すると書いていますが、repo 実装として
+
+- VLM policy を trainable にするのか
+- Stage1B continuous expert まで RL するのか
+
+は明示されていません。
+
+この設計ではこうします。
+
+- trainable policy は Stage2 SFT VLM policy
+- Stage1B expert / diffusion / action space は frozen
+
+理由:
+- 論文の GRPO は token-level policy を対象にしている読みが自然
+- Stage1B は continuous decode / reward evaluation 用 component として扱う方が、現在の repo 構成にも合う
+
+### 2. reward 計算時に continuous trajectory をどう得るか
+
+論文は low-level trajectory quality reward を continuous space で書いていますが、discrete action から continuous trajectory を得る exact implementation path は固定していません。
+
+この設計ではこうします。
+
+- Stage1/Stage2 と shared の discrete action token を生成する
+- frozen Stage1B expert stack で continuous trajectory に decode する
+
+理由:
+- いまの repo で continuous trajectory の正本は Stage1B 側にある
+- Stage3 独自 decoder を作るより整合が良い
+
+### 3. reasoning-action consistency reward の実装詳細
+
+論文は
+
+- reasoning から intended behavior を parse する
+- predicted trajectory から meta-action を作る
+- 両者を rule-based に照合する
+
+と書いていますが、closed decision set や parser 実装は固定していません。
+
+この設計ではこうします。
+
+- Stage2 reasoning dataset で既に使っている decision taxonomy を流用する
+- consistency reward は module 化し、parser / meta-action 化 / rule matching を分離する
+
+理由:
+- repo 全体で decision 意味論を増やしたくない
+- reward module を独立させた方が後で rubric を差し替えやすい
+
+### 4. trajectory reward の safety 項目
+
+論文 Eq. (11) には collision penalty がありますが、現行 processed JSONL だけでは surrounding obstacle state が足りず、論文どおりには実装できません。
+
+この設計ではこうします。
+
+- v0:
+  - reasoning reward
+  - consistency reward
+  - trajectory imitation + jerk
+- v1:
+  - collision / close encounter / traffic-rule reward
+
+理由:
+- いまの dataset 契約で実装できる範囲と、論文 full fidelity を分けて扱う必要がある
+- fake collision reward を canonical とみなしたくない
+
+### 5. Stage3 dataset curation の導入タイミング
+
+論文は disagreement-based curation を RL stage の重要要素として書いていますが、train loop と同時に最初から入れるべきかは implementation choice です。
+
+この設計ではこうします。
+
+- Phase 1-4 では canonical GRPO train/eval を先に通す
+- curation は Phase 5 で独立 preprocess path として入れる
+
+理由:
+- rollout / reward / GRPO 本体の検証を先に終えた方が切り分けしやすい
+- disagreement mining は train loop 本体から分離した方が設計がきれい
+
+### 6. current Stage2 と paper-aligned Stage3 の接続
+
+論文上は Stage2 がすでに `Reason + a` を出しますが、current repo の canonical `stage2` はまだそこまで戻っていません。
+
+この設計ではこうします。
+
+- current simplified Stage2 の上に canonical Stage3 は作らない
+- Stage2 canonical sequence を `Reason + discrete action tokens` に戻してから Stage3 を始める
+
+理由:
+- handoff-only contract に対する RL は、論文の Stage3 ではなく repo 独自 variant になる
+- canonical path と bridge variant は分けるべき
+
 ## いまの repo の前提とギャップ
 
 ### 1. current Stage2 はまだ論文どおりではない
@@ -86,9 +183,6 @@ o -> Reason tokens + discrete action tokens -> continuous trajectory for reward/
   - `o -> Reason + a` を autoregressive に生成する
 - 中身:
   - Stage2 SFT checkpoint から初期化した VLM policy
-- 学習対象:
-  - Stage2 SFT で trainable だった parameter set をそのまま引き継ぐ
-  - Stage3 独自に freeze policy を変えない
 
 ### frozen reference policy
 
@@ -100,14 +194,13 @@ o -> Reason tokens + discrete action tokens -> continuous trajectory for reward/
 ### frozen continuous expert stack
 
 - 役割:
-  - discrete action rollout または handoff state から continuous trajectory を出す
+  - generated action sequence から continuous trajectory を出す
   - trajectory reward と motion eval の基盤にする
 - 中身:
   - `models/alpamayo_r1.py`
   - `models/action_expert.py`
   - `diffusion/action_expert.py`
   - `action_space/`
-- 学習対象ではない
 
 ## rollout contract
 
@@ -119,19 +212,11 @@ Stage3 の 1 rollout は、論文準拠では次の 3 層で扱います。
 τ_i(token) = [Reason_i, a_i]
 ```
 
-- `Reason_i`
-  - chain-of-causality reasoning tokens
-- `a_i`
-  - Stage1/Stage2 と共有する discrete action tokens
-
 ### decoded motion rollout
 
 ```text
 τ_i(motion) = x_i
 ```
-
-- `x_i`
-  - frozen expert stack から得る continuous trajectory
 
 ### reward rollout
 
@@ -158,22 +243,11 @@ Stage3 の損失は論文 Sec. 5.3.1 に合わせて group-relative で扱いま
 - GRPO loss
 - optimization
 
-これらを train runner に直書きしないことが重要です。
-
 ## reward 設計
 
 ### 1. reasoning quality reward
 
 論文どおり、large reasoning model critic を前提にします。
-
-- 入力:
-  - visual observation
-  - GT reasoning
-  - predicted reasoning
-- 出力:
-  - scalar score
-
-設計上は reward model を stage3 本体に埋め込まず、adapter interface にします。
 
 ```text
 rewards/reasoning.py
@@ -187,16 +261,6 @@ score_reasoning(sample, predicted_reasoning) -> float
 
 ### 2. reasoning-action consistency reward
 
-論文どおり、reasoning から intent を parse し、trajectory から meta-action を作って longitudinal / lateral の両軸で一致判定します。
-
-必要な処理:
-
-- predicted reasoning -> closed decision set
-- predicted trajectory -> meta-action sequence
-- decision vs meta-action rule-based match
-
-これは external LRM に依存しないので、canonical Stage3 の v0 から入れます。
-
 ```text
 rewards/consistency.py
 ```
@@ -208,26 +272,6 @@ score_consistency(sample, predicted_reasoning, predicted_traj) -> float
 ```
 
 ### 3. trajectory quality reward
-
-論文 Eq. (11) では
-
-- imitation L2
-- collision penalty
-- jerk penalty
-
-を使います。
-
-ただし current dataset の制約上、collision を full paper fidelity では計算できません。よって canonical Stage3 は二段階にします。
-
-#### v0
-
-- `L2(x_pred, x_expert)`
-- `jerk(x_pred)`
-
-#### v1
-
-- `collision(x_pred)`
-- close encounter / semantic safety
 
 ```text
 rewards/trajectory.py
@@ -242,8 +286,6 @@ score_trajectory(sample, predicted_traj) -> dict[str, float]
 `dict` にして、reward aggregate 側で重み付けする方が後から safety term を追加しやすいです。
 
 ### 4. reward aggregation
-
-論文では総 reward は 3 成分の和です。実装でも aggregate は独立 module にします。
 
 ```text
 rewards/aggregate.py
@@ -274,8 +316,6 @@ curation/build_manifest.py
 ```
 
 のような preprocess path に置きます。
-
-Stage3 train 本体は curated manifest を読むだけにします。
 
 ## 新しいディレクトリ構成
 
@@ -332,10 +372,6 @@ src/minipamayo_qwen35/stage3/
 
 ここで現在 `stage2/reasoning_sft/wrapper.py` にある wrapper assembly を shared 化する。
 
-理由:
-- Stage3 が wrapper assembly の 2nd caller になるため
-- `stage2` local helper のままでは cross-stage dependency が増えるため
-
 ### `rollout/sampler.py`
 
 - grouped rollout generation
@@ -375,8 +411,6 @@ src/minipamayo_qwen35/stage3/
 - GRPO loss
 - optimizer / checkpoint / logging
 
-reward の中身や rollout parsing を train runner に埋め込まない。
-
 ### `eval/runner.py`
 
 最低限これを出す。
@@ -393,17 +427,10 @@ reward の中身や rollout parsing を train runner に埋め込まない。
 以下は再利用しません。
 
 - `stage3/post_training/train/runner.py`
-  - local pseudo reward
-  - manual rollout loop
-  - old GRPO-like objective
 - `stage3/post_training/eval/runner.py`
-  - placeholder 実装
 - `stage3/post_training/core/trajectory_decoder.py`
-  - old hidden-state decoder
 - `stage3/post_training/core/rollout_parser.py`
-  - old sequence contract parser
 - `stage3/post_training/*/experiments/synthetic_reasoning*`
-  - canonical Stage3 ではない
 
 理由:
 - 論文の reward 設計と一致しない
@@ -412,15 +439,9 @@ reward の中身や rollout parsing を train runner に埋め込まない。
 
 ## 実装前の必須前提
 
-canonical Stage3 の実装を始める前に、次の 2 点を満たす必要があります。
-
 ### 1. Stage2 を `Reason + discrete action tokens` に戻す
 
 これは必須です。現行の reasoning-only handoff contract のまま canonical Stage3 を実装しないこと。
-
-方針:
-- Stage2 canonical を paper-aligned contract に戻す
-- もし一時的に bridge variant が必要なら、canonical とは別 path に切る
 
 ### 2. Stage3 用 reward data contract を決める
 
@@ -486,8 +507,6 @@ v1 では safety reward 用に次を追加する。
 
 ## 完了条件
 
-canonical Stage3 が完成したとみなす条件は次です。
-
 - 既存 `stage3/post_training` の local pseudo-reward 実装を参照していない
 - trainable policy と frozen reference policy が分かれている
 - frozen Stage1B expert stack を reward / decode 用に使っている
@@ -497,8 +516,6 @@ canonical Stage3 が完成したとみなす条件は次です。
 - Stage3 が `Reason + a` contract の上で動いている
 
 ## 非目標
-
-この設計では、次は最初からやりません。
 
 - current simplified Stage2 handoff contract のまま canonical Stage3 を作ること
 - 既存 `stage3` の runner を延命すること
