@@ -81,10 +81,10 @@ diff -u \
   - これは `transformers==5.4.0` 側の追加引数を受けるため
 - `models/alpamayo_r1.py`
   - pure import path 差に加えて以下が残っている
-  - expert attention mask を `self.expert.dtype` で作る
-  - expert が `sdpa` の場合は `attention_mask=None` に逃がす
+  - Alpamayo の inline 4D additive mask ではなく、`build_expert_attention_mask_from_offsets(...)` を使う
+  - これは `transformers==5.4.0 + Qwen3.5-0.8B + flash_attention_2` の expert path が 2D padding mask を期待するため
   - `prompt_cache.crop(...)` を `hasattr` で guard する
-  - いずれも `Qwen3.5-0.8B + transformers 5.4 + sdpa fallback` のための shim
+  - いずれも `Qwen3.5-0.8B + transformers 5.4` の cache / flash-attn runtime 差のための shim
 - `helper.py`
   - Alpamayo は `BASE_PROCESSOR_NAME = "Qwen/Qwen3-VL-2B-Instruct"` を使う
   - こちらは Stage1A checkpoint 横の saved processor を読む
@@ -157,6 +157,10 @@ diff -u \
 注意:
 - `Qwen3.5-0.8B` を使う前提を維持する限り、Alpamayo 純正のままでは通らない可能性が高い
 - 差分ゼロを目指すのではなく、「なぜ必要かが説明できる shim だけ残す」が現実的
+
+補足:
+- `stage2` wrapper inference の expert hard-coded `sdpa` は削除済み
+- `stage1B` eval / inference / train は同じ 2D expert mask helper に揃った
 
 ## 優先順位
 
