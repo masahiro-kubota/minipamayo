@@ -535,9 +535,9 @@ def main() -> None:
             "token_strings": registry.token_strings,
         }
         quantizer_payload = {
-            "n_bins": action_quantizer.n_bins,
-            "a_range": list(action_quantizer.a_range),
-            "kappa_range": list(action_quantizer.kappa_range),
+            "num_bins": action_quantizer.num_bins,
+            "dims_min": list(action_quantizer.dims_min),
+            "dims_max": list(action_quantizer.dims_max),
         }
 
         metrics_history: list[dict] = []

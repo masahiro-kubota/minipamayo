@@ -11,7 +11,12 @@ import torch
 from torch.utils.data import Subset
 
 from ..action_space.discrete_action_space import DiscreteTrajectoryTokenizer
-from ..action_space.record_adapter import saved_action_array_from_record
+from ..action_space.record_adapter import (
+    canonicalize_future_batch_for_action_space,
+    canonicalize_history_batch_for_action_space,
+    saved_action_array_from_record,
+)
+from ..action_space.unicycle_accel_curvature import UnicycleAccelCurvatureActionSpace
 
 
 def _record_action_array(record: dict) -> np.ndarray:
@@ -19,6 +24,25 @@ def _record_action_array(record: dict) -> np.ndarray:
     if action.ndim != 1 or action.size == 0 or action.size % 2 != 0:
         raise RuntimeError(f"Stage 1 record has invalid `action` layout: {record!r}")
     return action
+
+
+def _canonical_action_space_cfg_from_record(record: dict) -> dict[str, Any]:
+    action = _record_action_array(record)
+    if action.size % 2 != 0 or action.size == 0:
+        raise RuntimeError(f"Stage 1 record has invalid canonical `action`: {record!r}")
+    if "dt" not in record:
+        raise RuntimeError(f"Stage 1 record is missing canonical `dt`: {record!r}")
+    return {
+        "_target_": "minipamayo_qwen35.action_space.unicycle_accel_curvature.UnicycleAccelCurvatureActionSpace",
+        "n_waypoints": int(action.size // 2),
+        "dt": float(record["dt"]),
+    }
+
+
+def _build_canonical_action_space(action_space_cfg: dict[str, Any]) -> UnicycleAccelCurvatureActionSpace:
+    cfg = dict(action_space_cfg)
+    cfg.pop("_target_", None)
+    return UnicycleAccelCurvatureActionSpace(**cfg)
 
 
 def iter_stage1_records(dataset) -> list[dict]:
@@ -77,7 +101,12 @@ class Stage1TaskSpec(ABC):
         """Construct the quantizer for a Stage 1 training run."""
 
     @abstractmethod
-    def quantizer_from_checkpoint(self, quantizer_payload: dict):
+    def quantizer_from_checkpoint(
+        self,
+        quantizer_payload: dict,
+        *,
+        stage1_metadata: dict | None = None,
+    ):
         """Recreate the quantizer from checkpoint metadata."""
 
     @abstractmethod
@@ -143,21 +172,60 @@ class CanonicalStage1Spec(Stage1TaskSpec):
     name: str = "canonical"
     action_representation: str = "accel_kappa"
     rollout_accel_source: str = "predicted"
+    num_bins: int = 256
+    dims_min: tuple[float, float] = (-6.0, -0.2)
+    dims_max: tuple[float, float] = (6.0, 0.2)
 
     def build_quantizer(self, train_dataset) -> DiscreteTrajectoryTokenizer:
-        return DiscreteTrajectoryTokenizer()
+        records = iter_stage1_records(train_dataset)
+        if not records:
+            raise RuntimeError("Stage 1 train dataset is empty; cannot build the canonical quantizer.")
+        action_space_cfg = _canonical_action_space_cfg_from_record(records[0])
+        return DiscreteTrajectoryTokenizer(
+            action_space=_build_canonical_action_space(action_space_cfg),
+            dims_min=list(self.dims_min),
+            dims_max=list(self.dims_max),
+            num_bins=self.num_bins,
+        )
 
-    def quantizer_from_checkpoint(self, quantizer_payload: dict) -> DiscreteTrajectoryTokenizer:
-        required_keys = ["n_bins", "a_range", "kappa_range"]
+    def quantizer_from_checkpoint(
+        self,
+        quantizer_payload: dict,
+        *,
+        stage1_metadata: dict | None = None,
+    ) -> DiscreteTrajectoryTokenizer:
+        if "num_bins" in quantizer_payload:
+            required_keys = ["num_bins", "dims_min", "dims_max", "action_space_cfg"]
+        else:
+            required_keys = ["n_bins", "a_range", "kappa_range"]
         missing_keys = [key for key in required_keys if key not in quantizer_payload]
         if missing_keys:
             raise RuntimeError(
                 "Canonical Stage 1 checkpoint is missing quantizer metadata:\n" + "\n".join(missing_keys)
             )
+        if "num_bins" in quantizer_payload:
+            action_space_cfg = dict(quantizer_payload["action_space_cfg"])
+            return DiscreteTrajectoryTokenizer(
+                action_space=_build_canonical_action_space(action_space_cfg),
+                dims_min=list(quantizer_payload["dims_min"]),
+                dims_max=list(quantizer_payload["dims_max"]),
+                num_bins=int(quantizer_payload["num_bins"]),
+            )
+        if stage1_metadata is None or "k" not in stage1_metadata or "dt" not in stage1_metadata:
+            raise RuntimeError(
+                "Legacy canonical Stage 1 checkpoint is missing the metadata needed to rebuild the action space.\n"
+                "required: stage1_metadata['k'], stage1_metadata['dt']"
+            )
+        legacy_action_space_cfg = {
+            "_target_": "minipamayo_qwen35.action_space.unicycle_accel_curvature.UnicycleAccelCurvatureActionSpace",
+            "n_waypoints": int(stage1_metadata["k"]),
+            "dt": float(stage1_metadata["dt"]),
+        }
         return DiscreteTrajectoryTokenizer(
-            n_bins=int(quantizer_payload["n_bins"]),
-            a_range=tuple(quantizer_payload["a_range"]),
-            kappa_range=tuple(quantizer_payload["kappa_range"]),
+            action_space=_build_canonical_action_space(legacy_action_space_cfg),
+            dims_min=[float(quantizer_payload["a_range"][0]), float(quantizer_payload["kappa_range"][0])],
+            dims_max=[float(quantizer_payload["a_range"][1]), float(quantizer_payload["kappa_range"][1])],
+            num_bins=int(quantizer_payload["n_bins"]),
         )
 
     def target_from_action_array(self, action: np.ndarray) -> np.ndarray:
@@ -175,11 +243,21 @@ class CanonicalStage1Spec(Stage1TaskSpec):
         return target.reshape(-1).to(torch.float32)
 
     def quantizer_metadata(self, quantizer: DiscreteTrajectoryTokenizer) -> dict[str, Any]:
+        if not isinstance(quantizer.action_space, UnicycleAccelCurvatureActionSpace):
+            raise RuntimeError(
+                "Canonical Stage 1 quantizer expects a UnicycleAccelCurvatureActionSpace.\n"
+                f"found={type(quantizer.action_space)!r}"
+            )
         return {
             "quantizer_kind": "accel_kappa",
-            "n_bins": quantizer.n_bins,
-            "a_range": list(quantizer.a_range),
-            "kappa_range": list(quantizer.kappa_range),
+            "num_bins": quantizer.num_bins,
+            "dims_min": list(quantizer.dims_min),
+            "dims_max": list(quantizer.dims_max),
+            "action_space_cfg": {
+                "_target_": "minipamayo_qwen35.action_space.unicycle_accel_curvature.UnicycleAccelCurvatureActionSpace",
+                "n_waypoints": int(quantizer.action_space.n_waypoints),
+                "dt": float(quantizer.action_space.dt),
+            },
         }
 
     def encode_target_token_rows_from_batch(
@@ -190,11 +268,19 @@ class CanonicalStage1Spec(Stage1TaskSpec):
     ) -> list[list[int]]:
         if "ego_future_xyz" not in batch or "ego_future_rot" not in batch:
             return super().encode_target_token_rows_from_batch(batch, registry, quantizer)
+        history_xyz, history_rot = canonicalize_history_batch_for_action_space(
+            batch["ego_history_xyz"].to(dtype=torch.float32),
+            batch["ego_history_rot"].to(dtype=torch.float32),
+        )
+        future_xyz, future_rot = canonicalize_future_batch_for_action_space(
+            batch["ego_future_xyz"].to(dtype=torch.float32),
+            batch["ego_future_rot"].to(dtype=torch.float32),
+        )
         token_rows = quantizer.encode(
-            hist_xyz=batch["ego_history_xyz"].to(dtype=torch.float32),
-            hist_rot=batch["ego_history_rot"].to(dtype=torch.float32),
-            fut_xyz=batch["ego_future_xyz"].to(dtype=torch.float32),
-            fut_rot=batch["ego_future_rot"].to(dtype=torch.float32),
+            hist_xyz=history_xyz,
+            hist_rot=history_rot,
+            fut_xyz=future_xyz,
+            fut_rot=future_rot,
         )
         return [registry.encode_bin_token_ids(row.tolist()) for row in token_rows.detach().cpu()]
 
@@ -233,7 +319,13 @@ class KappaOnlyStage1Spec(Stage1TaskSpec):
             num_values=int(kappa_array.size),
         )
 
-    def quantizer_from_checkpoint(self, quantizer_payload: dict) -> KappaOnlyQuantizer:
+    def quantizer_from_checkpoint(
+        self,
+        quantizer_payload: dict,
+        *,
+        stage1_metadata: dict | None = None,
+    ) -> KappaOnlyQuantizer:
+        del stage1_metadata
         required_keys = [
             "n_bins",
             "kappa_range",

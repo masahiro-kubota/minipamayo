@@ -964,7 +964,10 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
         history_quantizer = HistoryTrajectoryQuantizer()
         add_prompt_special_tokens(processor.tokenizer)
         quantizer = task_spec.build_quantizer(train_loader.dataset)
-        registry = Stage1TokenRegistry(n_bins=quantizer.n_bins, start_index=0)
+        quantizer_n_bins = int(
+            quantizer.num_bins if hasattr(quantizer, "num_bins") else quantizer.n_bins
+        )
+        registry = Stage1TokenRegistry(n_bins=quantizer_n_bins, start_index=0)
         added = registry.add_to_tokenizer(processor.tokenizer)
         history_registry = HistoryTokenRegistry(
             n_bins=history_quantizer.n_bins,
@@ -1141,7 +1144,7 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
             "setup/model_load_elapsed_s": round(load_elapsed, 3),
             "setup/k": stage1_metadata["k"],
             "setup/dt": stage1_metadata["dt"],
-            "setup/n_bins": stage1_metadata["n_bins"],
+            "setup/num_bins": stage1_metadata["num_bins"],
             "setup/target_dim": stage1_metadata["target_dim"],
             "setup/full_action_dim": stage1_metadata["full_action_dim"],
             "setup/history_steps": stage1_metadata["history_steps"],

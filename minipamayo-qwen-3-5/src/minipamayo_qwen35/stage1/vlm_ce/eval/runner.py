@@ -255,7 +255,10 @@ def load_components(
 
     if "quantizer" not in checkpoint or not isinstance(checkpoint["quantizer"], dict):
         raise RuntimeError("Checkpoint is missing canonical `quantizer` metadata.")
-    quantizer = task_spec.quantizer_from_checkpoint(checkpoint["quantizer"])
+    quantizer = task_spec.quantizer_from_checkpoint(
+        checkpoint["quantizer"],
+        stage1_metadata=checkpoint["stage1_metadata"],
+    )
 
     model = AutoModelForImageTextToText.from_pretrained(
         model_path,

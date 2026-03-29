@@ -205,7 +205,10 @@ def main() -> None:
     history_quantizer = HistoryTrajectoryQuantizer()
     add_prompt_special_tokens(processor.tokenizer)
     quantizer = task_spec.build_quantizer(dataset)
-    registry = Stage1TokenRegistry(n_bins=quantizer.n_bins, start_index=0)
+    quantizer_n_bins = int(
+        quantizer.num_bins if hasattr(quantizer, "num_bins") else quantizer.n_bins
+    )
+    registry = Stage1TokenRegistry(n_bins=quantizer_n_bins, start_index=0)
     added = registry.add_to_tokenizer(processor.tokenizer)
     history_registry = HistoryTokenRegistry(
         n_bins=history_quantizer.n_bins,

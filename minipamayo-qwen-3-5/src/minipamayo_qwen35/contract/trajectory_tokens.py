@@ -14,6 +14,45 @@ def format_stage1_token(prefix: str, index: int) -> str:
     return f"<{prefix}_{index:03d}>"
 
 
+def _encode_quantizer_bin_ids(target: np.ndarray, quantizer) -> list[int]:
+    if hasattr(quantizer, "encode_bin_ids"):
+        return quantizer.encode_bin_ids(target)
+
+    values = np.asarray(target, dtype=np.float32).reshape(-1)
+    dims_min = [float(value) for value in quantizer.dims_min]
+    dims_max = [float(value) for value in quantizer.dims_max]
+    num_bins = int(quantizer.num_bins)
+    if len(dims_min) != len(dims_max) or not dims_min:
+        raise RuntimeError("Quantizer is missing canonical `dims_min`/`dims_max` metadata.")
+
+    bin_ids: list[int] = []
+    for i, value in enumerate(values):
+        v_min = dims_min[i % len(dims_min)]
+        v_max = dims_max[i % len(dims_max)]
+        clamped = max(v_min, min(v_max - 1e-8, float(value)))
+        bin_idx = int((clamped - v_min) / (v_max - v_min) * num_bins)
+        bin_ids.append(min(max(bin_idx, 0), num_bins - 1))
+    return bin_ids
+
+
+def _decode_quantizer_bin_ids(bin_ids: list[int], quantizer) -> np.ndarray:
+    if hasattr(quantizer, "decode_bin_ids"):
+        return quantizer.decode_bin_ids(bin_ids)
+
+    dims_min = [float(value) for value in quantizer.dims_min]
+    dims_max = [float(value) for value in quantizer.dims_max]
+    num_bins = int(quantizer.num_bins)
+    if len(dims_min) != len(dims_max) or not dims_min:
+        raise RuntimeError("Quantizer is missing canonical `dims_min`/`dims_max` metadata.")
+
+    values: list[float] = []
+    for i, bin_idx in enumerate(bin_ids):
+        v_min = dims_min[i % len(dims_min)]
+        v_max = dims_max[i % len(dims_max)]
+        values.append(v_min + (int(bin_idx) + 0.5) * (v_max - v_min) / num_bins)
+    return np.asarray(values, dtype=np.float32)
+
+
 @dataclass
 class Stage1TokenRegistry:
     """Owns the extra Stage 1 target tokens added to the tokenizer."""
@@ -48,10 +87,10 @@ class Stage1TokenRegistry:
         return [self.id_to_bin[int(token_id)] for token_id in token_ids]
 
     def encode_target_token_ids(self, target: np.ndarray, quantizer) -> list[int]:
-        return self.encode_bin_token_ids(quantizer.encode_bin_ids(target))
+        return self.encode_bin_token_ids(_encode_quantizer_bin_ids(target, quantizer))
 
     def decode_target_token_ids(self, token_ids: list[int], quantizer) -> np.ndarray:
-        return quantizer.decode_bin_ids(self.decode_token_ids_to_bin_ids(token_ids))
+        return _decode_quantizer_bin_ids(self.decode_token_ids_to_bin_ids(token_ids), quantizer)
 
     def encode_action_token_ids(self, action: np.ndarray, quantizer) -> list[int]:
         return self.encode_target_token_ids(action, quantizer)
