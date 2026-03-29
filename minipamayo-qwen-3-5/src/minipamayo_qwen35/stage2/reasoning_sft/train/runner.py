@@ -25,6 +25,7 @@ from ....stage1.vlm_ce.train import (
     maybe_wandb_finish,
     maybe_wandb_log,
     metric_improved,
+    model_forward_inputs,
     release_cuda_memory,
     set_seed,
     write_run_config,
