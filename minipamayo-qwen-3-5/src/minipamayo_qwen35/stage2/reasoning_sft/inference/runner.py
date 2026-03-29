@@ -10,6 +10,7 @@ from typing import Any
 
 import torch
 from PIL import Image
+from transformers import LogitsProcessor, LogitsProcessorList, StoppingCriteriaList
 
 from ....config import AlpamayoR1Config
 from ....contract.prompt import TRAJ_FUTURE_START_TOKEN
@@ -18,6 +19,7 @@ from ....action_space.record_adapter import (
 )
 from ....models.alpamayo_r1 import AlpamayoR1
 from ....models.base_model import SPECIAL_TOKENS, TRAJ_TOKEN
+from ....models.token_utils import StopAfterEOS
 from ....stage1.vlm_ce.eval import load_components
 from ....stage1.vlm_ce.train import (
     load_checkpoint,
@@ -41,6 +43,21 @@ CONFIG_PATH_KEYS = {
     "sample_jsonl",
     "output_json",
 }
+
+
+class TrajectoryLogitsProcessor(LogitsProcessor):
+    """Mask discrete trajectory token logits during reasoning rollout."""
+
+    def __init__(self, traj_token_offset: int, traj_vocab_size: int):
+        super().__init__()
+        self.traj_token_offset = int(traj_token_offset)
+        self.traj_vocab_size = int(traj_vocab_size)
+
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
+        scores[:, self.traj_token_offset : self.traj_token_offset + self.traj_vocab_size] = float(
+            "-inf"
+        )
+        return scores
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -122,6 +139,67 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`top_k` must be >= 0.")
     validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
     return args
+
+
+def generate_reasoning_handoff(
+    *,
+    model,
+    tokenizer,
+    prompt_inputs: dict,
+    traj_registry,
+    stop_token_id: int,
+    max_new_tokens: int,
+    temperature: float,
+    top_p: float,
+    top_k: int,
+):
+    generation_config = model.generation_config
+    generation_config.top_p = top_p
+    generation_config.temperature = temperature
+    generation_config.do_sample = True
+    generation_config.num_return_sequences = 1
+    generation_config.max_new_tokens = max_new_tokens
+    generation_config.output_logits = True
+    generation_config.return_dict_in_generate = True
+    generation_config.top_k = top_k if top_k > 0 else None
+    generation_config.pad_token_id = tokenizer.pad_token_id
+
+    stopping_criteria = StoppingCriteriaList([StopAfterEOS(eos_token_id=stop_token_id)])
+    logits_processor = LogitsProcessorList(
+        [
+            TrajectoryLogitsProcessor(
+                traj_token_offset=traj_registry.start_index,
+                traj_vocab_size=traj_registry.n_bins,
+            )
+        ]
+    )
+    outputs = model.generate(
+        **prompt_inputs,
+        generation_config=generation_config,
+        stopping_criteria=stopping_criteria,
+        logits_processor=logits_processor,
+    )
+    if not hasattr(outputs, "past_key_values") or outputs.past_key_values is None:
+        raise RuntimeError("Stage 2 generation did not return `past_key_values` for expert handoff.")
+
+    prompt_len = int(prompt_inputs["input_ids"].shape[1])
+    generated_ids = outputs.sequences[:, prompt_len:]
+    stop_mask = generated_ids == stop_token_id
+    has_stop = stop_mask.any(dim=1)
+    if not torch.all(has_stop):
+        raise RuntimeError(
+            "Stage 2 reasoning rollout did not emit `<|traj_future_start|>` within the token budget.\n"
+            f"max_reasoning_tokens={max_new_tokens}"
+        )
+    stop_positions = stop_mask.int().argmax(dim=1)
+    handoff_attention_mask = torch.ones_like(
+        outputs.sequences,
+        dtype=prompt_inputs["attention_mask"].dtype,
+    )
+    for row_idx, stop_pos in enumerate(stop_positions.tolist()):
+        cutoff = prompt_len + stop_pos + 1
+        handoff_attention_mask[row_idx, cutoff:] = 0
+    return outputs, generated_ids, handoff_attention_mask, stop_positions
 
 
 def _resolve_reasoning_vla_dtype(dtype_name: str) -> str:
