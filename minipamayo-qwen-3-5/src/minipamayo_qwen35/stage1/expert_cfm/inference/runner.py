@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import json
 import sys
 from pathlib import Path
@@ -160,11 +161,15 @@ def main() -> None:
     action_space_cfg = dict(stage1b_metadata["action_space_cfg"])
     action_space_cfg.pop("_target_", None)
     action_space = UnicycleAccelCurvatureActionSpace(**action_space_cfg)
-    pred_action = diffusion.sample(
-        expert=expert,
-        prompt_cache=prompt_cache,
-        prompt_attention_mask=prompt_attention_mask,
-    ).reshape(1, -1, 2)
+    amp_context = (
+        torch.autocast("cuda", dtype=torch.bfloat16) if device.type == "cuda" else nullcontext()
+    )
+    with amp_context:
+        pred_action = diffusion.sample(
+            expert=expert,
+            prompt_cache=prompt_cache,
+            prompt_attention_mask=prompt_attention_mask,
+        ).reshape(1, -1, 2)
     history_xyz, history_rot = canonicalize_history_batch_for_action_space(
         batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
         batch["ego_history_rot"].to(device=device, dtype=torch.float32),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import json
 import sys
 from pathlib import Path
@@ -409,7 +410,6 @@ def _build_alpamayo_wrapper(
     if not isinstance(expert_state_dict, dict):
         raise RuntimeError("Stage 1B checkpoint is missing canonical `expert_state_dict`.")
     expert_cfg = dict(expert_config["expert_cfg"])
-    expert_cfg["_attn_implementation"] = "sdpa"
 
     wrapper_config = AlpamayoR1Config(
         vlm_name_or_path=str(stage1_args["model_path"]),
@@ -611,16 +611,20 @@ def main() -> None:
         history_token_count=int(history_quantizer.token_count),
         device=device,
     )
-    pred_xyz, pred_rot, extra = wrapper.sample_trajectories_from_data_with_vlm_rollout(
-        wrapper_inputs,
-        top_p=args.top_p,
-        top_k=None if args.top_k <= 0 else int(args.top_k),
-        temperature=args.temperature,
-        num_traj_samples=1,
-        num_traj_sets=1,
-        return_extra=True,
-        max_generation_length=args.max_reasoning_tokens,
+    amp_context = (
+        torch.autocast("cuda", dtype=torch.bfloat16) if device.type == "cuda" else nullcontext()
     )
+    with amp_context:
+        pred_xyz, pred_rot, extra = wrapper.sample_trajectories_from_data_with_vlm_rollout(
+            wrapper_inputs,
+            top_p=args.top_p,
+            top_k=None if args.top_k <= 0 else int(args.top_k),
+            temperature=args.temperature,
+            num_traj_samples=1,
+            num_traj_sets=1,
+            return_extra=True,
+            max_generation_length=args.max_reasoning_tokens,
+        )
     stop_token_id = int(processor.tokenizer.convert_tokens_to_ids(TRAJ_FUTURE_START_TOKEN))
     if stop_token_id < 0:
         raise RuntimeError("Tokenizer is missing canonical `<|traj_future_start|>`.")

@@ -98,21 +98,46 @@ def build_expert_attention_mask(
     prompt_attention_mask: torch.Tensor,
     prefill_seq_len: int,
     future_token_count: int,
-    *,
-    dtype: torch.dtype,
 ) -> torch.Tensor:
-    batch_size = prompt_attention_mask.shape[0]
-    mask = torch.zeros(
-        (batch_size, 1, future_token_count, prefill_seq_len + future_token_count),
-        device=prompt_attention_mask.device,
-        dtype=dtype,
+    prompt_mask = prompt_attention_mask.to(dtype=torch.long)
+    batch_size = prompt_mask.shape[0]
+    if prompt_mask.shape[1] < prefill_seq_len:
+        prompt_mask = torch.cat(
+            [
+                prompt_mask,
+                torch.zeros(
+                    (batch_size, prefill_seq_len - prompt_mask.shape[1]),
+                    device=prompt_mask.device,
+                    dtype=prompt_mask.dtype,
+                ),
+            ],
+            dim=1,
+        )
+    elif prompt_mask.shape[1] > prefill_seq_len:
+        prompt_mask = prompt_mask[:, :prefill_seq_len]
+
+    future_mask = torch.ones(
+        (batch_size, future_token_count),
+        device=prompt_mask.device,
+        dtype=prompt_mask.dtype,
     )
-    prompt_lengths = prompt_attention_mask.to(dtype=torch.long).sum(dim=1)
-    neg_inf = torch.finfo(mask.dtype).min
-    for row_idx, prompt_len in enumerate(prompt_lengths.tolist()):
-        if prompt_len < prefill_seq_len:
-            mask[row_idx, :, :, prompt_len:prefill_seq_len] = neg_inf
-    return mask
+    return torch.cat([prompt_mask, future_mask], dim=1)
+
+
+def build_expert_attention_mask_from_offsets(
+    offsets: torch.Tensor,
+    prefill_seq_len: int,
+    future_token_count: int,
+) -> torch.Tensor:
+    batch_size = offsets.shape[0]
+    prompt_mask = torch.zeros(
+        (batch_size, prefill_seq_len),
+        device=offsets.device,
+        dtype=torch.long,
+    )
+    for row_idx, offset in enumerate(offsets.tolist()):
+        prompt_mask[row_idx, : max(0, min(int(offset), prefill_seq_len))] = 1
+    return build_expert_attention_mask(prompt_mask, prefill_seq_len, future_token_count)
 
 
 class Stage1ActionExpert(nn.Module):
@@ -245,7 +270,6 @@ class Stage1ActionExpert(nn.Module):
         batch_size = noisy_action.shape[0]
         noisy_action = noisy_action.reshape(batch_size, self.k, self.action_dims[-1])
         future_token_embeds = self.action_in_proj(noisy_action, t)
-        expert_dtype = next(self.expert.parameters()).dtype
 
         expert_prompt_cache = clone_prompt_cache_for_expert(prompt_cache, self.expert_num_layers)
         prefill_seq_len = prompt_cache_seq_length(
@@ -256,7 +280,6 @@ class Stage1ActionExpert(nn.Module):
             prompt_attention_mask,
             prefill_seq_len,
             self.k,
-            dtype=expert_dtype,
         )
         forward_kwargs = {}
         if self.expert_non_causal_attention:

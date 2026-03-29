@@ -28,6 +28,7 @@ from minipamayo_qwen35.action_space.action_space import ActionSpace
 from minipamayo_qwen35.config import AlpamayoR1Config
 from minipamayo_qwen35.diffusion.base import BaseDiffusion
 from minipamayo_qwen35.models.base_model import ReasoningVLA
+from minipamayo_qwen35.models.action_expert import build_expert_attention_mask_from_offsets
 from minipamayo_qwen35.models.token_utils import (
     StopAfterEOS,
     extract_text_tokens,
@@ -237,22 +238,15 @@ class AlpamayoR1(ReasoningVLA):
         position_ids += delta.to(position_ids.device)
 
         # modify the attention_masks to remove padding tokens
-        attention_mask = torch.zeros(
-            (b_star, 1, n_diffusion_tokens, prompt_cache.get_seq_length() + n_diffusion_tokens),
-            dtype=self.expert.dtype,
-            device=device,
+        attention_mask = build_expert_attention_mask_from_offsets(
+            offsets=offset,
+            prefill_seq_len=prompt_cache.get_seq_length(),
+            future_token_count=n_diffusion_tokens,
         )
-        for i in range(b_star):
-            attention_mask[i, :, :, offset[i] : -n_diffusion_tokens] = torch.finfo(
-                attention_mask.dtype
-            ).min
 
         forward_kwargs = {}
         if self.config.expert_non_causal_attention:
             forward_kwargs["is_causal"] = False
-        expert_attention_mask = attention_mask
-        if getattr(self.expert.config, "_attn_implementation", "") == "sdpa":
-            expert_attention_mask = None
 
         # 2) Define denoising step that consumes noisy action and timestep
         def step_fn(
@@ -273,7 +267,7 @@ class AlpamayoR1(ReasoningVLA):
                 inputs_embeds=future_token_embeds,
                 position_ids=position_ids,
                 past_key_values=prompt_cache,
-                attention_mask=expert_attention_mask,
+                attention_mask=attention_mask,
                 use_cache=True,
                 **forward_kwargs,
             )
