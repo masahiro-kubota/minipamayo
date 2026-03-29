@@ -441,6 +441,11 @@ class ReasoningVLA(PreTrainedModel, TrajectoryFusionMixin):
 
     def tie_weights(self, *args, **kwargs) -> None:
         """Delegate weight tying to the nested VLM model."""
+        # transformers 5.4 calls tie_weights() from shared PreTrainedModel flows
+        # such as init_weights() and from_pretrained(), sometimes with arguments
+        # like `missing_keys` / `recompute_mapping`. ReasoningVLA itself does not
+        # use those kwargs, but it must accept and forward them to stay compatible
+        # with the newer HF contract.
         if hasattr(self.vlm, "tie_weights"):
             try:
                 self.vlm.tie_weights(*args, **kwargs)
