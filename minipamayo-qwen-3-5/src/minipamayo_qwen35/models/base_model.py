@@ -112,11 +112,11 @@ def tokenize_history_trajectory(
         tokenizer.encode(
             hist_xyz=hist_xyz[:, :1],
             hist_rot=hist_rot[:, :1],
-            fut_xyz=hist_xyz,
+            fut_xyz=hist_xyz,  # note hist_xyz is passed to fut_xyz as it's encoding history.
             fut_rot=hist_rot,
         )
         + start_idx
-    )
+    )  # [B*n_traj, tokens_per_history_traj]
     hist_idx = einops.rearrange(hist_idx, "(b n_traj) n -> b (n_traj n)", b=B)
 
     return hist_idx
@@ -235,6 +235,7 @@ class ReasoningVLAConfig(PretrainedConfig):
         self.max_pixels = max_pixels
         self.add_special_tokens = add_special_tokens
 
+        # Initialize VLM-specific configurations
         self._initialize_vlm_config()
 
     def _initialize_vlm_config(self) -> None:
@@ -258,6 +259,7 @@ class ReasoningVLAConfig(PretrainedConfig):
         processor = AutoProcessor.from_pretrained(self.vlm_name_or_path, **processor_kwargs)
         tokenizer = processor.tokenizer
 
+        # Add traj tokens to the tokenizer
         if self.traj_vocab_size is not None:
             discrete_tokens = [f"<i{v}>" for v in range(self.traj_vocab_size)]
             num_new_tokens = tokenizer.add_tokens(discrete_tokens)
@@ -303,13 +305,19 @@ class ReasoningVLA(PreTrainedModel, TrajectoryFusionMixin):
         else:
             pretrained_modules = {}
 
+        # Initialize VLM backbone
         self._initialize_vlm_backbone(config, pretrained_modules, original_vocab_size)
+
+        # Initialize trajectory tokenizers
         self._initialize_trajectory_tokenizers(config, pretrained_modules)
+
+        # Build tokenizer
         self.tokenizer = self._build_tokenizer(config)
         self.special_token_ids = {
             k: self.tokenizer.convert_tokens_to_ids(v) for k, v in SPECIAL_TOKENS.items()
         }
 
+        # Log parameter count
         if print_param_count:
             total_params = sum(p.numel() for p in self.parameters())
             trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
@@ -400,6 +408,7 @@ class ReasoningVLA(PreTrainedModel, TrajectoryFusionMixin):
         """Load submodules with pretrained submodules and initialize the model."""
         pretrained_modules = {}
 
+        # Load VLM
         vlm = Qwen3VLForConditionalGeneration.from_pretrained(
             config.vlm_name_or_path,
             dtype=config.model_dtype,

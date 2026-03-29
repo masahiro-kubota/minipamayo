@@ -54,10 +54,13 @@ def extract_traj_tokens(
     batch_size, seq_len = output_tokens.shape
     device = output_tokens.device
 
+    # Initialize output tensor
     traj_tokens = torch.zeros(
         (batch_size, tokens_per_future_traj), dtype=output_tokens.dtype, device=device
     )
 
+    # For each batch, find the first occurrence of end token
+    # If no end token, use seq_len as the end position
     end_mask = output_tokens == special_token_ids["traj_future_end"]
     end_positions = torch.where(
         end_mask.any(dim=1),
@@ -65,6 +68,8 @@ def extract_traj_tokens(
         torch.full((batch_size,), seq_len, dtype=torch.long, device=device),
     )
 
+    # For each batch, find the last occurrence of start token
+    # We reverse the sequence to find the last occurrence
     start_mask = output_tokens == special_token_ids["traj_future_start"]
     start_mask_reversed = torch.flip(start_mask, dims=[1])
     last_start_positions_reversed = start_mask_reversed.int().argmax(dim=1)
@@ -75,12 +80,14 @@ def extract_traj_tokens(
         torch.full((batch_size,), -1, dtype=torch.long, device=device),
     )
 
+    # Create a range tensor for indexing [B, seq_len]
     range_tensor = torch.arange(seq_len, device=device).unsqueeze(0).expand(batch_size, -1)
     valid_mask = (range_tensor > start_positions.unsqueeze(1)) & (
         range_tensor < end_positions.unsqueeze(1)
     )
     extracted_tokens = torch.where(valid_mask, output_tokens, torch.zeros_like(output_tokens))
 
+    # Check for mismatches in token count
     n_valid_tokens = valid_mask.sum(dim=1)
     mismatch_mask = n_valid_tokens != tokens_per_future_traj
     if mismatch_mask.any():
@@ -90,6 +97,7 @@ def extract_traj_tokens(
                 f"Expected: {tokens_per_future_traj}, Got: {n_valid_tokens[idx].item()}."
             )
 
+    # Only gather from positions where we have valid tokens and within our output size
     cumsum_indices = torch.cumsum(valid_mask.int(), dim=1) - 1
     output_mask = valid_mask & (cumsum_indices < tokens_per_future_traj)
 
@@ -100,10 +108,12 @@ def extract_traj_tokens(
         token_values = extracted_tokens[output_mask]
         token_values = token_values - future_token_start_idx
 
+        # Check for invalid tokens
         invalid_tokens = (token_values < 0) | (token_values > traj_tokenizer_vocab_size)
         if invalid_tokens.any():
             logger.warning(f"Invalid token ids found in {invalid_tokens.sum().item()} positions.")
 
+        # Clamp to valid range
         token_values = torch.clamp(token_values, min=0, max=traj_tokenizer_vocab_size - 1)
         traj_tokens[batch_ids, output_positions] = token_values
 
@@ -149,6 +159,7 @@ def extract_text_tokens(
     Returns:
         dict[str, list[str]]: A dict containing all text data.
     """
+    # decode the batch of tokens into strings
     decoded_batch = tokenizer.batch_decode(output_tokens, skip_special_tokens=False)
 
     extract_tokens = ["cot", "meta_action", "answer"]
@@ -182,15 +193,18 @@ class StopAfterEOS(StoppingCriteria):
         """
         batch_size = input_ids.shape[0]
 
+        # Initialize tracking on first call
         if self.eos_found is None:
             self.eos_found = torch.zeros(batch_size, dtype=torch.bool, device=input_ids.device)
 
         if self.eos_found.all():
             return True
 
+        # Check which sequences have EOS in the last generated token
         last_tokens = input_ids[:, -1]
         current_has_eos = last_tokens == self.eos_token_id
 
+        # Update which sequences just found EOS
         self.eos_found = self.eos_found | current_has_eos
         return False
 
@@ -218,17 +232,22 @@ def replace_padding_after_eos(
     """
     batch_size, seq_len = token_ids.shape
 
-    eos_mask = token_ids == eos_token_id
+    # Find positions of EOS tokens
+    eos_mask = token_ids == eos_token_id  # [B, L]
 
+    # Get the position of the first EOS token in each sequence
+    # Add seq_len where there's no EOS to handle sequences without EOS
     eos_positions = torch.where(
         eos_mask,
         torch.arange(seq_len, device=token_ids.device).unsqueeze(0).expand(batch_size, -1),
         torch.tensor(seq_len, device=token_ids.device),
     )
-    first_eos_pos = eos_positions.min(dim=1, keepdim=True)[0]
+    first_eos_pos = eos_positions.min(dim=1, keepdim=True)[0]  # [B, 1]
 
-    position_indices = torch.arange(seq_len, device=token_ids.device).unsqueeze(0)
-    mask_after = position_indices > first_eos_pos
+    # Create a mask for positions after the first EOS
+    position_indices = torch.arange(seq_len, device=token_ids.device).unsqueeze(0)  # [1, L]
+    mask_after = position_indices > first_eos_pos  # [B, L]
 
+    # Apply padding inplace
     token_ids[mask_after] = pad_token_id
     return token_ids

@@ -78,18 +78,22 @@ class DeltaTrajectoryTokenizer:
         xyz = xyz.clamp(0, self.num_bins - 1)
         if not self._predict_yaw:
             return einops.rearrange(xyz, "b n m -> b (n m)")
+        # Extract yaw angles from rotation matrices
         yaw = torch.atan2(fut_rot[..., 0, 1], fut_rot[..., 0, 0])
 
+        # Calculate delta yaw
         yaw_padded = torch.nn.functional.pad(yaw, [1, 0, 0, 0])
         delta_yaw = yaw_padded[:, 1:] - yaw_padded[:, :-1]
 
+        # Normalize delta yaw to [-pi, pi]
         delta_yaw = torch.atan2(torch.sin(delta_yaw), torch.cos(delta_yaw))
 
+        # Scale and quantize delta yaw
         delta_yaw = (delta_yaw - self.ego_yaw_min) / (self.ego_yaw_max - self.ego_yaw_min)
         delta_yaw = (delta_yaw * (self.num_bins - 1)).round().long()
         delta_yaw = delta_yaw.clamp(0, self.num_bins - 1)
 
-        xyzw = torch.cat([xyz, delta_yaw.unsqueeze(-1)], dim=-1)
+        xyzw = torch.cat([xyz, delta_yaw.unsqueeze(-1)], dim=-1)  # Shape: (B, Tf, 4)
         return einops.rearrange(xyzw, "b n m -> b (n m)")
 
     def decode(
@@ -133,6 +137,7 @@ class DeltaTrajectoryTokenizer:
         yaw = yaw * (self.ego_yaw_max - self.ego_yaw_min) + self.ego_yaw_min
         yaw = torch.cumsum(yaw, dim=1)
 
+        # Convert yaw angles to rotation matrices
         cos_yaw = torch.cos(yaw)
         sin_yaw = torch.sin(yaw)
         zeros = torch.zeros_like(cos_yaw)
@@ -164,24 +169,30 @@ def get_yaw_rotation_matrices(trajectory, window_size=10, poly_order=3):
     rotation_matrices = []
 
     for b in range(B):
-        traj_batch = trajectory[b]
+        traj_batch = trajectory[b]  # (N, 3)
         batch_matrices = []
         batch_yaws = []
 
         for i in range(N):
+            # Get window indices with padding for edges
             start_idx = max(0, i - window_size // 2)
             end_idx = min(N, start_idx + window_size)
 
+            # Adjust window if at edges
             if end_idx - start_idx < window_size:
                 start_idx = max(0, end_idx - window_size)
 
+            # Get points in window
             window_points = traj_batch[start_idx:end_idx]
 
+            # Use time parameter t
             t = np.arange(len(window_points))
 
+            # Fit polynomials to both x(t) and y(t)
             x_coeffs = np.polyfit(t, window_points[:, 0], poly_order)
             y_coeffs = np.polyfit(t, window_points[:, 1], poly_order)
 
+            # Calculate derivatives at center point
             center_t = min(i - start_idx, window_size - 1)
             x_deriv = np.polyder(x_coeffs)
             y_deriv = np.polyder(y_coeffs)
@@ -189,9 +200,11 @@ def get_yaw_rotation_matrices(trajectory, window_size=10, poly_order=3):
             dx = np.polyval(x_deriv, center_t)
             dy = np.polyval(y_deriv, center_t)
 
+            # Calculate yaw angle from dx, dy
             yaw = np.arctan2(dy, dx)
             batch_yaws.append(yaw)
 
+            # Create 3x3 rotation matrix for yaw
             cos_yaw = np.cos(yaw)
             sin_yaw = np.sin(yaw)
             rotation_matrix = np.array([[cos_yaw, -sin_yaw, 0], [sin_yaw, cos_yaw, 0], [0, 0, 1]])
