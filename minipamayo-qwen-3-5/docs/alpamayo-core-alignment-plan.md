@@ -4,7 +4,7 @@
 
 前提:
 - 目的は「今の repo 都合の abstraction を守ること」ではなく、「Alpamayo 公開実装との差分を減らすこと」。
-- ただし一気に end-to-end wrapper を持ち込むのではなく、破壊半径の小さい pure core から寄せる。
+- `config.py` / `models/alpamayo_r1.py` はすでに持ち込んでおり、`stage2` inference は wrapper 経由に寄せた。
 - `record_adapter.py` のような repo 固有 glue は残してよいが、pure core に混ぜない。
 
 ## 目標
@@ -20,7 +20,7 @@
 
 ## 現状の diff 状況
 
-2026-03-29 時点で、以下の `diff -ru` を使って Alpamayo 側と比較した。
+2026-03-30 時点で、以下の `diff -ru` を使って Alpamayo 側と比較した。
 
 ```bash
 diff -ru \
@@ -59,7 +59,9 @@ diff -ru \
 - `action_space/discrete_action_space.py`
 - `action_space/unicycle_accel_curvature.py`
 - `action_space/utils.py`
+- `config.py`
 - `diffusion/flow_matching.py`
+- `models/alpamayo_r1.py`
 
 ### 3. repo 固有として残している差分
 
@@ -76,11 +78,12 @@ diff -ru \
 
 ### 4. まだ未移植の大物
 
-残っている本質的な未移植はこれ。
+大物の未移植は解消済み。
 
-- Alpamayo `models/alpamayo_r1.py` 相当
+- `config.py`
+- `models/alpamayo_r1.py`
 
-これは end-to-end wrapper なので、最後に触る。
+はどちらも repo に入り、`stage2/reasoning_sft/inference/runner.py` は manual handoff ではなく wrapper を組み立てて呼ぶ形に変わった。
 
 ## 残りの実装方針
 
@@ -99,23 +102,21 @@ diff -ru \
 - `record_adapter.py` は Alpamayo loader 不在を埋める層
 - `action_expert.py` は end-to-end wrapper 未導入の間の shared 実装
 
-### 2. 最後に end-to-end wrapper を考える
+### 2. wrapper builder をどこに残すか決める
 
 対象:
-- Alpamayo `models/alpamayo_r1.py`
-
-ここでの狙い:
-- Alpamayo の end-to-end 構造に近づける
+- `stage2/reasoning_sft/inference/runner.py` の wrapper 組み立て部分
 
 注意:
-- 一番破壊半径が大きい
-- `stage1`, `stage2`, `stage3` をまたぐので最後
+- いまは Stage1A / Stage1B checkpoint 契約を読んで `AlpamayoR1` を構成する repo 固有 builder が runner に残っている
+- 再利用が必要になった時点で shared helper へ出す
 
 ## 優先順位
 
 残り:
-- `models/alpamayo_r1.py` 相当
 - repo 固有 core (`record_adapter.py`, `diffusion/action_expert.py`, `models/action_expert.py`) の最終位置づけ
+- wrapper builder の最終配置
+- GPU が空いた時の wrapper inference smoke
 
 ## 各段階の確認
 
@@ -124,11 +125,12 @@ diff -ru \
 - `py_compile`
 - `stage1.vlm_ce.train --help`
 - `stage1.expert_cfm.train --help`
-- `stage2.reasoning_sft.train --help`
-- 必要なら 1 epoch smoke
+- `stage2.reasoning_sft.inference --help`
+- 必要なら single-sample inference smoke
 
 ## 完了条件
 
 - pure shared core は top-level `action_space/`, `diffusion/`, `models/`, `geometry/` にある
 - stage 配下には train/eval/inference と stage 固有 glue だけが残る
 - Alpamayo の同名 file と diff を見たとき、差分は import path と repo 固有 glue に限定される
+- `stage2` inference の handoff は wrapper 経由で実行される

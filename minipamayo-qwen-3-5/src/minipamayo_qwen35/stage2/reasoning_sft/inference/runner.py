@@ -6,23 +6,22 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import torch
-from transformers import LogitsProcessor, LogitsProcessorList, StoppingCriteriaList
+from PIL import Image
 
-from ....contract.prompt import COT_END_TOKEN, TRAJ_FUTURE_START_TOKEN
+from ....config import AlpamayoR1Config
+from ....contract.prompt import TRAJ_FUTURE_START_TOKEN
 from ....action_space.record_adapter import (
-    canonicalize_future_batch_from_action_space,
     canonicalize_history_batch_for_action_space,
 )
-from ....action_space.unicycle_accel_curvature import UnicycleAccelCurvatureActionSpace
-from ....diffusion.action_expert import FlowMatchingDiffusion
-from ....models.action_expert import load_action_expert_from_checkpoint
-from ....models.token_utils import StopAfterEOS
+from ....models.alpamayo_r1 import AlpamayoR1
+from ....models.base_model import SPECIAL_TOKENS, TRAJ_TOKEN
 from ....stage1.vlm_ce.eval import load_components
 from ....stage1.vlm_ce.train import (
     load_checkpoint,
-    prepare_prompt_inputs_with_history,
+    move_inputs_to_device,
 )
 from ....utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
@@ -125,77 +124,241 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-class TrajectoryLogitsProcessor(LogitsProcessor):
-    """Mask discrete trajectory token logits during reasoning rollout."""
-
-    def __init__(self, traj_token_offset: int, traj_vocab_size: int):
-        super().__init__()
-        self.traj_token_offset = int(traj_token_offset)
-        self.traj_vocab_size = int(traj_vocab_size)
-
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
-        scores[:, self.traj_token_offset : self.traj_token_offset + self.traj_vocab_size] = float(
-            "-inf"
-        )
-        return scores
+def _resolve_reasoning_vla_dtype(dtype_name: str) -> str:
+    if dtype_name == "bf16":
+        return "bfloat16"
+    if dtype_name == "fp16":
+        return "float16"
+    raise RuntimeError(f"Unsupported Stage 1A dtype for AlpamayoR1Config: {dtype_name!r}")
 
 
-def generate_reasoning_handoff(
-    *,
-    model,
-    tokenizer,
-    prompt_inputs: dict,
-    traj_registry,
-    stop_token_id: int,
-    max_new_tokens: int,
-    temperature: float,
-    top_p: float,
-    top_k: int,
-):
-    generation_config = model.generation_config
-    generation_config.top_p = top_p
-    generation_config.temperature = temperature
-    generation_config.do_sample = True
-    generation_config.num_return_sequences = 1
-    generation_config.max_new_tokens = max_new_tokens
-    generation_config.output_logits = True
-    generation_config.return_dict_in_generate = True
-    generation_config.top_k = top_k if top_k > 0 else None
-    generation_config.pad_token_id = tokenizer.pad_token_id
-
-    stopping_criteria = StoppingCriteriaList([StopAfterEOS(eos_token_id=stop_token_id)])
-    logits_processor = LogitsProcessorList(
-        [
-            TrajectoryLogitsProcessor(
-                traj_token_offset=traj_registry.start_index,
-                traj_vocab_size=traj_registry.n_bins,
-            )
-        ]
-    )
-    outputs = model.generate(
-        **prompt_inputs,
-        generation_config=generation_config,
-        stopping_criteria=stopping_criteria,
-        logits_processor=logits_processor,
-    )
-    if not hasattr(outputs, "past_key_values") or outputs.past_key_values is None:
-        raise RuntimeError("Stage 2 generation did not return `past_key_values` for expert handoff.")
-
-    prompt_len = int(prompt_inputs["input_ids"].shape[1])
-    generated_ids = outputs.sequences[:, prompt_len:]
-    stop_mask = generated_ids == stop_token_id
-    has_stop = stop_mask.any(dim=1)
-    if not torch.all(has_stop):
+def _build_traj_tokenizer_cfg(stage1_checkpoint: dict) -> dict[str, Any]:
+    quantizer_payload = stage1_checkpoint.get("quantizer")
+    if not isinstance(quantizer_payload, dict):
+        raise RuntimeError("Stage 1A checkpoint is missing canonical `quantizer` metadata.")
+    required_keys = ["action_space_cfg", "dims_min", "dims_max", "num_bins"]
+    missing_keys = [key for key in required_keys if key not in quantizer_payload]
+    if missing_keys:
         raise RuntimeError(
-            "Stage 2 reasoning rollout did not emit `<|traj_future_start|>` within the token budget.\n"
-            f"max_reasoning_tokens={max_new_tokens}"
+            "Stage 1A checkpoint quantizer is missing canonical fields:\n" + "\n".join(missing_keys)
         )
-    stop_positions = stop_mask.int().argmax(dim=1)
-    handoff_attention_mask = torch.ones_like(outputs.sequences, dtype=prompt_inputs["attention_mask"].dtype)
-    for row_idx, stop_pos in enumerate(stop_positions.tolist()):
-        cutoff = prompt_len + stop_pos + 1
-        handoff_attention_mask[row_idx, cutoff:] = 0
-    return outputs, generated_ids, handoff_attention_mask, stop_positions
+    return {
+        "_target_": "minipamayo_qwen35.action_space.discrete_action_space.DiscreteTrajectoryTokenizer",
+        "action_space_cfg": dict(quantizer_payload["action_space_cfg"]),
+        "dims_min": list(quantizer_payload["dims_min"]),
+        "dims_max": list(quantizer_payload["dims_max"]),
+        "num_bins": int(quantizer_payload["num_bins"]),
+    }
+
+
+def _build_history_tokenizer_cfg(stage1_checkpoint: dict) -> dict[str, Any]:
+    history_quantizer_payload = stage1_checkpoint.get("history_quantizer")
+    if not isinstance(history_quantizer_payload, dict):
+        raise RuntimeError("Stage 1A checkpoint is missing canonical `history_quantizer` metadata.")
+    required_keys = [
+        "history_steps",
+        "n_bins",
+        "x_range",
+        "y_range",
+        "z_range",
+        "yaw_range",
+        "quantization_mode",
+    ]
+    missing_keys = [key for key in required_keys if key not in history_quantizer_payload]
+    if missing_keys:
+        raise RuntimeError(
+            "Stage 1A checkpoint history_quantizer is missing canonical fields:\n"
+            + "\n".join(missing_keys)
+        )
+    return {
+        "_target_": "minipamayo_qwen35.contract.history_tokens.HistoryTrajectoryQuantizer",
+        "history_steps": int(history_quantizer_payload["history_steps"]),
+        "n_bins": int(history_quantizer_payload["n_bins"]),
+        "x_range": list(history_quantizer_payload["x_range"]),
+        "y_range": list(history_quantizer_payload["y_range"]),
+        "z_range": list(history_quantizer_payload["z_range"]),
+        "yaw_range": (
+            list(history_quantizer_payload["yaw_range"])
+            if history_quantizer_payload["yaw_range"] is not None
+            else None
+        ),
+        "quantization_mode": str(history_quantizer_payload["quantization_mode"]),
+    }
+
+
+def _split_stage1b_state_dict(expert_state_dict: dict[str, torch.Tensor]) -> tuple[dict, dict, dict]:
+    expert_weights: dict[str, torch.Tensor] = {}
+    action_in_proj_weights: dict[str, torch.Tensor] = {}
+    action_out_proj_weights: dict[str, torch.Tensor] = {}
+    unexpected_keys: list[str] = []
+    for key, value in expert_state_dict.items():
+        if key.startswith("expert."):
+            expert_weights[key.removeprefix("expert.")] = value
+        elif key.startswith("action_in_proj."):
+            action_in_proj_weights[key.removeprefix("action_in_proj.")] = value
+        elif key.startswith("action_out_proj."):
+            action_out_proj_weights[key.removeprefix("action_out_proj.")] = value
+        else:
+            unexpected_keys.append(key)
+    allowed_unexpected = {"accel_mean", "accel_std", "kappa_mean", "kappa_std"}
+    unknown_unexpected = sorted(set(unexpected_keys) - allowed_unexpected)
+    if unknown_unexpected:
+        raise RuntimeError(
+            "Stage 1B expert_state_dict has unsupported top-level keys:\n"
+            + "\n".join(unknown_unexpected)
+        )
+    return expert_weights, action_in_proj_weights, action_out_proj_weights
+
+
+def _patch_wrapper_token_contract(
+    *,
+    wrapper: AlpamayoR1,
+    processor,
+    registry,
+    history_registry,
+    history_quantizer,
+    quantizer,
+    stage1_metadata: dict,
+) -> None:
+    tokenizer = processor.tokenizer
+    traj_token_start_id = int(tokenizer.convert_tokens_to_ids(registry.token_strings[0]))
+    traj_token_end_id = int(tokenizer.convert_tokens_to_ids(registry.token_strings[-1]))
+    history_token_start_id = int(tokenizer.convert_tokens_to_ids(history_registry.token_strings[0]))
+    traj_token_ids = {key: int(tokenizer.convert_tokens_to_ids(value)) for key, value in TRAJ_TOKEN.items()}
+    special_token_ids = {
+        key: int(tokenizer.convert_tokens_to_ids(value)) for key, value in SPECIAL_TOKENS.items()
+    }
+
+    wrapper.tokenizer = tokenizer
+    wrapper.traj_tokenizer = quantizer
+    wrapper.hist_traj_tokenizer = history_quantizer
+    wrapper.future_token_start_idx = traj_token_start_id
+    wrapper.hist_token_start_idx = history_token_start_id
+    wrapper.special_token_ids = special_token_ids
+
+    wrapper.config.vocab_size = len(tokenizer)
+    wrapper.config.traj_vocab_size = int(registry.n_bins)
+    wrapper.config.tokens_per_history_traj = int(history_quantizer.token_count)
+    wrapper.config.tokens_per_future_traj = int(stage1_metadata["target_dim"])
+    wrapper.config.traj_token_start_idx = traj_token_start_id
+    wrapper.config.traj_token_ids = traj_token_ids
+
+    tokenizer.traj_token_start_idx = traj_token_start_id
+    tokenizer.traj_token_end_idx = traj_token_end_id
+    tokenizer.traj_token_ids = dict(traj_token_ids)
+
+    wrapper.vlm.config.vocab_size = len(tokenizer)
+    if hasattr(wrapper.vlm.config, "text_config"):
+        wrapper.vlm.config.text_config.vocab_size = len(tokenizer)
+    if hasattr(wrapper.vlm, "generation_config"):
+        wrapper.vlm.generation_config.pad_token_id = tokenizer.pad_token_id
+
+
+def _build_alpamayo_wrapper(
+    *,
+    stage1_checkpoint: dict,
+    stage1_model,
+    processor,
+    registry,
+    history_registry,
+    history_quantizer,
+    quantizer,
+    stage1b_checkpoint: dict,
+    image_min_pixels: int,
+    image_max_pixels: int,
+    flow_steps: int,
+    device: torch.device,
+) -> AlpamayoR1:
+    stage1_args = stage1_checkpoint.get("args")
+    if not isinstance(stage1_args, dict):
+        raise RuntimeError("Stage 1A checkpoint is missing canonical `args` metadata.")
+    required_stage1_arg_keys = ["model_path", "dtype"]
+    missing_stage1_arg_keys = [key for key in required_stage1_arg_keys if key not in stage1_args]
+    if missing_stage1_arg_keys:
+        raise RuntimeError(
+            "Stage 1A checkpoint args are missing canonical fields:\n"
+            + "\n".join(missing_stage1_arg_keys)
+        )
+    stage1_metadata = stage1_checkpoint.get("stage1_metadata")
+    if not isinstance(stage1_metadata, dict):
+        raise RuntimeError("Stage 1A checkpoint is missing canonical `stage1_metadata`.")
+    if "target_dim" not in stage1_metadata:
+        raise RuntimeError("Stage 1A checkpoint metadata is missing canonical `target_dim`.")
+
+    expert_config = stage1b_checkpoint.get("expert_config")
+    if not isinstance(expert_config, dict):
+        raise RuntimeError("Stage 1B checkpoint is missing canonical `expert_config`.")
+    stage1b_metadata = stage1b_checkpoint.get("stage1b_metadata")
+    if not isinstance(stage1b_metadata, dict):
+        raise RuntimeError("Stage 1B checkpoint is missing canonical `stage1b_metadata`.")
+    action_space_cfg = stage1b_metadata.get("action_space_cfg")
+    if not isinstance(action_space_cfg, dict):
+        raise RuntimeError("Stage 1B checkpoint metadata is missing canonical `action_space_cfg`.")
+    required_expert_cfg_keys = [
+        "expert_cfg",
+        "action_in_proj_cfg",
+        "action_out_proj_cfg",
+        "keep_same_dtype",
+        "expert_non_causal_attention",
+    ]
+    missing_expert_cfg_keys = [key for key in required_expert_cfg_keys if key not in expert_config]
+    if missing_expert_cfg_keys:
+        raise RuntimeError(
+            "Stage 1B expert_config is missing canonical fields:\n"
+            + "\n".join(missing_expert_cfg_keys)
+        )
+    expert_state_dict = stage1b_checkpoint.get("expert_state_dict")
+    if not isinstance(expert_state_dict, dict):
+        raise RuntimeError("Stage 1B checkpoint is missing canonical `expert_state_dict`.")
+
+    wrapper_config = AlpamayoR1Config(
+        vlm_name_or_path=str(stage1_args["model_path"]),
+        vlm_backend="qwenvl3",
+        traj_tokenizer_cfg=_build_traj_tokenizer_cfg(stage1_checkpoint),
+        hist_traj_tokenizer_cfg=_build_history_tokenizer_cfg(stage1_checkpoint),
+        traj_vocab_size=int(registry.n_bins),
+        tokens_per_history_traj=int(history_quantizer.token_count),
+        tokens_per_future_traj=int(stage1_metadata["target_dim"]),
+        model_dtype=_resolve_reasoning_vla_dtype(str(stage1_args["dtype"])),
+        attn_implementation=getattr(stage1_model.config, "_attn_implementation", "flash_attention_2"),
+        min_pixels=image_min_pixels,
+        max_pixels=image_max_pixels,
+        add_special_tokens=False,
+        diffusion_cfg={
+            "_target_": "minipamayo_qwen35.diffusion.flow_matching.FlowMatching",
+            "num_inference_steps": int(flow_steps),
+        },
+        action_space_cfg=dict(action_space_cfg),
+        action_in_proj_cfg=dict(expert_config["action_in_proj_cfg"]),
+        action_out_proj_cfg=dict(expert_config["action_out_proj_cfg"]),
+        expert_cfg=dict(expert_config["expert_cfg"]),
+        keep_same_dtype=bool(expert_config["keep_same_dtype"]),
+        expert_non_causal_attention=bool(expert_config["expert_non_causal_attention"]),
+    )
+    wrapper = AlpamayoR1(
+        wrapper_config,
+        pretrained_modules={"vlm": stage1_model, "traj_tokenizer": quantizer},
+        original_vocab_size=stage1_model.get_input_embeddings().weight.shape[0],
+    )
+    _patch_wrapper_token_contract(
+        wrapper=wrapper,
+        processor=processor,
+        registry=registry,
+        history_registry=history_registry,
+        history_quantizer=history_quantizer,
+        quantizer=quantizer,
+        stage1_metadata=stage1_metadata,
+    )
+    wrapper = wrapper.to(device)
+
+    expert_weights, action_in_proj_weights, action_out_proj_weights = _split_stage1b_state_dict(
+        expert_state_dict
+    )
+    wrapper.expert.load_state_dict(expert_weights)
+    wrapper.action_in_proj.load_state_dict(action_in_proj_weights)
+    wrapper.action_out_proj.load_state_dict(action_out_proj_weights)
+    wrapper.eval()
+    return wrapper
 
 
 def main() -> None:
@@ -226,7 +389,7 @@ def main() -> None:
         registry,
         history_registry,
         history_quantizer,
-        _quantizer,
+        quantizer,
         _model_dtype,
     ) = load_components(stage1_args)
     stage2_embed_rows = int(
@@ -241,6 +404,21 @@ def main() -> None:
     model.config.use_cache = True
     model.to(device)
     model.eval()
+    stage1b_checkpoint = torch.load(Path(args.stage1b_checkpoint), map_location="cpu", weights_only=False)
+    wrapper = _build_alpamayo_wrapper(
+        stage1_checkpoint=stage1_checkpoint,
+        stage1_model=model,
+        processor=processor,
+        registry=registry,
+        history_registry=history_registry,
+        history_quantizer=history_quantizer,
+        quantizer=quantizer,
+        stage1b_checkpoint=stage1b_checkpoint,
+        image_min_pixels=args.image_min_pixels,
+        image_max_pixels=args.image_max_pixels,
+        flow_steps=args.flow_steps,
+        device=device,
+    )
 
     dataset = ReasoningSftJsonlDataset(args.sample_jsonl)
     if args.sample_index >= len(dataset):
@@ -265,73 +443,47 @@ def main() -> None:
         float(sample["v0"].item()),
         history_token_count=history_quantizer.token_count,
     )
-    prompt_inputs = prepare_prompt_inputs_with_history(
-        model=model,
-        batch=batch,
-        processor=processor,
-        history_registry=history_registry,
-        history_quantizer=history_quantizer,
-        prompt_text=prompt_text,
-        device=device,
+    with Image.open(sample["image_path"]) as raw_image:
+        image = raw_image.convert("RGB")
+        tokenized_data = processor(
+            text=[prompt_text],
+            images=[image],
+            return_tensors="pt",
+            padding=True,
+        )
+        image.close()
+    tokenized_data = move_inputs_to_device(tokenized_data, device)
+    wrapper_inputs = {
+        "ego_history_xyz": batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
+        "ego_history_rot": batch["ego_history_rot"].to(device=device, dtype=torch.float32),
+        "tokenized_data": tokenized_data,
+    }
+    pred_xyz, pred_rot, extra = wrapper.sample_trajectories_from_data_with_vlm_rollout(
+        wrapper_inputs,
+        top_p=args.top_p,
+        top_k=None if args.top_k <= 0 else int(args.top_k),
+        temperature=args.temperature,
+        num_traj_samples=1,
+        num_traj_sets=1,
+        return_extra=True,
+        max_generation_length=args.max_reasoning_tokens,
     )
-
     stop_token_id = int(processor.tokenizer.convert_tokens_to_ids(TRAJ_FUTURE_START_TOKEN))
     if stop_token_id < 0:
         raise RuntimeError("Tokenizer is missing canonical `<|traj_future_start|>`.")
-    generation_outputs, reasoning_token_ids, prompt_attention_mask, stop_positions = generate_reasoning_handoff(
-        model=model,
-        tokenizer=processor.tokenizer,
-        prompt_inputs=prompt_inputs,
-        traj_registry=registry,
-        stop_token_id=stop_token_id,
-        max_new_tokens=args.max_reasoning_tokens,
-        temperature=args.temperature,
-        top_p=args.top_p,
-        top_k=args.top_k,
-    )
-    decoded_reasoning_ids = reasoning_token_ids[0, : int(stop_positions[0].item())].detach().cpu().tolist()
-    cot_end_token_id = int(processor.tokenizer.convert_tokens_to_ids(COT_END_TOKEN))
-    if decoded_reasoning_ids and decoded_reasoning_ids[-1] == cot_end_token_id:
-        decoded_reasoning_ids = decoded_reasoning_ids[:-1]
-    reasoning_text = processor.tokenizer.decode(
-        decoded_reasoning_ids,
-        skip_special_tokens=False,
-    )
+    reasoning_text = str(extra["cot"][0, 0, 0])
 
-    prompt_cache = generation_outputs.past_key_values
-
-    expert, expert_checkpoint = load_action_expert_from_checkpoint(args.stage1b_checkpoint, device)
-    if "stage1b_metadata" not in expert_checkpoint or not isinstance(
-        expert_checkpoint["stage1b_metadata"], dict
-    ):
-        raise RuntimeError("Stage 1B checkpoint is missing canonical `stage1b_metadata`.")
-    stage1b_metadata = expert_checkpoint["stage1b_metadata"]
-    if "dt" not in stage1b_metadata:
-        raise RuntimeError("Stage 1B checkpoint metadata is missing canonical `dt`.")
-    diffusion = FlowMatchingDiffusion(n_steps=args.flow_steps)
-    if "action_space_cfg" not in stage1b_metadata or not isinstance(
-        stage1b_metadata["action_space_cfg"], dict
-    ):
-        raise RuntimeError("Stage 1B checkpoint metadata is missing canonical `action_space_cfg`.")
-    action_space_cfg = dict(stage1b_metadata["action_space_cfg"])
-    action_space_cfg.pop("_target_", None)
-    action_space = UnicycleAccelCurvatureActionSpace(**action_space_cfg)
-    pred_action = diffusion.sample(
-        expert=expert,
-        prompt_cache=prompt_cache,
-        prompt_attention_mask=prompt_attention_mask,
-    ).reshape(1, -1, 2)
     history_xyz, history_rot = canonicalize_history_batch_for_action_space(
         batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
         batch["ego_history_rot"].to(device=device, dtype=torch.float32),
     )
-    pred_xyz, pred_rot = action_space.action_to_traj(
+    pred_action = wrapper.action_space.traj_to_action(
         traj_history_xyz=history_xyz,
         traj_history_rot=history_rot,
-        action=pred_action,
+        traj_future_xyz=pred_xyz[:, 0, 0],
+        traj_future_rot=pred_rot[:, 0, 0],
     )
-    pred_xyz, pred_rot = canonicalize_future_batch_from_action_space(pred_xyz, pred_rot)
-    pred_waypoints = pred_xyz[0, :, :2].detach().cpu()
+    pred_waypoints = pred_xyz[0, 0, 0, :, :2].detach().cpu()
     gt_waypoints = sample["gt_waypoints"].to(dtype=torch.float32)
     errors = torch.norm(pred_waypoints - gt_waypoints, dim=1)
 
@@ -342,20 +494,20 @@ def main() -> None:
         "sample_jsonl": str(Path(args.sample_jsonl).resolve()),
         "sample_index": int(args.sample_index),
         "sample_id": sample["sample_id"],
-        "prompt_style": "alpamayo_like_reasoning_handoff",
+        "prompt_style": "alpamayo_r1_wrapper",
         "reasoning": {
             "text": reasoning_text,
-            "token_ids": reasoning_token_ids[0].detach().cpu().tolist(),
+            "token_ids": None,
             "stop_token_id": stop_token_id,
             "temperature": args.temperature,
             "top_p": args.top_p,
             "top_k": args.top_k,
         },
         "prediction": {
-            "action": pred_action[0].detach().cpu().tolist(),
+            "action": pred_action[0].reshape(-1).detach().cpu().tolist(),
             "waypoints": pred_waypoints.tolist(),
-            "traj_xyz": pred_xyz[0].detach().cpu().tolist(),
-            "traj_rot": pred_rot[0].detach().cpu().tolist(),
+            "traj_xyz": pred_xyz[0, 0, 0].detach().cpu().tolist(),
+            "traj_rot": pred_rot[0, 0, 0].detach().cpu().tolist(),
         },
         "ground_truth": {
             "waypoints": gt_waypoints.tolist(),
