@@ -246,10 +246,6 @@ class Stage1ActionExpert(nn.Module):
         noisy_action = noisy_action.reshape(batch_size, self.k, self.action_dims[-1])
         future_token_embeds = self.action_in_proj(noisy_action, t)
         expert_dtype = next(self.expert.parameters()).dtype
-        future_token_embeds = future_token_embeds.to(
-            device=prompt_attention_mask.device,
-            dtype=expert_dtype,
-        )
 
         expert_prompt_cache = clone_prompt_cache_for_expert(prompt_cache, self.expert_num_layers)
         prefill_seq_len = prompt_cache_seq_length(
@@ -278,7 +274,6 @@ class Stage1ActionExpert(nn.Module):
         if hasattr(expert_prompt_cache, "crop"):
             expert_prompt_cache.crop(prefill_seq_len)
         last_hidden = expert_out.last_hidden_state[:, -self.k :]
-        last_hidden = last_hidden.to(dtype=self.action_out_proj.weight.dtype)
         pred = self.action_out_proj(last_hidden).reshape(batch_size, self.action_dim)
         return pred
 

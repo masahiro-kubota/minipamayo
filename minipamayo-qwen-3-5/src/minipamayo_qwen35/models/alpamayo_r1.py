@@ -267,7 +267,6 @@ class AlpamayoR1(ReasoningVLA):
             future_token_embeds = self.action_in_proj(x, t)
             if future_token_embeds.dim() == 2:
                 future_token_embeds = future_token_embeds.view(b_star, n_diffusion_tokens, -1)
-            future_token_embeds = future_token_embeds.to(dtype=self.expert.dtype)
 
             # Run expert with cached prefill, only on the future tokens
             expert_out_base = self.expert(
@@ -283,7 +282,6 @@ class AlpamayoR1(ReasoningVLA):
                 prompt_cache.crop(prefill_seq_len)
             last_hidden = expert_out_base.last_hidden_state  # (b*, Tf, hidden_size)
             last_hidden = last_hidden[:, -n_diffusion_tokens:]
-            last_hidden = last_hidden.to(dtype=self.action_out_proj.weight.dtype)
             pred = self.action_out_proj(last_hidden).view(
                 -1, *self.action_space.get_action_space_dims()
             )  # (b*, Tf, C_action) -> noise/vector field
