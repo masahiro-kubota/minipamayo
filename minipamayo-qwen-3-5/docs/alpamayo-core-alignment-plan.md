@@ -94,6 +94,7 @@
 - `action_in_proj.py`
 - `token_utils.py`
 - `delta_tokenizer.py`
+- `base_model.py`
 は top-level `models/` に移植済み。
 - `stage1B` の action projection は `models/action_in_proj.py` を参照する。
 - `stage2` inference の `StopAfterEOS` は `models/token_utils.py` を参照する。
