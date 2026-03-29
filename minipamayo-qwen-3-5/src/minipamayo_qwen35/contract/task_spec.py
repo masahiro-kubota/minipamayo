@@ -39,12 +39,6 @@ def _canonical_action_space_cfg_from_record(record: dict) -> dict[str, Any]:
     }
 
 
-def _build_canonical_action_space(action_space_cfg: dict[str, Any]) -> UnicycleAccelCurvatureActionSpace:
-    cfg = dict(action_space_cfg)
-    cfg.pop("_target_", None)
-    return UnicycleAccelCurvatureActionSpace(**cfg)
-
-
 def iter_stage1_records(dataset) -> list[dict]:
     if isinstance(dataset, Subset):
         base_dataset = dataset.dataset
@@ -182,7 +176,7 @@ class CanonicalStage1Spec(Stage1TaskSpec):
             raise RuntimeError("Stage 1 train dataset is empty; cannot build the canonical quantizer.")
         action_space_cfg = _canonical_action_space_cfg_from_record(records[0])
         return DiscreteTrajectoryTokenizer(
-            action_space=_build_canonical_action_space(action_space_cfg),
+            action_space_cfg=action_space_cfg,
             dims_min=list(self.dims_min),
             dims_max=list(self.dims_max),
             num_bins=self.num_bins,
@@ -201,9 +195,8 @@ class CanonicalStage1Spec(Stage1TaskSpec):
             raise RuntimeError(
                 "Canonical Stage 1 checkpoint is missing quantizer metadata:\n" + "\n".join(missing_keys)
             )
-        action_space_cfg = dict(quantizer_payload["action_space_cfg"])
         return DiscreteTrajectoryTokenizer(
-            action_space=_build_canonical_action_space(action_space_cfg),
+            action_space_cfg=dict(quantizer_payload["action_space_cfg"]),
             dims_min=list(quantizer_payload["dims_min"]),
             dims_max=list(quantizer_payload["dims_max"]),
             num_bins=int(quantizer_payload["num_bins"]),

@@ -15,6 +15,7 @@
 
 from typing import Any
 
+import hydra.utils as hyu
 import torch
 
 from minipamayo_qwen35.action_space.action_space import ActionSpace
@@ -25,14 +26,14 @@ class DiscreteTrajectoryTokenizer:
 
     def __init__(
         self,
-        action_space: ActionSpace,
+        action_space_cfg: dict[str, Any],
         dims_min: list[float],
         dims_max: list[float],
         num_bins: int,
         **kwargs: Any,
     ) -> None:
         """Initializes the tokenizer."""
-        self.action_space: ActionSpace = action_space
+        self.action_space: ActionSpace = hyu.instantiate(action_space_cfg)
         assert len(dims_min) == len(dims_max) == self.action_space.get_action_space_dims()[-1]
         self.dims_min = dims_min
         self.dims_max = dims_max
