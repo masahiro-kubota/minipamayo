@@ -2,6 +2,18 @@
 
 `stage2` は `stage1a` / `stage1b` と比べると、共通責務が `train` / `eval` / `inference` に散っています。
 
+## 実装状況
+
+2026-03-30 時点で、次までは実装済みです。
+
+- `cli.py`, `dataset.py`, `runtime.py`, `bundle.py` を shared layer として追加
+- `wrapper.py` を assembly 専用に縮小
+- entrypoint を `train.py`, `eval.py`, `inference.py` に flatten
+- 旧 `train/`, `eval/`, `inference/` package と `canonical.py` / `runner.py` / `__main__.py` を削除
+- `test_inference.py` の import を flat surface に合わせて更新
+
+以下は、この状態に至るまでの整理方針と、まだ追加抽出していない論点をまとめたものです。
+
 現状の主な問題は次です。
 
 - `config-json` の解決ロジックが `train/runner.py`, `eval/runner.py`, `inference/runner.py` に重複している
@@ -22,8 +34,94 @@
 - metadata / checkpoint schema は canonical に固定する
 - 学習・評価・推論の差分だけを各 entrypoint に残す
 - 新しい shared module を作る前に、まず `stage1` 側の既存 shared module を再利用する
+- `minipamayo_qwen35` top-level の source-of-truth 層は source of truth とみなし、`stage2` 配下では再実装しない
 
 重要なのは、`stage2` を細かい utility 群に分割しすぎないことです。`stage1a` / `stage1b` と同じく、まずは「責務単位の中くらいのモジュール」に寄せるのが良いです。
+
+## 最優先の原則: top-level source-of-truth 層を再実装しない
+
+`stage2` の整理でいちばん重要なのは、`minipamayo_qwen35` top-level にある source-of-truth 層を `stage2` 配下で再実装しないことです。
+
+この source-of-truth 層は、docs の [alpamayo-core-alignment-plan.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/alpamayo-core-alignment-plan.md) を基準に、次の 2 群に分けて扱います。
+
+### A. pure / near-pure Alpamayo mirror
+
+- `config.py`
+- `helper.py`
+- `test_inference.py`
+- `action_space/`
+- `diffusion/`
+- `geometry/`
+- `models/`
+
+特に `alpamayo-core-alignment-plan.md` では、最終的に top-level の shared core を
+
+- `action_space/`
+- `diffusion/`
+- `models/`
+- `geometry/`
+
+に揃えることを明示しています。
+
+また、`config.py`, `helper.py`, `test_inference.py` も Alpamayo 側との比較対象として管理されています。
+
+### B. top-level に置く repo 固有 shared utility
+
+これらは pure mirror ではありませんが、`stage2` 配下で再実装してよいという意味ではありません。
+
+- `contract/record_adapter.py`
+- `models/expert_cache_utils.py`
+- `contract/`
+- `reasoning/`
+- `utils/`
+
+少なくとも `contract/record_adapter.py` と `models/expert_cache_utils.py` は、`alpamayo-core-alignment-plan.md` で「top-level shared utility / repo 固有差分」として明示されています。
+
+`stage2` が持つべき責務は、これら top-level source-of-truth を組み合わせる adapter / orchestration だけです。
+
+逆に、次を `stage2` ディレクトリ内で新規再実装するのは避けるべきです。
+
+- Alpamayo wrapper の core config / core model
+- special token 定義や token utility
+- prompt / sequence / trajectory / history の contract
+- action space や diffusion の基盤
+- processor / device helper
+- reasoning text 生成の基盤
+- path resolution, image budget, preflight, run metadata などの汎用 utility
+
+## top-level source of truth の分類
+
+リファクタ中は、次の責務の source of truth を明示的に固定します。
+
+| 責務 | source of truth | `stage2` 側の扱い |
+| --- | --- | --- |
+| Alpamayo wrapper config | `config.py` | 参照のみ。再定義しない |
+| Alpamayo wrapper / base model | `models/alpamayo_r1.py`, `models/base_model.py` | 参照のみ。`stage2/wrapper.py` は assembly のみ |
+| token 停止条件など | `models/token_utils.py` | 参照のみ |
+| Alpamayo shared core | `action_space/`, `diffusion/`, `geometry/`, `models/` | 参照のみ |
+| prompt / token / layout contract | `contract/` | repo-level shared utility として参照のみ。`stage2` は task-specific wiring のみ |
+| action space | `action_space/` | 参照のみ |
+| diffusion core | `diffusion/` | 参照のみ |
+| reasoning text 生成 | `reasoning/` | repo-level shared utility として preprocess から参照のみ |
+| processor / device helper | `helper.py` | 参照のみ |
+| JSON/path/image/preflight metadata utility | `utils/` | repo-level shared utility として参照のみ |
+| JSONL record adapter | `contract/record_adapter.py` | top-level shared utility として参照のみ |
+| expert cache shim | `models/expert_cache_utils.py` | top-level shared utility として参照のみ |
+
+## `stage2` に残してよい実装
+
+`stage2` 配下に残してよいのは、top-level source-of-truth 層を task-specific に束ねるコードだけです。
+
+具体的には次です。
+
+- Stage 2 の teacher-forced batch 準備
+- Stage 2 固有の weighted loss
+- Stage 2 固有の handoff probe
+- Stage 2 checkpoint と Stage 1A / Stage 1B checkpoint を束ねる bundle
+- Stage 2 inference の sample I/O
+- Alpamayo wrapper を current checkpoint 群で組み立てる adapter
+
+つまり、`stage2` の `wrapper.py` は「AlpamayoR1 を実装する場所」ではなく、「既存の AlpamayoR1 を current artifacts に接続する場所」です。
 
 ## 目標構成
 
@@ -50,11 +148,13 @@
 - `bundle.py`
   - `stage2 inference/eval/train` が共有する復元経路
   - Stage 1A 復元は `stage1a_components` / `stage1a_conditioning` に委譲する
+  - Alpamayo core は `minipamayo_qwen35` 直下の mirror 層に委譲する
   - Stage 1A checkpoint から model / processor / token contract を再構築
   - Stage 2 checkpoint の読み込みと state_dict 適用
   - 必要に応じて Stage 1B checkpoint と wrapper の組み立て
 - `wrapper.py`
   - Alpamayo wrapper の組み立てに専念
+  - `config.py`, `helper.py`, `models/`, `contract/`, `action_space/`, `diffusion/` を使う
   - config 解析や sample I/O は持たない
 
 必要になったら第二段階で次を追加抽出する。
@@ -139,25 +239,25 @@ stage2/
 
 ### 3. 既存 import path も確認対象に含める
 
-現状は docs や補助コードが次のような path を参照しています。
+整理後に維持すべき import path は次です。
 
 - `minipamayo_qwen35.stage2.reasoning_sft.train`
 - `minipamayo_qwen35.stage2.reasoning_sft.eval`
 - `minipamayo_qwen35.stage2.reasoning_sft.inference`
-- `minipamayo_qwen35.stage2.reasoning_sft.inference.runner`
 
-特に `src/minipamayo_qwen35/test_inference.py` は `inference.runner` を直接 import しています。
+補助コード側では `src/minipamayo_qwen35/test_inference.py` も同じ PR で更新し、
 
-このため、`train.py` / `eval.py` / `inference.py` への flatten は最終形としては自然でも、最初の PR では次のどちらかが必要です。
+- `stage2/reasoning_sft/inference.py`
+- `stage2/reasoning_sft/bundle.py`
+- `stage2/reasoning_sft/dataset.py`
 
-- 旧 path を shim で残す
-- 参照箇所を同じ PR で一括更新する
+の flat surface を直接使う構成に寄せています。
 
-結論として、flatten は第一段階の必須条件ではなく、互換性整理とセットで扱うべきです。
+結論として、flatten 自体は shared module 抽出の後段で実施し、旧 path は shim を残さず削除しています。
 
-## 最初の PR のスコープ
+## 抽出フェーズのスコープ
 
-最初の PR は、移動よりも「共通責務の抽出」を優先します。
+最初の抽出フェーズでは、移動よりも「共通責務の抽出」を優先します。この段階は完了済みです。
 
 含めるもの:
 
@@ -198,19 +298,16 @@ stage2/
 
 `stage1` と揃えるなら、最終的には `reasoning_sft/train.py`, `eval.py`, `inference.py` が自然です。
 
-ただし、現状は次の制約があります。
+shared module を先に抽出したあと、最後に flat module へ移すのが安全です。
 
-- `python -m minipamayo_qwen35.stage2.reasoning_sft.train` などの entrypoint が存在する
-- docs が `stage2/reasoning_sft/train` という現在構成を前提に書かれている
-- 一部コードが `inference.runner` を import している
+実装上は次の順で進めるのが妥当です。
 
-そのため、flatten の推奨順は次です。
-
-1. まず shared module を追加し、既存 `train/runner.py`, `eval/runner.py`, `inference/runner.py` を薄くする
-2. 互換性 shim を作るか、参照箇所を一括更新できる状態にする
+1. まず shared module を追加し、旧 `train/runner.py`, `eval/runner.py`, `inference/runner.py` を薄くする
+2. 参照箇所を同じ変更で一括更新する
 3. そのあとで `train.py`, `eval.py`, `inference.py` へ flatten する
+4. 後方互換が不要なら旧 package は削除する
 
-つまり、flatten 自体は「整理の仕上げ」であって、「最初の分割作業」ではありません。
+今回の `stage2` はこの順で flatten 済みです。
 
 ## リファクタ中の互換性ルール
 
@@ -257,17 +354,48 @@ stage2/
 着手前に埋めるべき open question は次です。
 
 - flatten を第一段階でやるか、第二段階に送るか
-  - 現時点では第二段階を推奨
+  - 解決済み。shared module 抽出後の後段で実施した
 - `stage2_metadata` builder を初手から作るか
   - 現時点では不要
 - `dataset.py` に train loader helper を寄せるか、すぐ `train_data.py` を作るか
-  - 現時点では `dataset.py` で十分
+  - 現時点では `dataset.py` で十分。まだ `train_data.py` は不要
 - `inference.runner` import を public API とみなすか
-  - 少なくとも移行期間中は壊さない前提で扱う
+  - 解決済み。public API とはみなさず、参照側を更新したうえで削除した
 
 ## Stage 1 と共通化できるところ
 
 `stage2` の整理では、`stage2` 専用モジュールを増やす前に、まず `stage1` の既存共通部品を使い回すべきです。
+
+ただし優先順位は
+
+1. `minipamayo_qwen35` top-level の pure / near-pure Alpamayo mirror
+2. `minipamayo_qwen35` top-level の repo 固有 shared utility
+3. `stage1` の shared layer
+4. それでも足りない場合だけ `stage2` 専用 shared layer
+
+です。
+
+`stage2` の中で Alpamayo mirror 相当を作り直すのが最悪で、その次に避けるべきなのが top-level shared utility や `stage1` ですでに shared 化されたものの再実装です。
+
+## mirror 層との整合で特に注意する点
+
+リファクタ時に、特に次の再実装をしないよう注意します。
+
+- `stage2/wrapper.py` の中で `AlpamayoR1Config` 互換 dataclass を新設しない
+- `stage2/wrapper.py` の中で `AlpamayoR1` 互換 class を新設しない
+- `stage2/common.py` や `runtime.py` の中で special token 定義をハードコードで複製しない
+- `stage2` の中で action space や diffusion の core class を複製しない
+- `stage2` の中で prompt builder や history token contract を別実装しない
+- `stage2` の中で generic な `to_device`, `get_processor`, `StopAfterEOS` 相当を増やさない
+- `stage2` の中で `record_adapter` や `expert_cache_utils` 相当の top-level glue を複製しない
+
+もし `stage2` 側で API が足りない場合は、まず
+
+1. pure / near-pure mirror 側に足すべきか
+2. top-level shared utility 側に足すべきか
+3. thin adapter で吸収できるか
+
+を検討します。
 
 ### まず直接再利用するもの
 
@@ -307,9 +435,10 @@ stage2/
 - Stage 2 の weighted loss / handoff probe
   - `<|cot_end|>`, `<|traj_future_start|>` を前提にしたロジックは Stage 2 固有
 - Alpamayo wrapper assembly
-  - これは Stage 2 inference 固有の都合が強いので、Stage 1 shared に押し戻さない
+  - これは Stage 2 inference 固有の都合が強いので `stage2` に置いてよい
+  - ただし assembly に限り、mirror core を再実装しない
 
-ひとことで言うと、`stage2` が `stage1` と共通化すべきなのは「足回りと復元経路」であって、「reasoning 特有のロジック」ではありません。
+ひとことで言うと、`stage2` が再利用すべきなのは、まず `minipamayo_qwen35` top-level の pure / near-pure Alpamayo mirror、その次に top-level の repo 固有 shared utility、その次に `stage1` の shared layer です。`stage2` 自身は「reasoning 特有の adapter と orchestration」だけを持つべきです。
 
 ## 推奨する責務分離
 
@@ -373,7 +502,7 @@ stage2/
 
 ## 4. Data loader はまず `dataset.py` に寄せる
 
-今の `build_dataloaders(args)` は `train/runner.py` に閉じていますが、これは少なくとも runner からは外に出すべきです。
+旧 `build_dataloaders(args)` は `train/runner.py` に閉じていましたが、これは少なくとも runner からは外に出すべきです。
 
 ただし `stage2` はまだ単一タスクなので、初手から `train_data.py` を増やす必要はありません。まずは `dataset.py` に寄せるのが妥当です。
 
@@ -492,10 +621,10 @@ runner から消すべきものは次です。
 - `python -m minipamayo_qwen35.stage2.reasoning_sft.train/eval/inference` の entrypoint が壊れていない
 - README と code structure が一致している
 
-第二段階まで含めて整理完了と言うなら、さらに次を満たす状態です。
+この `stage2` では、さらに次も満たす状態まで進めています。
 
-- 必要なら `train.py`, `eval.py`, `inference.py` への flatten が完了している
-- 旧 import path が shim か一括更新で整理されている
+- `train.py`, `eval.py`, `inference.py` への flatten が完了している
+- 旧 import path は shim を残さず一括更新で整理されている
 - `stage2_metadata` / checkpoint payload / summary payload builder を shared 化する必要が実際に生じており、その抽出が完了している
 
 ## ひとことで言うと
