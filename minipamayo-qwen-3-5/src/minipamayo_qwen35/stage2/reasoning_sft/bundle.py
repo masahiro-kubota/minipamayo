@@ -8,7 +8,6 @@ from typing import Any
 
 import torch
 
-from ...helper import get_processor
 from ...stage1.stage1a_components import load_checkpoint, load_components
 from .wrapper import build_alpamayo_wrapper
 
@@ -126,7 +125,7 @@ def load_stage2_inference_bundle(
         device=device,
         use_cache=True,
     )
-    processor = get_processor(bundle["processor"].tokenizer)
+    processor = bundle["processor"]
     stage1b_checkpoint = torch.load(
         Path(stage1b_checkpoint_path),
         map_location="cpu",
