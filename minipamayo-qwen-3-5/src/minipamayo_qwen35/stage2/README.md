@@ -2,6 +2,8 @@
 
 `stage2` は `reasoning_sft` の段階です。
 
+整理方針は [REORGANIZATION.md](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage2/REORGANIZATION.md) を参照してください。
+
 役割:
 
 - `stage1A` で入れた観測 + trajectory token 契約の上に reasoning supervision を足す
