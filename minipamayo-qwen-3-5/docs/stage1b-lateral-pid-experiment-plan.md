@@ -408,8 +408,8 @@ PID 置換で大きく悪化した場合、候補は主に 3 つ。
 - その際の初期 `target speed` は `24 km/h` 固定にする
 
 触る場所:
-- inference runner: [runner.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/expert_cfm/inference/runner.py)
-- eval runner: [runner.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/expert_cfm/eval/runner.py)
+- inference runner: [inference.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/expert_cfm/inference.py)
+- eval runner: [eval.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/expert_cfm/eval.py)
 - action rollout 側:
   [record_adapter.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/action_space/record_adapter.py)
   と

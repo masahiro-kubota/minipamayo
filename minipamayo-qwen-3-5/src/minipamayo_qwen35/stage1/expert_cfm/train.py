@@ -7,15 +7,14 @@ import copy
 from contextlib import nullcontext
 import json
 import math
-import sys
 import time
 from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader, random_split
 
-from ....stage1.dataset import Stage1JsonlDataset
-from ....stage1.vlm_ce.train import (
+from ..dataset import Stage1JsonlDataset
+from ..vlm_ce.train import (
     format_gib,
     log_gpu_preflight,
     maybe_wandb_finish,
@@ -26,30 +25,20 @@ from ....stage1.vlm_ce.train import (
     stage1_collate,
     write_run_config,
 )
-from ....utils.image_budget import (
-    CANONICAL_IMAGE_MAX_PIXELS,
-    CANONICAL_IMAGE_MIN_PIXELS,
-    validate_canonical_image_budget,
-)
-from ....utils.json_config import (
-    load_json_payload,
-    normalize_arg_config,
-    normalize_optional_string_list,
-    normalize_required_string_list,
-    resolve_path_base,
-)
-from ....utils.preflight import enforce_training_prerequisites
-from ....utils.run_metadata import (
+from ...utils.image_budget import CANONICAL_IMAGE_MAX_PIXELS, CANONICAL_IMAGE_MIN_PIXELS
+from ...utils.json_config import normalize_optional_string_list, normalize_required_string_list
+from ...utils.preflight import enforce_training_prerequisites
+from ...utils.run_metadata import (
     collect_dataset_view_fingerprint,
     collect_git_metadata,
     collect_gpu_info,
     collect_processor_settings,
 )
-from ....diffusion.action_expert import FlowMatchingDiffusion
-from ....models.action_expert import Stage1ActionExpert
-from ..common import (
-    build_stage1b_metadata,
-    compute_action_stats,
+from ...diffusion.action_expert import FlowMatchingDiffusion
+from ...models.action_expert import Stage1ActionExpert
+from .cli import parse_stage1b_json_only_args
+from .metadata import build_stage1b_metadata, compute_action_stats
+from .stage1a_bridge import (
     extract_prompt_cache,
     freeze_module,
     infer_prompt_text,
@@ -57,7 +46,6 @@ from ..common import (
     prepare_condition_inputs,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {
     "stage1_checkpoint",
     "train_jsonl",
@@ -93,13 +81,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--log-every", type=int, default=10)
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--image-min-pixels", type=int, default=CANONICAL_IMAGE_MIN_PIXELS)
-    parser.add_argument("--image-max-pixels", type=int, default=CANONICAL_IMAGE_MAX_PIXELS)
-    parser.add_argument("--decoder-hidden-size", type=int, default=0)
     parser.add_argument("--decoder-num-layers", type=int, default=6)
-    parser.add_argument("--decoder-num-attention-heads", type=int, default=0)
     parser.add_argument("--decoder-intermediate-size", type=int, default=2048)
-    parser.add_argument("--decoder-attention-dropout", type=float, default=0.0)
     parser.add_argument("--expert-non-causal-attention", type=bool, default=True)
     parser.add_argument("--num-fourier-feats", type=int, default=20)
     parser.add_argument("--fourier-max-freq", type=float, default=100.0)
@@ -111,50 +94,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _load_config_args(config_json: str, parser: argparse.ArgumentParser) -> tuple[str, dict, dict]:
-    config_path, payload = load_json_payload(config_json)
-    raw_config = payload.get("args") if isinstance(payload, dict) and "args" in payload else payload
-    if not isinstance(raw_config, dict):
-        raise RuntimeError("Config JSON must be an object or an object with an `args` object.")
-    base_dir = resolve_path_base(
-        config_path,
-        payload,
-        default_base="project_root",
-        base_dirs={
-            "project_root": PROJECT_ROOT,
-            "config_dir": config_path.parent,
-        },
-    )
-    config_args = normalize_arg_config(
-        raw_config,
-        parser,
-        exclude_dests={"help", "config_json"},
+def parse_args() -> argparse.Namespace:
+    parser = build_parser()
+    args = parse_stage1b_json_only_args(
+        parser=parser,
         path_keys=CONFIG_PATH_KEYS,
         list_keys=MULTI_VALUE_CONFIG_KEYS,
-        base_dir=base_dir,
+        json_only_error="Stage 1B training accepts only --config-json. Put all settings in the JSON file.",
     )
-    return str(config_path), payload, config_args
-
-
-def parse_args() -> argparse.Namespace:
-    if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
-        return build_parser().parse_args()
-
-    pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("--config-json", type=str, required=True)
-    pre_args, remaining = pre_parser.parse_known_args()
-    if remaining:
-        raise RuntimeError(
-            "Stage 1B training accepts only --config-json. Put all settings in the JSON file."
-        )
-
-    parser = build_parser()
-    config_path, config_payload, config_args = _load_config_args(pre_args.config_json, parser)
-    parser.set_defaults(**config_args, config_json=config_path)
-    args = parser.parse_args()
-    args.config_json = config_path
-    args.config_payload = config_payload
-    args.config_args = config_args
     args.train_jsonl = normalize_required_string_list(args.train_jsonl, key_name="train_jsonl")
     args.val_jsonl = normalize_optional_string_list(args.val_jsonl, key_name="val_jsonl")
     if not args.stage1_checkpoint:
@@ -163,13 +110,8 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`early_stopping_patience` must be >= 0.")
     if args.early_stopping_min_delta < 0:
         raise RuntimeError("`early_stopping_min_delta` must be >= 0.")
-    validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
-    if args.decoder_hidden_size < 0:
-        raise RuntimeError("`decoder_hidden_size` must be >= 0.")
     if args.decoder_num_layers <= 0:
         raise RuntimeError("`decoder_num_layers` must be > 0.")
-    if args.decoder_num_attention_heads < 0:
-        raise RuntimeError("`decoder_num_attention_heads` must be >= 0.")
     if args.decoder_intermediate_size <= 0:
         raise RuntimeError("`decoder_intermediate_size` must be > 0.")
     return args
@@ -222,25 +164,9 @@ def resolve_expert_text_config(model, args: argparse.Namespace) -> dict:
     base_num_heads = int(base_text_config["num_attention_heads"])
     base_num_layers = int(base_text_config["num_hidden_layers"])
 
-    requested_hidden_size = int(args.decoder_hidden_size)
-    requested_num_heads = int(args.decoder_num_attention_heads)
     requested_num_layers = int(args.decoder_num_layers)
     requested_intermediate_size = int(args.decoder_intermediate_size)
 
-    if requested_hidden_size not in {0, base_hidden_size}:
-        raise RuntimeError(
-            "Canonical Stage 1B expert must preserve the Stage 1A text hidden size "
-            "to remain prompt-cache compatible.\n"
-            f"stage1_hidden_size={base_hidden_size}\n"
-            f"requested_decoder_hidden_size={requested_hidden_size}"
-        )
-    if requested_num_heads not in {0, base_num_heads}:
-        raise RuntimeError(
-            "Canonical Stage 1B expert must preserve the Stage 1A attention head count "
-            "to remain prompt-cache compatible.\n"
-            f"stage1_num_attention_heads={base_num_heads}\n"
-            f"requested_decoder_num_attention_heads={requested_num_heads}"
-        )
     if requested_num_layers > base_num_layers:
         raise RuntimeError(
             "Canonical Stage 1B expert cannot use more layers than the frozen Stage 1A prompt cache.\n"
@@ -428,8 +354,8 @@ def main() -> None:
             "gpu": collect_gpu_info(device),
             "processor": collect_processor_settings(
                 processor,
-                requested_min_pixels=args.image_min_pixels,
-                requested_max_pixels=args.image_max_pixels,
+                requested_min_pixels=CANONICAL_IMAGE_MIN_PIXELS,
+                requested_max_pixels=CANONICAL_IMAGE_MAX_PIXELS,
             ),
             "train_dataset": collect_dataset_view_fingerprint(train_loader.dataset),
             "val_dataset": collect_dataset_view_fingerprint(val_loader.dataset)
@@ -621,3 +547,7 @@ def main() -> None:
         if wandb_run is not None:
             maybe_wandb_finish(wandb_run)
         release_cuda_memory()
+
+
+if __name__ == "__main__":
+    main()

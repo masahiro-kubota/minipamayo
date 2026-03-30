@@ -7,11 +7,8 @@
       "artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/curve_holdout.jsonl"
     ],
     "output_json": "artifacts/eval/stage1/expert_cfm/canonical/perimeter_cw_full_eval.json",
-    "device": "cuda",
     "batch_size": 1,
     "num_workers": 2,
-    "image_min_pixels": 163840,
-    "image_max_pixels": 196608,
     "flow_steps": 10,
     "include_pid_override": true,
     "pid_target_speed_kmh": 24.0,
