@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import torch
+import transformers.models.qwen3_5.modeling_qwen3_5 as qwen35_modeling
 
 from ...config import AlpamayoR1Config
 from ...models.alpamayo_r1 import AlpamayoR1
@@ -95,6 +96,42 @@ def _split_stage1b_state_dict(expert_state_dict: dict[str, torch.Tensor]) -> tup
             + "\n".join(unknown_unexpected)
         )
     return expert_weights, action_in_proj_weights, action_out_proj_weights
+
+
+def _coerce_torch_dtype(dtype: object) -> torch.dtype | object:
+    if not isinstance(dtype, str):
+        return dtype
+    normalized = dtype.removeprefix("torch.")
+    if hasattr(torch, normalized):
+        return getattr(torch, normalized)
+    return dtype
+
+
+def _coerce_torch_device(device: object) -> torch.device | object:
+    if isinstance(device, int):
+        return torch.device("cuda", device)
+    if isinstance(device, str):
+        return torch.device(device)
+    return device
+
+
+def _install_qwen35_fused_norm_gate_compat() -> None:
+    original_cls = getattr(qwen35_modeling, "FusedRMSNormGated", None)
+    if original_cls is None:
+        return
+    if getattr(original_cls, "__name__", "") == "_Stage2CompatFusedRMSNormGated":
+        return
+
+    class _Stage2CompatFusedRMSNormGated(original_cls):
+        def __init__(self, *args, device=None, dtype=None, **kwargs):
+            super().__init__(
+                *args,
+                device=_coerce_torch_device(device),
+                dtype=_coerce_torch_dtype(dtype),
+                **kwargs,
+            )
+
+    qwen35_modeling.FusedRMSNormGated = _Stage2CompatFusedRMSNormGated
 
 
 def _patch_wrapper_token_contract(
@@ -243,6 +280,7 @@ def build_alpamayo_wrapper(
         keep_same_dtype=bool(expert_config["keep_same_dtype"]),
         expert_non_causal_attention=bool(expert_config["expert_non_causal_attention"]),
     )
+    _install_qwen35_fused_norm_gate_compat()
     wrapper = AlpamayoR1(
         wrapper_config,
         pretrained_modules={"vlm": stage1_model, "traj_tokenizer": quantizer},
