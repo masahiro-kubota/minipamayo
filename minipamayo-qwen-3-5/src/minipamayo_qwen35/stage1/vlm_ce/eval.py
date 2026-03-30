@@ -11,65 +11,41 @@ from __future__ import annotations
 
 import argparse
 import base64
-import copy
 import json
-import sys
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import torch
 from mcap.well_known import MessageEncoding, SchemaEncoding
 from mcap.writer import CompressionType, Writer
-from PIL import Image
 from torch.utils.data import DataLoader
-from transformers import (
-    AutoModelForImageTextToText,
-    AutoProcessor,
-    LogitsProcessor,
-    LogitsProcessorList,
-)
+from PIL import Image
 
-from ....utils.image_budget import (
+from ...utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
-from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
-from ....utils.preflight import enforce_runtime_prerequisites
-from ....utils.run_metadata import (
+from ...utils.preflight import enforce_runtime_prerequisites
+from ...utils.run_metadata import (
     collect_dataset_view_fingerprint,
     collect_git_metadata,
     collect_gpu_info,
     collect_processor_settings,
 )
-from ...checkpoint_completion import require_completed_training_run
-from ....contract.task_spec import CanonicalStage1Spec, Stage1TaskSpec
-from ...dataset import Stage1JsonlDataset
-from ....contract.record_adapter import rollout_waypoints_from_action_tensor
-from ....contract.prompt import (
-    add_prompt_special_tokens,
-    build_multimodal_messages,
-    build_stage1_question_user_text,
-)
-from ....contract.history_tokens import HistoryTokenRegistry, HistoryTrajectoryQuantizer
-from ....contract.trajectory_tokens import Stage1TokenRegistry
-from ....helper import to_device
-from ...dataset import stage1_collate
-from ..train import (
-    CHECKPOINT_KIND_FULL,
-    CHECKPOINT_KIND_MODEL_ONLY,
-    build_full_inputs_from_prompt_inputs,
-    build_processor_kwargs,
-    build_model_load_kwargs,
-    compute_token_accuracy,
+from ..checkpoint_completion import require_completed_training_run
+from ...contract.task_spec import CanonicalStage1Spec, Stage1TaskSpec
+from ..dataset import Stage1JsonlDataset, stage1_collate
+from .cli import parse_config_json_only_args
+from .generation import greedy_generate_action_tokens
+from .metrics import require_record_field
+from .runtime import (
     format_gib,
-    inject_history_inputs_embeds,
-    load_checkpoint,
-    model_forward_inputs,
+    load_stage1a_runtime,
+    run_stage1a_rollout_batch,
+    run_stage1a_teacher_forced_batch,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {
     "checkpoint",
     "test_jsonl",
@@ -95,250 +71,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _load_config_args(config_json: str, parser: argparse.ArgumentParser) -> tuple[str, dict, dict]:
-    config_path, payload = load_json_payload(config_json)
-    raw_config = payload.get("args") if isinstance(payload, dict) and "args" in payload else payload
-    if not isinstance(raw_config, dict):
-        raise RuntimeError("Config JSON must be an object or an object with an `args` object.")
-
-    base_dir = resolve_path_base(
-        config_path,
-        payload,
-        default_base="project_root",
-        base_dirs={
-            "project_root": PROJECT_ROOT,
-            "config_dir": config_path.parent,
-        },
-    )
-    config_args = normalize_arg_config(
-        raw_config,
-        parser,
-        exclude_dests={"help", "config_json"},
-        path_keys=CONFIG_PATH_KEYS,
-        base_dir=base_dir,
-    )
-    return str(config_path), payload, config_args
-
-
 def parse_args() -> argparse.Namespace:
-    if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
-        return build_parser().parse_args()
-
-    pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("--config-json", type=str, required=True)
-    pre_args, remaining = pre_parser.parse_known_args()
-    if remaining:
-        raise RuntimeError(
-            "Stage 1 evaluation accepts only --config-json. Put all settings in the JSON file."
-        )
-
     parser = build_parser()
-    config_path, config_payload, config_args = _load_config_args(pre_args.config_json, parser)
-    parser.set_defaults(**config_args, config_json=config_path)
-    args = parser.parse_args()
-    args.config_json = config_path
-    args.config_payload = config_payload
-    args.config_args = config_args
+    args = parse_config_json_only_args(
+        parser,
+        path_keys=CONFIG_PATH_KEYS,
+        error_message="Stage 1 evaluation accepts only --config-json. Put all settings in the JSON file.",
+    )
     if not args.checkpoint:
         raise RuntimeError("`checkpoint` must be defined in the config JSON.")
     if not args.test_jsonl:
         raise RuntimeError("`test_jsonl` must be defined in the config JSON.")
     validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
     return args
-
-
-def resolve_checkpoint_args(checkpoint: dict) -> dict:
-    if "checkpoint_kind" not in checkpoint:
-        raise RuntimeError("Checkpoint is missing canonical `checkpoint_kind`.")
-    checkpoint_kind = checkpoint["checkpoint_kind"]
-    if checkpoint_kind not in {CHECKPOINT_KIND_FULL, CHECKPOINT_KIND_MODEL_ONLY}:
-        raise RuntimeError(f"Unsupported checkpoint_kind: {checkpoint_kind!r}")
-    if "args" not in checkpoint:
-        raise RuntimeError("Checkpoint is missing canonical `args` metadata.")
-    checkpoint_args = checkpoint["args"]
-    if not isinstance(checkpoint_args, dict):
-        raise RuntimeError("Checkpoint is missing canonical `args` metadata.")
-    required_keys = ["model_path", "dtype"]
-    missing_keys = [key for key in required_keys if key not in checkpoint_args]
-    if missing_keys:
-        raise RuntimeError(
-            "Checkpoint is missing canonical `args` fields:\n" + "\n".join(missing_keys)
-        )
-    return checkpoint_args
-
-
-def resolve_processor_path(checkpoint_path: Path) -> str:
-    saved_processor = checkpoint_path.parent / "processor"
-    if not saved_processor.exists():
-        raise RuntimeError(
-            f"Checkpoint is missing the canonical saved processor directory: {saved_processor}"
-        )
-    return str(saved_processor)
-
-
-def resolve_dtype(dtype_name: str) -> torch.dtype:
-    if dtype_name == "fp16":
-        return torch.float16
-    return torch.bfloat16
-
-
-def prepare_alpamayo_prompt_inputs_with_history(
-    *,
-    model,
-    batch: dict,
-    processor,
-    history_registry: HistoryTokenRegistry,
-    history_quantizer: HistoryTrajectoryQuantizer,
-    question: str,
-    history_token_count: int,
-    device: torch.device,
-) -> dict:
-    user_text = build_stage1_question_user_text(question, history_token_count)
-    message_batch: list[list[dict]] = []
-    for image_path in batch["image_path"]:
-        with Image.open(image_path) as raw_image:
-            image = raw_image.convert("RGB")
-            frame_tensor = torch.from_numpy(np.array(image, copy=True)).permute(2, 0, 1).unsqueeze(0)
-        message_batch.append(build_multimodal_messages(frames=frame_tensor, user_text=user_text))
-    prompt_inputs = processor.apply_chat_template(
-        message_batch,
-        tokenize=True,
-        add_generation_prompt=True,
-        return_dict=True,
-        return_tensors="pt",
-    )
-    prompt_inputs = to_device(prompt_inputs, device=device)
-    return inject_history_inputs_embeds(
-        model=model,
-        prompt_inputs=prompt_inputs,
-        history_registry=history_registry,
-        history_quantizer=history_quantizer,
-        history_xyz=batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
-        history_rot=batch["ego_history_rot"].to(device=device, dtype=torch.float32),
-    )
-
-
-def load_components(
-    args: argparse.Namespace,
-    task_spec: Stage1TaskSpec | None = None,
-) -> tuple[
-    dict,
-    object,
-    object,
-    Stage1TokenRegistry,
-    HistoryTokenRegistry,
-    HistoryTrajectoryQuantizer,
-    Any,
-    torch.dtype,
-]:
-    task_spec = task_spec or CanonicalStage1Spec()
-    checkpoint_path = Path(args.checkpoint)
-    checkpoint = load_checkpoint(checkpoint_path)
-    checkpoint_args = resolve_checkpoint_args(checkpoint)
-    if "stage1_metadata" not in checkpoint or not isinstance(checkpoint["stage1_metadata"], dict):
-        raise RuntimeError("Checkpoint is missing canonical `stage1_metadata`.")
-    task_spec.validate_checkpoint(checkpoint["stage1_metadata"])
-    model_path = str(checkpoint_args["model_path"])
-    processor_path = resolve_processor_path(checkpoint_path)
-    model_dtype = resolve_dtype(str(checkpoint_args["dtype"]))
-    processor_kwargs = build_processor_kwargs(args.image_min_pixels, args.image_max_pixels)
-    processor = AutoProcessor.from_pretrained(
-        processor_path, trust_remote_code=True, **processor_kwargs
-    )
-    add_prompt_special_tokens(processor.tokenizer)
-
-    if "history_registry" not in checkpoint or not isinstance(checkpoint["history_registry"], dict):
-        raise RuntimeError("Checkpoint is missing canonical `history_registry` metadata.")
-    history_cfg = checkpoint["history_registry"]
-    token_cfg = checkpoint["token_registry"]
-    required_token_cfg_keys = ["n_bins", "token_prefix", "start_index"]
-    missing_token_cfg_keys = [key for key in required_token_cfg_keys if key not in token_cfg]
-    if missing_token_cfg_keys:
-        raise RuntimeError(
-            "Checkpoint token_registry is missing canonical fields:\n"
-            + "\n".join(missing_token_cfg_keys)
-        )
-    required_history_cfg_keys = ["n_bins", "token_prefix", "start_index"]
-    missing_history_cfg_keys = [key for key in required_history_cfg_keys if key not in history_cfg]
-    if missing_history_cfg_keys:
-        raise RuntimeError(
-            "Checkpoint history_registry is missing canonical fields:\n"
-            + "\n".join(missing_history_cfg_keys)
-        )
-    registry = Stage1TokenRegistry(
-        n_bins=int(token_cfg["n_bins"]),
-        token_prefix=str(token_cfg["token_prefix"]),
-        start_index=int(token_cfg["start_index"]),
-    )
-    registry.add_to_tokenizer(processor.tokenizer)
-    history_registry = HistoryTokenRegistry(
-        n_bins=int(history_cfg["n_bins"]),
-        token_prefix=str(history_cfg["token_prefix"]),
-        start_index=int(history_cfg["start_index"]),
-    )
-    history_registry.add_to_tokenizer(processor.tokenizer)
-
-    if "history_quantizer" not in checkpoint or not isinstance(
-        checkpoint["history_quantizer"], dict
-    ):
-        raise RuntimeError("Checkpoint is missing canonical `history_quantizer` metadata.")
-    history_quantizer_cfg = checkpoint["history_quantizer"]
-    required_history_quantizer_keys = [
-        "history_steps",
-        "n_bins",
-        "x_range",
-        "y_range",
-        "z_range",
-        "yaw_range",
-        "quantization_mode",
-    ]
-    missing_history_quantizer_keys = [
-        key for key in required_history_quantizer_keys if key not in history_quantizer_cfg
-    ]
-    if missing_history_quantizer_keys:
-        raise RuntimeError(
-            "Checkpoint history_quantizer is missing canonical fields:\n"
-            + "\n".join(missing_history_quantizer_keys)
-        )
-    history_quantizer = HistoryTrajectoryQuantizer(
-        history_steps=int(history_quantizer_cfg["history_steps"]),
-        n_bins=int(history_quantizer_cfg["n_bins"]),
-        x_range=tuple(history_quantizer_cfg["x_range"]),
-        y_range=tuple(history_quantizer_cfg["y_range"]),
-        z_range=tuple(history_quantizer_cfg["z_range"]),
-        yaw_range=(
-            tuple(history_quantizer_cfg["yaw_range"])
-            if history_quantizer_cfg["yaw_range"] is not None
-            else None
-        ),
-        quantization_mode=str(history_quantizer_cfg["quantization_mode"]),
-    )
-
-    if "quantizer" not in checkpoint or not isinstance(checkpoint["quantizer"], dict):
-        raise RuntimeError("Checkpoint is missing canonical `quantizer` metadata.")
-    quantizer = task_spec.quantizer_from_checkpoint(
-        checkpoint["quantizer"],
-        stage1_metadata=checkpoint["stage1_metadata"],
-    )
-
-    model = AutoModelForImageTextToText.from_pretrained(
-        model_path,
-        **build_model_load_kwargs(model_dtype),
-    )
-    model.resize_token_embeddings(len(processor.tokenizer))
-    model.load_state_dict(checkpoint["model_state_dict"])
-    model.config.use_cache = True
-    model.eval()
-    return (
-        checkpoint,
-        model,
-        processor,
-        registry,
-        history_registry,
-        history_quantizer,
-        quantizer,
-        model_dtype,
-    )
 
 
 def require_checkpoint_run_metadata(checkpoint: dict) -> dict:
@@ -875,67 +620,6 @@ def write_json_message(
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
     )
 
-
-class ActionTokenLogitsProcessor(LogitsProcessor):
-    def __init__(self, allowed_token_ids: list[int]):
-        self.allowed_token_ids = tuple(int(token_id) for token_id in allowed_token_ids)
-
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
-        del input_ids
-        allowed_token_ids = torch.tensor(
-            self.allowed_token_ids,
-            device=scores.device,
-            dtype=torch.long,
-        )
-        masked_scores = torch.full_like(scores, torch.finfo(scores.dtype).min)
-        masked_scores.index_copy_(1, allowed_token_ids, scores.index_select(1, allowed_token_ids))
-        return masked_scores
-
-
-@torch.no_grad()
-def greedy_generate_action_tokens(
-    model,
-    prompt_inputs: dict,
-    registry: Stage1TokenRegistry,
-    action_len: int,
-    model_dtype: torch.dtype,
-) -> torch.Tensor:
-    generation_config = copy.deepcopy(model.generation_config)
-    generation_config.do_sample = False
-    generation_config.num_return_sequences = 1
-    generation_config.max_new_tokens = int(action_len)
-    generation_config.min_new_tokens = int(action_len)
-    generation_config.return_dict_in_generate = True
-    pad_token_id = generation_config.pad_token_id
-    if pad_token_id is None:
-        pad_token_id = getattr(model.config, "pad_token_id", None)
-    if pad_token_id is None:
-        eos_token_id = generation_config.eos_token_id
-        if isinstance(eos_token_id, list):
-            pad_token_id = int(eos_token_id[0]) if eos_token_id else None
-        elif eos_token_id is not None:
-            pad_token_id = int(eos_token_id)
-    if pad_token_id is None:
-        raise RuntimeError("Stage 1 greedy generation requires `pad_token_id` or `eos_token_id`.")
-    generation_config.pad_token_id = int(pad_token_id)
-    logits_processor = LogitsProcessorList([ActionTokenLogitsProcessor(list(registry.token_ids))])
-    prompt_len = int(prompt_inputs["input_ids"].shape[1])
-    with torch.autocast("cuda", dtype=model_dtype):
-        outputs = model.generate(
-            **prompt_inputs,
-            generation_config=generation_config,
-            logits_processor=logits_processor,
-        )
-    generated_ids = outputs.sequences[:, prompt_len:]
-    if generated_ids.shape[1] != int(action_len):
-        raise RuntimeError(
-            "Stage 1 greedy generation returned an unexpected number of action tokens.\n"
-            f"expected_action_len={int(action_len)}\n"
-            f"generated_shape={tuple(generated_ids.shape)!r}"
-        )
-    return generated_ids
-
-
 def main(task_spec: Stage1TaskSpec | None = None) -> None:
     task_spec = task_spec or CanonicalStage1Spec()
     args = parse_args()
@@ -954,20 +638,10 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
     git_metadata = collect_git_metadata(Path(__file__).resolve().parent)
     gpu_info = collect_gpu_info(device)
 
-    (
-        checkpoint,
-        model,
-        processor,
-        registry,
-        history_registry,
-        history_quantizer,
-        quantizer,
-        model_dtype,
-    ) = load_components(args, task_spec)
-    checkpoint_run_metadata = require_checkpoint_run_metadata(checkpoint)
-    model.to(device)
+    runtime = load_stage1a_runtime(args, task_spec, device=device)
+    checkpoint_run_metadata = require_checkpoint_run_metadata(runtime.checkpoint)
     processor_settings = collect_processor_settings(
-        processor,
+        runtime.processor,
         requested_min_pixels=args.image_min_pixels or None,
         requested_max_pixels=args.image_max_pixels or None,
     )
@@ -986,34 +660,11 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
         collate_fn=stage1_collate,
     )
 
-    if "stage1_metadata" not in checkpoint:
-        raise RuntimeError("Checkpoint is missing canonical `stage1_metadata`.")
-    stage1_metadata = checkpoint["stage1_metadata"]
-    if not isinstance(stage1_metadata, dict):
-        raise RuntimeError("Checkpoint is missing canonical `stage1_metadata`.")
-    task_spec.validate_checkpoint(stage1_metadata)
-    required_stage1_keys = [
-        "question",
-        "target_dim",
-        "full_action_dim",
-        "k",
-        "dt",
-        "history_steps",
-        "history_token_count",
-        "action_representation",
-        "rollout_accel_source",
-    ]
-    missing_stage1_keys = [key for key in required_stage1_keys if key not in stage1_metadata]
-    if missing_stage1_keys:
-        raise RuntimeError(
-            "Checkpoint is missing canonical Stage 1 metadata:\n" + "\n".join(missing_stage1_keys)
-        )
-    question = str(stage1_metadata["question"])
-    history_token_count = int(stage1_metadata["history_token_count"])
-    target_dim = int(stage1_metadata["target_dim"])
-    full_action_dim = int(stage1_metadata["full_action_dim"])
-    k_steps = int(stage1_metadata["k"])
-    dt = float(stage1_metadata["dt"])
+    stage1_metadata = runtime.stage1_metadata
+    target_dim = runtime.target_dim
+    full_action_dim = runtime.full_action_dim
+    k_steps = runtime.k_steps
+    dt = runtime.dt
     episode_id = infer_episode_id(extract_summary)
     episode_metadata = {
         "episode_id": episode_id,
@@ -1067,7 +718,7 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                 "dt": dt,
                 "history_steps": int(stage1_metadata["history_steps"]),
                 "history_token_count": int(stage1_metadata["history_token_count"]),
-                "dtype": "bf16" if model_dtype == torch.bfloat16 else "fp16",
+                "dtype": "bf16" if runtime.model_dtype == torch.bfloat16 else "fp16",
                 "image_min_pixels": args.image_min_pixels or None,
                 "image_max_pixels": args.image_max_pixels or None,
                 "processor_settings": processor_settings,
@@ -1099,29 +750,17 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
         with torch.no_grad():
             sample_index = 0
             for batch in loader:
-                prompt_inputs = prepare_alpamayo_prompt_inputs_with_history(
-                    model=model,
-                    batch=batch,
-                    processor=processor,
-                    history_registry=history_registry,
-                    history_quantizer=history_quantizer,
-                    question=question,
-                    history_token_count=history_token_count,
+                teacher_forced = run_stage1a_teacher_forced_batch(
+                    runtime,
+                    batch,
                     device=device,
+                    prompt_mode="alpamayo_message_rollout",
                 )
-                full_inputs, labels = build_full_inputs_from_prompt_inputs(
-                    model=model,
-                    prompt_inputs=prompt_inputs,
-                    batch=batch,
-                    registry=registry,
-                    quantizer=quantizer,
-                    task_spec=task_spec,
-                    device=device,
-                )
-                with torch.autocast("cuda", dtype=model_dtype):
-                    outputs = model(**model_forward_inputs(full_inputs), labels=labels)
-
-                correct, total = compute_token_accuracy(outputs.logits, labels)
+                rollout = run_stage1a_rollout_batch(runtime, batch, device=device)
+                outputs = teacher_forced["outputs"]
+                labels = teacher_forced["labels"]
+                correct = teacher_forced["correct"]
+                total = teacher_forced["total"]
                 tf_loss_total += float(outputs.loss.detach().cpu())
                 tf_correct += correct
                 tf_total_tokens += total
@@ -1135,20 +774,8 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                     dim=1
                 )
 
-                generated_token_ids = greedy_generate_action_tokens(
-                    model=model,
-                    prompt_inputs=prompt_inputs,
-                    registry=registry,
-                    action_len=target_dim,
-                    model_dtype=model_dtype,
-                )
-
-                gt_token_rows = task_spec.encode_target_token_rows_from_batch(
-                    batch,
-                    registry,
-                    quantizer,
-                )
-                gt_token_ids = torch.tensor(gt_token_rows, device=device, dtype=torch.long)
+                generated_token_ids = rollout["generated_token_ids"]
+                gt_token_ids = rollout["gt_token_ids"]
                 ar_matches = generated_token_ids == gt_token_ids
                 ar_correct += int(ar_matches.sum().item())
                 ar_total_tokens += int(gt_token_ids.numel())
@@ -1161,18 +788,14 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                     command = str(require_record_field(record, "command"))
                     planner_state = str(require_record_field(record, "planner_state"))
                     ego_pose = require_ego_pose(record)
-                    pred_token_ids = generated_token_ids[row_idx].detach().cpu().tolist()
+                    decoded_row = rollout["decoded_rows"][row_idx]
+                    pred_token_ids = decoded_row["pred_token_ids"]
                     gt_row = gt_token_ids[row_idx].detach().cpu().tolist()
-                    pred_bins = registry.decode_token_ids_to_bin_ids(pred_token_ids)
-                    gt_bins = registry.decode_token_ids_to_bin_ids(gt_row)
-                    pred_target = registry.decode_target_token_ids(pred_token_ids, quantizer)
-                    pred_target_tensor = torch.tensor(pred_target, dtype=torch.float32)
-                    gt_action_tensor = batch["action"][row_idx].detach().cpu()
-                    pred_action_tensor = task_spec.full_action_from_target_tensor(
-                        pred_target_tensor,
-                        gt_action_tensor=gt_action_tensor,
-                    )
-                    gt_waypoint_tensor = batch["gt_waypoints"][row_idx].detach().cpu()
+                    pred_bins = decoded_row["pred_bin_ids"]
+                    gt_bins = runtime.registry.decode_token_ids_to_bin_ids(gt_row)
+                    gt_action_tensor = decoded_row["gt_action_tensor"]
+                    pred_action_tensor = decoded_row["pred_action_tensor"]
+                    gt_waypoint_tensor = decoded_row["gt_waypoints"]
                     v0_tensor = batch["v0"][row_idx].detach().cpu()
 
                     pred_actions_list.append(pred_action_tensor)
@@ -1180,15 +803,7 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                     gt_waypoints_list.append(gt_waypoint_tensor)
                     generated_bins.extend(pred_bins)
 
-                    pred_waypoint_tensor = (
-                        rollout_waypoints_from_action_tensor(
-                            action=pred_action_tensor.view(1, k_steps, 2),
-                            history_xyz=batch["ego_history_xyz"][row_idx].detach().cpu(),
-                            history_rot=batch["ego_history_rot"][row_idx].detach().cpu(),
-                            dt=dt,
-                        )
-                        .squeeze(0)
-                    )
+                    pred_waypoint_tensor = decoded_row["pred_waypoints"]
                     pred_waypoints_list.append(pred_waypoint_tensor)
                     displacement = torch.norm(pred_waypoint_tensor - gt_waypoint_tensor, dim=1)
                     tf_match_count = int(tf_per_sample_correct[row_idx].item())

@@ -9,7 +9,7 @@ from typing import Any
 
 import torch
 
-from ....stage1.vlm_ce.train import load_checkpoint
+from ....stage1.vlm_ce.components import load_checkpoint
 from ....stage2.reasoning_sft.wrapper import load_stage2_inference_bundle
 from ..common import freeze_model, validate_stage2_policy_contract
 

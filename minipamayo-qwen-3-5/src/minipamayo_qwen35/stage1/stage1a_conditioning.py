@@ -9,8 +9,8 @@ import torch
 from ..contract.prompt import DEFAULT_QUESTION, build_prompt_text
 from ..contract.task_spec import CanonicalStage1Spec
 from ..utils.image_budget import CANONICAL_IMAGE_MAX_PIXELS, CANONICAL_IMAGE_MIN_PIXELS
-from .vlm_ce.eval import load_components
-from .vlm_ce.train import model_forward_inputs, prepare_prompt_inputs_with_history
+from .vlm_ce.prompting import model_forward_inputs, prepare_prompt_inputs_with_history
+from .vlm_ce.runtime import load_stage1a_runtime
 
 
 def freeze_module(module) -> None:
@@ -48,31 +48,26 @@ def load_stage1_condition_components(args):
             "image_max_pixels": CANONICAL_IMAGE_MAX_PIXELS,
         },
     )()
-    (
-        checkpoint,
-        model,
-        processor,
-        registry,
-        history_registry,
-        history_quantizer,
-        quantizer,
-        model_dtype,
-    ) = load_components(stage1_args, task_spec=CanonicalStage1Spec())
+    device = None
     device_name = getattr(args, "device", None)
     if device_name:
         device = torch.device(
             device_name if device_name != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
         )
-        model = model.to(device)
+    runtime = load_stage1a_runtime(
+        stage1_args,
+        task_spec=CanonicalStage1Spec(),
+        device=device,
+    )
     return (
-        checkpoint,
-        model,
-        processor,
-        registry,
-        history_registry,
-        history_quantizer,
-        quantizer,
-        model_dtype,
+        runtime.checkpoint,
+        runtime.model,
+        runtime.processor,
+        runtime.registry,
+        runtime.history_registry,
+        runtime.history_quantizer,
+        runtime.quantizer,
+        runtime.model_dtype,
     )
 
 

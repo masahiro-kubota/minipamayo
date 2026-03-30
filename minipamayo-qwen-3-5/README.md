@@ -65,8 +65,8 @@ Canonical entrypoints are:
 
 Stage 1 experiments live under the same stage package:
 
-- `minipamayo_qwen35.stage1.vlm_ce.train.experiments.steer_only`
-- `minipamayo_qwen35.stage1.vlm_ce.eval.experiments.steer_only`
+- `minipamayo_qwen35.stage1.vlm_ce.train_steer_only`
+- `minipamayo_qwen35.stage1.vlm_ce.eval_steer_only`
 
 Recorded-entrypoint examples:
 
@@ -76,7 +76,7 @@ Recorded-entrypoint examples:
 - `uv run python -m minipamayo_qwen35.stage1.vlm_ce.eval --config-json configs/stage1/vlm_ce/eval/canonical/ignore_rule_data_k64_dt01_12gb.json`
 - `uv run python -m minipamayo_qwen35.stage1.vlm_ce.inference --config-json configs/stage1/vlm_ce/inference/canonical/ignore_rule_data_k64_dt01_sample.json`
 - `uv run python -m minipamayo_qwen35.stage1.expert_cfm.train --config-json configs/stage1/expert_cfm/train/canonical/ignore_rule_data_k64_dt01_smoke_12gb.json`
-- `uv run python -m minipamayo_qwen35.stage1.vlm_ce.train.experiments.steer_only --config-json configs/stage1/vlm_ce/train/experiments/steer_only/ignore_rule_data_k64_dt01_smoke_12gb.json`
+- `uv run python -m minipamayo_qwen35.stage1.vlm_ce.train_steer_only --config-json configs/stage1/vlm_ce/train/experiments/steer_only/ignore_rule_data_k64_dt01_smoke_12gb.json`
 
 The data, train, eval, profile, and inference entrypoints intentionally reject CLI overrides so the JSON files remain the full run record.
 

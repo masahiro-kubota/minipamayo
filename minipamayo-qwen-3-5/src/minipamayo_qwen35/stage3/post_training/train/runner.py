@@ -24,7 +24,7 @@ from ....utils.run_metadata import (
     collect_git_metadata,
     collect_gpu_info,
 )
-from ....stage1.vlm_ce.train import (
+from ....stage1.vlm_ce.runtime import (
     format_gib,
     log_gpu_preflight,
     maybe_wandb_finish,

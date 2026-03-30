@@ -11,8 +11,7 @@ from types import SimpleNamespace
 import torch
 from torch.utils.data import DataLoader
 
-from ....stage1.vlm_ce.eval import load_components
-from ....stage1.vlm_ce.train.runner import load_checkpoint
+from ....stage1.vlm_ce.components import load_checkpoint, load_components
 from ....utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,

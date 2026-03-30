@@ -18,14 +18,14 @@ import torch
 from torch.utils.data import DataLoader, random_split
 
 from ....contract.sequence_layout import STAGE2_PROMPT_CONTRACT, STAGE2_TARGET_LAYOUT
-from ....stage1.vlm_ce.eval import load_components
-from ....stage1.vlm_ce.train import (
+from ....stage1.vlm_ce.components import load_components
+from ....stage1.vlm_ce.prompting import model_forward_inputs
+from ....stage1.vlm_ce.runtime import (
     format_gib,
     log_gpu_preflight,
     maybe_wandb_finish,
     maybe_wandb_log,
     metric_improved,
-    model_forward_inputs,
     release_cuda_memory,
     set_seed,
     write_run_config,
