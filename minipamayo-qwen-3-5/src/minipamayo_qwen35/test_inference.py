@@ -9,11 +9,6 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .stage2.reasoning_sft.inference.runner import (
-    build_wrapper_inputs_for_sample,
-    load_reasoning_sample,
-    load_stage2_inference_bundle,
-)
 from .utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
@@ -46,6 +41,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    from .stage2.reasoning_sft.bundle import load_stage2_inference_bundle
+    from .stage2.reasoning_sft.dataset import load_reasoning_sample
+    from .stage2.reasoning_sft.inference import build_wrapper_inputs_for_sample
+
     if args.sample_index < 0:
         raise RuntimeError("`sample_index` must be >= 0.")
     if args.num_traj_samples <= 0:

@@ -6,30 +6,19 @@ import argparse
 from contextlib import nullcontext
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
 from PIL import Image
 
-from ....contract.prompt import (
-    COT_START_TOKEN,
-    TRAJ_FUTURE_START_TOKEN,
-    build_multimodal_messages,
-    build_reasoning_user_text,
-)
-from ....contract.record_adapter import (
-    canonicalize_history_batch_for_action_space,
-)
-from ....helper import to_device
-from ....utils.image_budget import (
+from ...utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
-from ....utils.run_metadata import collect_processor_settings
-from ..bundle import load_stage2_inference_bundle
-from ..cli import parse_stage2_json_only_args, require_stage2_cuda_device
-from ..dataset import load_reasoning_sample
+from ...utils.run_metadata import collect_processor_settings
+from .cli import parse_stage2_json_only_args, require_stage2_cuda_device
 
 CONFIG_PATH_KEYS = {
     "checkpoint",
@@ -94,6 +83,13 @@ def build_wrapper_inputs_for_sample(
     history_token_count: int,
     device: torch.device,
 ) -> dict[str, Any]:
+    from ...contract.prompt import (
+        COT_START_TOKEN,
+        build_multimodal_messages,
+        build_reasoning_user_text,
+    )
+    from ...helper import to_device
+
     image_path = Path(sample["image_path"])
     with Image.open(image_path) as raw_image:
         image = raw_image.convert("RGB")
@@ -121,6 +117,11 @@ def build_wrapper_inputs_for_sample(
 
 def main() -> None:
     args = parse_args()
+    from ...contract.prompt import TRAJ_FUTURE_START_TOKEN
+    from ...contract.record_adapter import canonicalize_history_batch_for_action_space
+    from .bundle import load_stage2_inference_bundle
+    from .dataset import load_reasoning_sample
+
     device = require_stage2_cuda_device(
         device_name=args.device,
         git_cwd=Path(__file__).resolve().parent,

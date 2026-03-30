@@ -7,7 +7,6 @@ import json
 import sys
 from pathlib import Path
 
-from ....reasoning.synthetic import build_reasoning_text, infer_driving_decision
 from ....utils.json_config import load_json_payload, resolve_path_base
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
@@ -61,6 +60,8 @@ def _resolve_job_path(base_dir: Path, value: str) -> Path:
 
 
 def _build_reasoning_record(record: dict) -> dict:
+    from ....reasoning.synthetic import build_reasoning_text, infer_driving_decision
+
     command = str(record.get("command", "")).strip()
     planner_state = str(record.get("planner_state", "")).strip()
     if not command or not planner_state:

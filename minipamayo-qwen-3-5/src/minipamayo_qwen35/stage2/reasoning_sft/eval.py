@@ -8,16 +8,13 @@ from pathlib import Path
 
 import torch
 
-from ....utils.image_budget import (
+from ...utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
-from ....utils.run_metadata import collect_dataset_view_fingerprint, collect_processor_settings
-from ..bundle import load_stage2_checkpoint_bundle
-from ..cli import parse_stage2_json_only_args, require_stage2_cuda_device
-from ..dataset import ReasoningSftJsonlDataset, build_reasoning_sft_dataloader
-from ..runtime import evaluate_stage2
+from ...utils.run_metadata import collect_dataset_view_fingerprint, collect_processor_settings
+from .cli import parse_stage2_json_only_args, require_stage2_cuda_device
 
 CONFIG_PATH_KEYS = {"checkpoint", "eval_jsonl", "output_json"}
 
@@ -54,6 +51,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    from .bundle import load_stage2_checkpoint_bundle
+    from .dataset import ReasoningSftJsonlDataset, build_reasoning_sft_dataloader
+    from .runtime import evaluate_stage2
+
     device = require_stage2_cuda_device(
         device_name=args.device,
         git_cwd=Path(__file__).resolve().parent,

@@ -14,8 +14,8 @@ from pathlib import Path
 
 import torch
 
-from ....contract.sequence_layout import STAGE2_PROMPT_CONTRACT, STAGE2_TARGET_LAYOUT
-from ....stage1.stage1_train_runtime import (
+from ...contract.sequence_layout import STAGE2_PROMPT_CONTRACT, STAGE2_TARGET_LAYOUT
+from ...stage1.stage1_train_runtime import (
     format_gib,
     log_gpu_preflight,
     maybe_wandb_finish,
@@ -25,25 +25,19 @@ from ....stage1.stage1_train_runtime import (
     set_seed,
     write_run_config,
 )
-from ....utils.image_budget import (
+from ...utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
-from ....utils.preflight import enforce_training_prerequisites
-from ....utils.run_metadata import (
+from ...utils.preflight import enforce_training_prerequisites
+from ...utils.run_metadata import (
     collect_dataset_view_fingerprint,
     collect_git_metadata,
     collect_gpu_info,
     collect_processor_settings,
 )
-from ..bundle import load_stage2_training_bundle
-from ..cli import parse_stage2_json_only_args
-from ..dataset import (
-    build_stage2_handoff_probe_dataset,
-    build_stage2_train_val_dataloaders,
-)
-from ..runtime import evaluate_handoff_probe, evaluate_stage2, run_stage2_teacher_forced_batch
+from .cli import parse_stage2_json_only_args
 
 CONFIG_PATH_KEYS = {
     "stage1a_checkpoint",
@@ -173,6 +167,13 @@ def checkpoint_payload(
 def main() -> None:
     wandb_run = None
     args = parse_args()
+    from .bundle import load_stage2_training_bundle
+    from .dataset import (
+        build_stage2_handoff_probe_dataset,
+        build_stage2_train_val_dataloaders,
+    )
+    from .runtime import evaluate_handoff_probe, evaluate_stage2, run_stage2_teacher_forced_batch
+
     wandb_run = enforce_training_prerequisites(
         project=args.wandb_project,
         config=vars(args),
