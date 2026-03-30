@@ -19,6 +19,7 @@ from .cli import (
     validate_stage1b_runtime_args,
 )
 from ...utils.json_config import normalize_required_string_list
+from .metrics import compute_stage1b_action_mae_sums, compute_stage1b_waypoint_metrics
 from .runtime import (
     load_stage1b_runtime,
     run_stage1b_inference_batch,
@@ -124,44 +125,52 @@ def main() -> None:
                 raise RuntimeError("Stage 1B eval expected ground-truth waypoints in the batch.")
             gt_waypoints = outputs.gt_waypoints
             pred_waypoints = outputs.pred_waypoints
-            displacement = torch.norm(pred_waypoints - gt_waypoints, dim=2)
-            lateral_error = (pred_waypoints[:, :, 1] - gt_waypoints[:, :, 1]).abs()
+            canonical_metrics = compute_stage1b_waypoint_metrics(
+                pred_waypoints=pred_waypoints,
+                gt_waypoints=gt_waypoints,
+            )
             if outputs.pid_action is not None and outputs.pid_waypoints is not None:
                 pid_action = outputs.pid_action
                 pid_waypoints = outputs.pid_waypoints
-                pid_displacement = torch.norm(pid_waypoints - gt_waypoints, dim=2)
-                pid_lateral_error = (pid_waypoints[:, :, 1] - gt_waypoints[:, :, 1]).abs()
+                pid_metrics = compute_stage1b_waypoint_metrics(
+                    pred_waypoints=pid_waypoints,
+                    gt_waypoints=gt_waypoints,
+                )
             else:
                 pid_action = None
 
             batch_size = gt_action.shape[0]
             total_loss += float(loss.detach().cpu())
             total_batches += 1
-            total_ade += float(displacement.mean(dim=1).sum().item())
-            total_fde += float(displacement[:, -1].sum().item())
+            total_ade += float(canonical_metrics.ade_per_sample.sum().item())
+            total_fde += float(canonical_metrics.fde_per_sample.sum().item())
             total_samples += batch_size
             total_action_steps += batch_size * int(gt_action_seq.shape[1])
-            canonical_total_mean_max_lateral += float(lateral_error.max(dim=1).values.sum().item())
+            canonical_total_mean_max_lateral += float(
+                canonical_metrics.max_lateral_per_sample.sum().item()
+            )
             canonical_global_max_lateral = max(
-                canonical_global_max_lateral, float(lateral_error.max().item())
+                canonical_global_max_lateral, float(canonical_metrics.lateral_error.max().item())
             )
-            canonical_total_action_mae_accel += float(
-                (pred_action[:, :, 0] - gt_action_seq[:, :, 0]).abs().sum().item()
+            accel_mae, kappa_mae = compute_stage1b_action_mae_sums(
+                pred_action=pred_action,
+                gt_action_seq=gt_action_seq,
             )
-            canonical_total_action_mae_kappa += float(
-                (pred_action[:, :, 1] - gt_action_seq[:, :, 1]).abs().sum().item()
-            )
+            canonical_total_action_mae_accel += accel_mae
+            canonical_total_action_mae_kappa += kappa_mae
             if pid_action is not None:
-                pid_total_ade += float(pid_displacement.mean(dim=1).sum().item())
-                pid_total_fde += float(pid_displacement[:, -1].sum().item())
-                pid_total_mean_max_lateral += float(pid_lateral_error.max(dim=1).values.sum().item())
-                pid_global_max_lateral = max(pid_global_max_lateral, float(pid_lateral_error.max().item()))
-                pid_total_action_mae_accel += float(
-                    (pid_action[:, :, 0] - gt_action_seq[:, :, 0]).abs().sum().item()
+                pid_total_ade += float(pid_metrics.ade_per_sample.sum().item())
+                pid_total_fde += float(pid_metrics.fde_per_sample.sum().item())
+                pid_total_mean_max_lateral += float(pid_metrics.max_lateral_per_sample.sum().item())
+                pid_global_max_lateral = max(
+                    pid_global_max_lateral, float(pid_metrics.lateral_error.max().item())
                 )
-                pid_total_action_mae_kappa += float(
-                    (pid_action[:, :, 1] - gt_action_seq[:, :, 1]).abs().sum().item()
+                pid_accel_mae, pid_kappa_mae = compute_stage1b_action_mae_sums(
+                    pred_action=pid_action,
+                    gt_action_seq=gt_action_seq,
                 )
+                pid_total_action_mae_accel += pid_accel_mae
+                pid_total_action_mae_kappa += pid_kappa_mae
 
     summary = {
         "checkpoint": str(Path(args.checkpoint).resolve()),

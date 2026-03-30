@@ -6,8 +6,6 @@ import argparse
 import json
 from pathlib import Path
 
-import torch
-
 from ..dataset import Stage1JsonlDataset, stage1_collate
 from .cli import (
     COMMON_CONFIG_PATH_KEYS,
@@ -16,6 +14,7 @@ from .cli import (
     require_stage1b_cuda_device,
     validate_stage1b_runtime_args,
 )
+from .metrics import compute_stage1b_waypoint_metrics
 from .runtime import (
     load_stage1b_runtime,
     run_stage1b_inference_batch,
@@ -76,8 +75,10 @@ def main() -> None:
     pred_action = outputs.pred_action
     pred_waypoints = outputs.pred_waypoints[0].detach().cpu()
     gt_waypoints = outputs.gt_waypoints[0].detach().cpu()
-    errors = torch.norm(pred_waypoints.cpu() - gt_waypoints, dim=1)
-    lateral_error = (pred_waypoints[:, 1] - gt_waypoints[:, 1]).abs()
+    canonical_metrics = compute_stage1b_waypoint_metrics(
+        pred_waypoints=pred_waypoints.unsqueeze(0),
+        gt_waypoints=gt_waypoints.unsqueeze(0),
+    )
     payload = {
         "sample_id": sample["sample_id"],
         "image_path": sample["image_path"],
@@ -86,15 +87,17 @@ def main() -> None:
         "pred_action": pred_action[0].detach().cpu().tolist(),
         "pred_waypoints": pred_waypoints.detach().cpu().tolist(),
         "gt_waypoints": gt_waypoints.tolist(),
-        "ade_m": float(errors.mean().item()),
-        "fde_m": float(errors[-1].item()),
-        "max_lateral_error_m": float(lateral_error.max().item()),
+        "ade_m": float(canonical_metrics.ade_per_sample[0].item()),
+        "fde_m": float(canonical_metrics.fde_per_sample[0].item()),
+        "max_lateral_error_m": float(canonical_metrics.max_lateral_per_sample[0].item()),
     }
     if outputs.pid_action is not None and outputs.pid_waypoints is not None:
         pid_action = outputs.pid_action
         pid_waypoints = outputs.pid_waypoints[0].detach().cpu()
-        pid_errors = torch.norm(pid_waypoints - gt_waypoints, dim=1)
-        pid_lateral_error = (pid_waypoints[:, 1] - gt_waypoints[:, 1]).abs()
+        pid_metrics = compute_stage1b_waypoint_metrics(
+            pred_waypoints=pid_waypoints.unsqueeze(0),
+            gt_waypoints=gt_waypoints.unsqueeze(0),
+        )
         payload["pid_override"] = {
             "target_speed_kmh": float(args.pid_target_speed_kmh),
             "pid_gains": {
@@ -104,9 +107,9 @@ def main() -> None:
             },
             "pred_action": pid_action[0].detach().cpu().tolist(),
             "pred_waypoints": pid_waypoints.tolist(),
-            "ade_m": float(pid_errors.mean().item()),
-            "fde_m": float(pid_errors[-1].item()),
-            "max_lateral_error_m": float(pid_lateral_error.max().item()),
+            "ade_m": float(pid_metrics.ade_per_sample[0].item()),
+            "fde_m": float(pid_metrics.fde_per_sample[0].item()),
+            "max_lateral_error_m": float(pid_metrics.max_lateral_per_sample[0].item()),
         }
     if args.output_json:
         output_path = Path(args.output_json).resolve()
