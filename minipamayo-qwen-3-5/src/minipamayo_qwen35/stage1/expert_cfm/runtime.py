@@ -165,7 +165,7 @@ def load_stage1b_runtime(
 def build_stage1b_prompt_inputs(*, runtime: Stage1BRuntime, batch: dict[str, Any]) -> dict[str, Any]:
     """Prepare canonical Stage 1 prompt inputs with history tokens injected."""
 
-    return prepare_condition_inputs(
+    return build_stage1b_prompt_inputs_from_components(
         model=runtime.model,
         batch=batch,
         processor=runtime.processor,
@@ -176,6 +176,29 @@ def build_stage1b_prompt_inputs(*, runtime: Stage1BRuntime, batch: dict[str, Any
     )
 
 
+def build_stage1b_prompt_inputs_from_components(
+    *,
+    model,
+    batch: dict[str, Any],
+    processor,
+    history_registry,
+    history_quantizer,
+    prompt_text: str,
+    device: torch.device,
+) -> dict[str, Any]:
+    """Prepare canonical Stage 1 prompt inputs from explicit shared components."""
+
+    return prepare_condition_inputs(
+        model=model,
+        batch=batch,
+        processor=processor,
+        history_registry=history_registry,
+        history_quantizer=history_quantizer,
+        prompt_text=prompt_text,
+        device=device,
+    )
+
+
 def extract_stage1b_condition(
     *,
     runtime: Stage1BRuntime,
@@ -183,10 +206,69 @@ def extract_stage1b_condition(
 ) -> Stage1BCondition:
     """Extract the prompt cache and attention mask used to condition the Stage 1B expert."""
 
-    prompt_cache, prompt_attention_mask = extract_prompt_cache(runtime.model, prompt_inputs)
+    return extract_stage1b_condition_from_components(
+        model=runtime.model,
+        prompt_inputs=prompt_inputs,
+    )
+
+
+def extract_stage1b_condition_from_components(
+    *,
+    model,
+    prompt_inputs: dict[str, Any],
+) -> Stage1BCondition:
+    """Extract canonical Stage 1B conditioning from explicit shared components."""
+
+    with torch.no_grad():
+        prompt_cache, prompt_attention_mask = extract_prompt_cache(model, prompt_inputs)
     return Stage1BCondition(
         prompt_cache=prompt_cache,
         prompt_attention_mask=prompt_attention_mask,
+    )
+
+
+def prepare_stage1b_condition_for_batch(
+    *,
+    model,
+    batch: dict[str, Any],
+    processor,
+    history_registry,
+    history_quantizer,
+    prompt_text: str,
+    device: torch.device,
+) -> Stage1BCondition:
+    """Build prompt inputs and extract Stage 1B conditioning for one batch."""
+
+    prompt_inputs = build_stage1b_prompt_inputs_from_components(
+        model=model,
+        batch=batch,
+        processor=processor,
+        history_registry=history_registry,
+        history_quantizer=history_quantizer,
+        prompt_text=prompt_text,
+        device=device,
+    )
+    return extract_stage1b_condition_from_components(
+        model=model,
+        prompt_inputs=prompt_inputs,
+    )
+
+
+def prepare_stage1b_condition(
+    *,
+    runtime: Stage1BRuntime,
+    batch: dict[str, Any],
+) -> Stage1BCondition:
+    """Build prompt inputs and extract Stage 1B conditioning from a runtime bundle."""
+
+    return prepare_stage1b_condition_for_batch(
+        model=runtime.model,
+        batch=batch,
+        processor=runtime.processor,
+        history_registry=runtime.history_registry,
+        history_quantizer=runtime.history_quantizer,
+        prompt_text=runtime.prompt_text,
+        device=runtime.device,
     )
 
 
@@ -204,11 +286,11 @@ def sample_stage1b_action(
     with _stage1b_amp_context(runtime.device):
         loss = None
         if compute_loss and gt_action is not None:
-            loss = runtime.diffusion.loss(
+            loss = compute_stage1b_loss(
                 expert=runtime.expert,
+                diffusion=runtime.diffusion,
+                condition=condition,
                 gt_action=gt_action,
-                prompt_cache=condition.prompt_cache,
-                prompt_attention_mask=condition.prompt_attention_mask,
             )
         pred_action = runtime.diffusion.sample(
             expert=runtime.expert,
@@ -263,6 +345,24 @@ def apply_stage1b_pid_override(
     )
 
 
+def compute_stage1b_loss(
+    *,
+    expert: Stage1ActionExpert,
+    diffusion: BaseDiffusion,
+    condition: Stage1BCondition,
+    gt_action: torch.Tensor,
+) -> torch.Tensor:
+    """Compute the canonical Stage 1B CFM loss from prepared conditioning."""
+
+    with _stage1b_amp_context(gt_action.device):
+        return diffusion.loss(
+            expert=expert,
+            gt_action=gt_action,
+            prompt_cache=condition.prompt_cache,
+            prompt_attention_mask=condition.prompt_attention_mask,
+        )
+
+
 @torch.no_grad()
 def run_stage1b_inference_batch(
     *,
@@ -277,8 +377,7 @@ def run_stage1b_inference_batch(
 ) -> Stage1BBatchResult:
     """Run the shared Stage 1B inference path for one batch."""
 
-    prompt_inputs = build_stage1b_prompt_inputs(runtime=runtime, batch=batch)
-    condition = extract_stage1b_condition(runtime=runtime, prompt_inputs=prompt_inputs)
+    condition = prepare_stage1b_condition(runtime=runtime, batch=batch)
 
     gt_action = None
     gt_action_seq = None

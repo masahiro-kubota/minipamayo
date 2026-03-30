@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-from contextlib import nullcontext
 import json
 import math
 import time
@@ -33,17 +32,12 @@ from ...utils.run_metadata import (
     collect_gpu_info,
     collect_processor_settings,
 )
-from ..stage1a_conditioning import (
-    extract_prompt_cache,
-    freeze_module,
-    infer_prompt_text,
-    load_stage1_condition_components,
-    prepare_condition_inputs,
-)
+from ..stage1a_conditioning import freeze_module, infer_prompt_text, load_stage1_condition_components
 from ..stage1b_action_expert import Stage1ActionExpert
 from ..stage1b_diffusion_adapter import build_stage1b_diffusion_cfg, instantiate_stage1b_diffusion
 from .cli import parse_stage1b_json_only_args
 from .metadata import build_stage1b_metadata, compute_action_stats
+from .runtime import compute_stage1b_loss, prepare_stage1b_condition_for_batch
 
 CONFIG_PATH_KEYS = {
     "stage1_checkpoint",
@@ -200,11 +194,8 @@ def evaluate(
     expert.eval()
     total_loss = 0.0
     total_batches = 0
-    amp_context = (
-        torch.autocast("cuda", dtype=torch.bfloat16) if device.type == "cuda" else nullcontext()
-    )
     for batch in dataloader:
-        prompt_inputs = prepare_condition_inputs(
+        condition = prepare_stage1b_condition_for_batch(
             model=model,
             batch=batch,
             processor=processor,
@@ -213,15 +204,13 @@ def evaluate(
             prompt_text=prompt_text,
             device=device,
         )
-        prompt_cache, prompt_attention_mask = extract_prompt_cache(model, prompt_inputs)
         gt_action = batch["action"].to(device=device, dtype=torch.float32)
-        with amp_context:
-            loss = diffusion.loss(
-                expert=expert,
-                gt_action=gt_action,
-                prompt_cache=prompt_cache,
-                prompt_attention_mask=prompt_attention_mask,
-            )
+        loss = compute_stage1b_loss(
+            expert=expert,
+            diffusion=diffusion,
+            condition=condition,
+            gt_action=gt_action,
+        )
         total_loss += float(loss.detach().cpu())
         total_batches += 1
     return {"cfm_loss": total_loss / max(1, total_batches)}
@@ -377,11 +366,6 @@ def main() -> None:
             },
             step=0,
         )
-        amp_context = (
-            torch.autocast("cuda", dtype=torch.bfloat16)
-            if device.type == "cuda"
-            else nullcontext()
-        )
 
         for epoch in range(1, args.max_epochs + 1):
             epoch_start = time.time()
@@ -392,7 +376,7 @@ def main() -> None:
             optimizer_steps_this_epoch = 0
 
             for batch_idx, batch in enumerate(train_loader, start=1):
-                prompt_inputs = prepare_condition_inputs(
+                condition = prepare_stage1b_condition_for_batch(
                     model=model,
                     batch=batch,
                     processor=processor,
@@ -401,16 +385,13 @@ def main() -> None:
                     prompt_text=prompt_text,
                     device=device,
                 )
-                with torch.no_grad():
-                    prompt_cache, prompt_attention_mask = extract_prompt_cache(model, prompt_inputs)
                 gt_action = batch["action"].to(device=device, dtype=torch.float32)
-                with amp_context:
-                    loss = diffusion.loss(
-                        expert=expert,
-                        gt_action=gt_action,
-                        prompt_cache=prompt_cache,
-                        prompt_attention_mask=prompt_attention_mask,
-                    )
+                loss = compute_stage1b_loss(
+                    expert=expert,
+                    diffusion=diffusion,
+                    condition=condition,
+                    gt_action=gt_action,
+                )
                 (loss / float(args.grad_accum_steps)).backward()
                 train_loss_total += float(loss.detach().cpu())
                 batch_count += 1
