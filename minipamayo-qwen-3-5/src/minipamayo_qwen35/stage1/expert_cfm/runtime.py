@@ -162,71 +162,6 @@ def load_stage1b_runtime(
     )
 
 
-def build_stage1b_prompt_inputs(*, runtime: Stage1BRuntime, batch: dict[str, Any]) -> dict[str, Any]:
-    """Prepare canonical Stage 1 prompt inputs with history tokens injected."""
-
-    return build_stage1b_prompt_inputs_from_components(
-        model=runtime.model,
-        batch=batch,
-        processor=runtime.processor,
-        history_registry=runtime.history_registry,
-        history_quantizer=runtime.history_quantizer,
-        prompt_text=runtime.prompt_text,
-        device=runtime.device,
-    )
-
-
-def build_stage1b_prompt_inputs_from_components(
-    *,
-    model,
-    batch: dict[str, Any],
-    processor,
-    history_registry,
-    history_quantizer,
-    prompt_text: str,
-    device: torch.device,
-) -> dict[str, Any]:
-    """Prepare canonical Stage 1 prompt inputs from explicit shared components."""
-
-    return prepare_condition_inputs(
-        model=model,
-        batch=batch,
-        processor=processor,
-        history_registry=history_registry,
-        history_quantizer=history_quantizer,
-        prompt_text=prompt_text,
-        device=device,
-    )
-
-
-def extract_stage1b_condition(
-    *,
-    runtime: Stage1BRuntime,
-    prompt_inputs: dict[str, Any],
-) -> Stage1BCondition:
-    """Extract the prompt cache and attention mask used to condition the Stage 1B expert."""
-
-    return extract_stage1b_condition_from_components(
-        model=runtime.model,
-        prompt_inputs=prompt_inputs,
-    )
-
-
-def extract_stage1b_condition_from_components(
-    *,
-    model,
-    prompt_inputs: dict[str, Any],
-) -> Stage1BCondition:
-    """Extract canonical Stage 1B conditioning from explicit shared components."""
-
-    with torch.no_grad():
-        prompt_cache, prompt_attention_mask = extract_prompt_cache(model, prompt_inputs)
-    return Stage1BCondition(
-        prompt_cache=prompt_cache,
-        prompt_attention_mask=prompt_attention_mask,
-    )
-
-
 def prepare_stage1b_condition_for_batch(
     *,
     model,
@@ -239,7 +174,7 @@ def prepare_stage1b_condition_for_batch(
 ) -> Stage1BCondition:
     """Build prompt inputs and extract Stage 1B conditioning for one batch."""
 
-    prompt_inputs = build_stage1b_prompt_inputs_from_components(
+    prompt_inputs = prepare_condition_inputs(
         model=model,
         batch=batch,
         processor=processor,
@@ -248,10 +183,9 @@ def prepare_stage1b_condition_for_batch(
         prompt_text=prompt_text,
         device=device,
     )
-    return extract_stage1b_condition_from_components(
-        model=model,
-        prompt_inputs=prompt_inputs,
-    )
+    with torch.no_grad():
+        prompt_cache, prompt_attention_mask = extract_prompt_cache(model, prompt_inputs)
+    return Stage1BCondition(prompt_cache=prompt_cache, prompt_attention_mask=prompt_attention_mask)
 
 
 def prepare_stage1b_condition(
