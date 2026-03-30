@@ -1,12 +1,12 @@
-"""Shared diffusion adapters for the Alpamayo-style action expert."""
+"""Stage 1B-specific diffusion adapters layered on top of shared Flow Matching."""
 
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
 
+from ..diffusion.flow_matching import FlowMatching
 from ..models.action_expert import reshape_flow_matching_timesteps
-from .flow_matching import FlowMatching
 
 
 class BaseDiffusion(nn.Module):

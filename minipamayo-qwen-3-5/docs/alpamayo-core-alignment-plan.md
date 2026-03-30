@@ -49,6 +49,24 @@ diff -u \
   /home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/test_inference.py
 ```
 
+再確認結果:
+
+- 同名 file を持つ比較対象については、未記載の non-import-path 差分は新たに見つかっていない
+- same-name file で non-import-path 差分が残っているのは、現時点では
+  - `models/base_model.py`
+  - `models/alpamayo_r1.py`
+  - `test_inference.py`
+  のみ
+- top-level shared core 配下で Alpamayo 側に同名 file が無い extra file は、現時点では
+  - `contract/record_adapter.py`
+  - `models/action_expert.py`
+  のみ
+- `Stage1B` 専用 diffusion adapter は mirror を汚さないため
+  `stage1/stage1b_diffusion.py` へ退避した
+- したがって、`helper.py`, `config.py`, `geometry/rotation.py`, `models/action_in_proj.py`,
+  `models/delta_tokenizer.py`, `models/token_utils.py`, `action_space/*`, `diffusion/flow_matching.py`
+  については、このメモの分類以外の hidden diff は確認できていない
+
 ### 1. 差分なし
 
 以下は Alpamayo 側と一致している。
@@ -97,18 +115,48 @@ diff -u \
 
 以下は Alpamayo には無いが、`minipamayo-qwen-3-5` 側の stage 分割や JSONL record 契約のために残している。
 
-- `action_space/record_adapter.py`
+ラベルの意味:
+
+- `[DATA-CONTRACT]`
+  - `physical_ai_av` / `load_physical_aiavdataset.py` 前提ではなく、
+    `jsonl + images` の canonical record 契約を受けるための差分
+- `[STAGE-SPLIT]`
+  - Alpamayo 本家の integrated `AlpamayoR1` を、
+    `Stage1A` / `Stage1B` に分割して再利用するための差分
+- `[QWEN3.5-RUNTIME]`
+  - Qwen3.5 系 runtime / cache 挙動に合わせるための差分
+- `[NOT-NO-PAST-IMAGE]`
+  - 「過去 image を使わない」ことが主因ではない、という明示ラベル
+
+この3ファイルについては、主因は `過去 image なし` ではない。
+`過去 image なし` の差分は主に prompt / input loader / demo inference entrypoint 側にある。
+
+- `contract/record_adapter.py` `[DATA-CONTRACT]` `[NOT-NO-PAST-IMAGE]`
   - record から tensor を読む
   - shape adapter
   - canonical action / waypoint payload の橋渡し
-- `diffusion/action_expert.py`
+  - これは Alpamayo の `load_physical_aiavdataset.py` 直読みに対して、
+    この repo が `jsonl` record から canonical tensor を復元するための差分
+  - `Qwen3.5` 由来ではない
+  - `過去 image なし` 由来でもない
+- `stage1/stage1b_diffusion.py` `[STAGE-SPLIT]` `[NOT-NO-PAST-IMAGE]`
   - `Stage1B` の expert decoding に必要な diffusion adapter
   - ただし Alpamayo 本家の integrated inference path と shape 契約が完全一致しているわけではない
   - 現状は `x_dims=expert.action_dim` の平坦化に repo 固有差分がある
   - `t` rank の扱いは shared 側で正規化したが、Alpamayo 本家の integrated path と完全一致したわけではない
   - したがって「repo 固有 core」ではあるが、Alpamayo との継続 diff 対象でもある
-- `models/action_expert.py`
+  - 主因は Alpamayo 本家の integrated `AlpamayoR1.diffusion.sample(step_fn=...)` を、
+    `Stage1B` 単体 runner から呼べるように切り出していること
+  - `Qwen3.5` 由来ではない
+  - `過去 image なし` 由来でもない
+- `models/action_expert.py` `[STAGE-SPLIT]` `[QWEN3.5-RUNTIME]` `[NOT-NO-PAST-IMAGE]`
   - `Stage1B` 用 shared action expert 本体
+  - ファイルが存在する主因は、Alpamayo 本家では `AlpamayoR1` の中に内包されている expert path を、
+    `Stage1B` 単体の checkpoint / train / eval / inference から使えるように外出ししていること
+  - したがって主ラベルは `[STAGE-SPLIT]`
+  - ただし実装の一部には `Qwen3_5DynamicCache` の `crop()` 非対応に合わせた cache clone 処理が入っており、
+    そこは `[QWEN3.5-RUNTIME]` 差分
+  - `過去 image なし` はこのファイルの主因ではない
 
 ### 5. 差分ソース抜粋
 
@@ -185,7 +233,7 @@ diff -u \
 
 以下は Alpamayo 側に同名 file が無いので `diff -u` 対象ではない。代わりに、差分の本体になっている source excerpt を残す。
 
-`action_space/record_adapter.py`
+`contract/record_adapter.py`
 
 ```python
 def canonical_action_tensor_from_record(record: dict) -> torch.Tensor:
@@ -197,7 +245,7 @@ def canonical_action_tensor_from_record(record: dict) -> torch.Tensor:
     return canonical_action_tensor_from_tensors(...)
 ```
 
-`diffusion/action_expert.py`
+`stage1/stage1b_diffusion.py`
 
 ```python
 sampler = FlowMatching(
@@ -228,20 +276,22 @@ def clone_prompt_cache_for_expert(prompt_cache, num_layers: int):
 
 ## 確定した方針
 
-### 1. repo 固有 core は top-level shared に残す
+### 1. repo 固有 core / adapter は適切なレイヤに置く
 
 対象:
-- `action_space/record_adapter.py`
-- `diffusion/action_expert.py`
+- `contract/record_adapter.py`
 - `models/action_expert.py`
+- `stage1/stage1b_diffusion.py`
 
 方針:
-- これらは「Alpamayo に無い repo 固有 core」として top-level shared に残す
-- stage 配下へ戻さず、pure Alpamayo mirror と混ぜない
+- `contract/record_adapter.py` と `models/action_expert.py` は
+  「Alpamayo に無い repo 固有 core」として top-level shared に残す
+- `stage1/stage1b_diffusion.py` は Stage1B 専用 adapter として `stage1/` に置く
+- pure Alpamayo mirror を置く `diffusion/` には戻さない
 
 注意:
-- `record_adapter.py` は Alpamayo loader 不在を埋める層
-- `action_expert.py` は Stage1B train/eval/inference と wrapper の両方が使う shared 実装
+- `record_adapter.py` は Alpamayo loader 不在を埋める層であり、`contract/` に置く
+- `stage1b_diffusion.py` は Stage1B train/eval/inference が使う stage-specific shared 実装
   - ただし「shared に置いたら比較完了」ではない
   - Alpamayo 本家の integrated path と shape / contract がずれていないかは別途確認し続ける
 

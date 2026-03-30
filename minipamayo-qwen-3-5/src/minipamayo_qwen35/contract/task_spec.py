@@ -11,7 +11,7 @@ import torch
 from torch.utils.data import Subset
 
 from ..action_space.discrete_action_space import DiscreteTrajectoryTokenizer
-from ..action_space.record_adapter import (
+from .record_adapter import (
     canonicalize_future_batch_for_action_space,
     canonicalize_history_batch_for_action_space,
     saved_action_array_from_record,

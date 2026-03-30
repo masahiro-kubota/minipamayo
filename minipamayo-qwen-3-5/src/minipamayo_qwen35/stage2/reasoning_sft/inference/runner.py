@@ -18,7 +18,7 @@ from ....contract.prompt import (
     build_multimodal_messages,
     build_reasoning_user_text,
 )
-from ....action_space.record_adapter import (
+from ....contract.record_adapter import (
     canonicalize_history_batch_for_action_space,
 )
 from ....helper import to_device

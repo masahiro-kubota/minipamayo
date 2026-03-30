@@ -7,11 +7,8 @@ import math
 import numpy as np
 import torch
 
-from ..contract.history_tokens import (
-    canonicalize_history_batch_tensors,
-    canonicalize_history_sample_tensors,
-)
-from .unicycle_accel_curvature import UnicycleAccelCurvatureActionSpace
+from .history_tokens import canonicalize_history_batch_tensors, canonicalize_history_sample_tensors
+from ..action_space.unicycle_accel_curvature import UnicycleAccelCurvatureActionSpace
 
 
 def _rotation_matrix_from_yaw(yaw_rad: float) -> np.ndarray:

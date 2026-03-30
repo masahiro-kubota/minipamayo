@@ -46,7 +46,7 @@ from ....utils.run_metadata import (
 from ...checkpoint_completion import require_completed_training_run
 from ....contract.task_spec import CanonicalStage1Spec, Stage1TaskSpec
 from ...dataset import Stage1JsonlDataset
-from ....action_space.record_adapter import rollout_waypoints_from_action_tensor
+from ....contract.record_adapter import rollout_waypoints_from_action_tensor
 from ....contract.prompt import (
     add_prompt_special_tokens,
     build_multimodal_messages,

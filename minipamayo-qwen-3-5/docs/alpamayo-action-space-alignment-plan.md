@@ -32,7 +32,7 @@
 
 ### repo 固有でよい対象
 
-- `action_space/record_adapter.py`
+- `contract/record_adapter.py`
 - `stage1` / `stage2` の runner 側の payload 整形
 - JSONL record から tensor を組み立てる helper
 - `kappa_only` のような実験用 `task_spec`
@@ -45,7 +45,6 @@ src/minipamayo_qwen35/
     __init__.py
     action_space.py
     discrete_action_space.py
-    record_adapter.py
     unicycle_accel_curvature.py
     utils.py
 
@@ -53,6 +52,7 @@ src/minipamayo_qwen35/
     rotation.py
 
   contract/
+    record_adapter.py
     ...
 
   stage1/
@@ -89,7 +89,7 @@ src/minipamayo_qwen35/
 - ただし repo 側の token registry / tokenizer 契約との接着が必要なら、その差分は最小限に限定する。
 - このファイルだけは `stage1A` の token 契約に直結するため、変更後に追加検証を必須とする。
 
-### `record_adapter.py`
+### `contract/record_adapter.py`
 
 - Alpamayo には存在しない repo 固有層として扱う。
 - 責務は以下に限定する。
@@ -104,7 +104,7 @@ src/minipamayo_qwen35/
 
 - `stage1` / `stage2` の runner 側から group 軸前提を外す。
 - `pred_xyz[:, 0, ...]`, `pred_xyz[0, 0, ...]` のような前提を除去する。
-- `record_adapter.py` へ shape adapter を集約する。
+- `contract/record_adapter.py` へ shape adapter を集約する。
 
 ### Phase 2
 
@@ -151,7 +151,7 @@ src/minipamayo_qwen35/
 
 - `action_space.py`, `utils.py`, `unicycle_accel_curvature.py`, `geometry/rotation.py` は Alpamayo とほぼ import path 差だけになる。
 - `discrete_action_space.py` の差分は、repo 固有 token registry / tokenizer 接着の最小限に限定される。
-- repo 固有の shape / record adapter は `record_adapter.py` に閉じる。
+- repo 固有の shape / record adapter は `contract/record_adapter.py` に閉じる。
 - `stage1` / `stage2` が Alpamayo 契約前提で動く。
 
 ## 直近の注意点

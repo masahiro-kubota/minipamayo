@@ -50,7 +50,7 @@
 - `model.py`
   - top-level `models/action_expert.py` の再 export
 - `diffusion.py`
-  - top-level `diffusion/action_expert.py` の再 export
+  - `stage1/stage1b_diffusion.py` の再 export
 - `common.py`
   - Stage1B 固有の prompt-cache / metadata helper
 

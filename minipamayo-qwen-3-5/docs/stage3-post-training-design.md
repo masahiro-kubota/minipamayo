@@ -199,7 +199,7 @@ o -> Reason tokens + discrete action tokens -> continuous trajectory for reward/
 - 中身:
   - `models/alpamayo_r1.py`
   - `models/action_expert.py`
-  - `diffusion/action_expert.py`
+  - `stage1/stage1b_diffusion.py`
   - `action_space/`
 
 ## rollout contract

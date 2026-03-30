@@ -10,14 +10,14 @@ from typing import Any
 
 import torch
 
-from ...action_space.record_adapter import (
+from ...contract.record_adapter import (
     canonicalize_future_batch_from_action_space,
     canonicalize_history_batch_for_action_space,
 )
 from ...action_space.unicycle_accel_curvature import UnicycleAccelCurvatureActionSpace
 from ...contract.history_tokens import HistoryTokenRegistry, HistoryTrajectoryQuantizer
-from ...diffusion.action_expert import FlowMatchingDiffusion
 from ...models.action_expert import Stage1ActionExpert, load_action_expert_from_checkpoint
+from ..stage1b_diffusion import FlowMatchingDiffusion
 from ..stage1a_conditioning import (
     extract_prompt_cache,
     freeze_module,
