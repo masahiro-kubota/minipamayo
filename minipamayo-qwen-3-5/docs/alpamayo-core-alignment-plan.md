@@ -103,8 +103,128 @@ diff -u \
   - canonical action / waypoint payload の橋渡し
 - `diffusion/action_expert.py`
   - `Stage1B` の expert decoding に必要な diffusion adapter
+  - ただし Alpamayo 本家の integrated inference path と shape 契約が完全一致しているわけではない
+  - 現状は `x_dims=expert.action_dim` の平坦化に repo 固有差分がある
+  - `t` rank の扱いは shared 側で正規化したが、Alpamayo 本家の integrated path と完全一致したわけではない
+  - したがって「repo 固有 core」ではあるが、Alpamayo との継続 diff 対象でもある
 - `models/action_expert.py`
   - `Stage1B` 用 shared action expert 本体
+
+### 5. 差分ソース抜粋
+
+以下は `diff -u` で確認した、import path 差以外の実ロジック差分の抜粋。
+
+#### `models/base_model.py`
+
+```diff
+@@
+-    def tie_weights(self) -> None:
++    def tie_weights(self, *args, **kwargs) -> None:
+         """Delegate weight tying to the nested VLM model."""
++        # transformers 5.4 calls tie_weights() from shared PreTrainedModel flows
++        # such as init_weights() and from_pretrained(), sometimes with arguments
++        # like `missing_keys` / `recompute_mapping`.
+         if hasattr(self.vlm, "tie_weights"):
+-            self.vlm.tie_weights()
++            try:
++                self.vlm.tie_weights(*args, **kwargs)
++            except TypeError:
++                self.vlm.tie_weights()
+```
+
+#### `models/alpamayo_r1.py`
+
+```diff
+@@
+-        attention_mask = torch.zeros(
+-            (b_star, 1, n_diffusion_tokens, prompt_cache.get_seq_length() + n_diffusion_tokens),
+-            dtype=torch.float32,
++        attention_mask = torch.zeros(
++            (b_star, prefill_seq_len + n_diffusion_tokens),
++            dtype=torch.long,
+             device=device,
+         )
+         for i in range(b_star):
+-            attention_mask[i, :, :, offset[i] : -n_diffusion_tokens] = torch.finfo(
+-                attention_mask.dtype
+-            ).min
++            attention_mask[i, : offset[i]] = 1
++        attention_mask[:, prefill_seq_len:] = 1
+@@
+-                past_key_values=prompt_cache,
++                past_key_values=expert_prompt_cache,
+                 attention_mask=attention_mask,
+                 use_cache=True,
+                 **forward_kwargs,
+             )
+-            prompt_cache.crop(prefill_seq_len)
+```
+
+#### `test_inference.py`
+
+```diff
+@@
+-data = load_physical_aiavdataset(clip_id, t0_us=5_100_000)
+-messages = helper.create_message(data["image_frames"].flatten(0, 1))
++sample = load_reasoning_sample(args.sample_jsonl, args.sample_index)
++wrapper_inputs = build_wrapper_inputs_for_sample(
++    processor=bundle["processor"],
++    sample=sample,
++    history_token_count=int(bundle["history_quantizer"].token_count),
++    device=device,
++)
+@@
+-pred_xyz, pred_rot, extra = model.sample_trajectories_from_data_with_vlm_rollout(...)
++pred_xyz, pred_rot, extra = bundle["wrapper"].sample_trajectories_from_data_with_vlm_rollout(
++    data=wrapper_inputs,
++    ...
++)
+```
+
+#### upstream に対応 file が無い repo 固有 core
+
+以下は Alpamayo 側に同名 file が無いので `diff -u` 対象ではない。代わりに、差分の本体になっている source excerpt を残す。
+
+`action_space/record_adapter.py`
+
+```python
+def canonical_action_tensor_from_record(record: dict) -> torch.Tensor:
+    ...
+    if "ego_future_xyz" in record and "ego_future_rot" in record:
+        future_xyz, future_rot = canonicalize_future_sample_tensors(...)
+    else:
+        future_xyz, future_rot = derive_future_tensors_from_global_poses(record)
+    return canonical_action_tensor_from_tensors(...)
+```
+
+`diffusion/action_expert.py`
+
+```python
+sampler = FlowMatching(
+    x_dims=expert.action_dim,
+    num_inference_steps=self.n_steps,
+)
+
+def step_fn(*, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    _, t_expert = reshape_flow_matching_timesteps(t, batch_size=x.shape[0])
+    return expert(
+        noisy_action=x,
+        t=t_expert,
+        prompt_cache=prompt_cache,
+        prompt_attention_mask=prompt_attention_mask,
+    )
+```
+
+`models/action_expert.py`
+
+```python
+def clone_prompt_cache_for_expert(prompt_cache, num_layers: int):
+    if hasattr(prompt_cache, "key_cache") and hasattr(prompt_cache, "value_cache"):
+        cloned = copy.deepcopy(prompt_cache)
+        cloned.key_cache = list(cloned.key_cache[:num_layers])
+        cloned.value_cache = list(cloned.value_cache[:num_layers])
+        return cloned
+```
 
 ## 確定した方針
 
@@ -122,6 +242,8 @@ diff -u \
 注意:
 - `record_adapter.py` は Alpamayo loader 不在を埋める層
 - `action_expert.py` は Stage1B train/eval/inference と wrapper の両方が使う shared 実装
+  - ただし「shared に置いたら比較完了」ではない
+  - Alpamayo 本家の integrated path と shape / contract がずれていないかは別途確認し続ける
 
 ### 2. wrapper builder は当面 runner に残す
 

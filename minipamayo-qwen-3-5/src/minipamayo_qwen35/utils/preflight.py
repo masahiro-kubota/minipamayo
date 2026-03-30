@@ -114,6 +114,14 @@ def enforce_training_prerequisites(
     )
 
 
+def enforce_runtime_prerequisites(
+    *,
+    git_cwd: str | Path | None = None,
+) -> Path:
+    require_expected_cuda_toolkit()
+    return require_clean_git_worktree(git_cwd)
+
+
 def _run_nvidia_smi_query(query_target: str, fields: list[str]) -> list[dict[str, str]]:
     try:
         result = subprocess.run(

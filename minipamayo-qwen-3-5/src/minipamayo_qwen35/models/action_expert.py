@@ -314,11 +314,12 @@ def cfm_loss(
     noise = torch.randn_like(normalized_gt_action)
     beta_dist = torch.distributions.Beta(beta_alpha, beta_beta)
     t = beta_dist.sample((gt_action.shape[0],)).to(device=gt_action.device, dtype=torch.float32)
-    mixed = t.unsqueeze(-1) * normalized_gt_action + (1.0 - t.unsqueeze(-1)) * noise
+    t_column, t_expert = reshape_flow_matching_timesteps(t, batch_size=gt_action.shape[0])
+    mixed = t_column * normalized_gt_action + (1.0 - t_column) * noise
     target = normalized_gt_action - noise
     pred = expert(
         noisy_action=mixed,
-        t=t,
+        t=t_expert,
         prompt_cache=prompt_cache,
         prompt_attention_mask=prompt_attention_mask,
     )
@@ -350,14 +351,56 @@ def cfm_sample(
             device=current.device,
             dtype=torch.float32,
         )
+        _, t_expert = reshape_flow_matching_timesteps(t, batch_size=batch_size)
         velocity = expert(
             noisy_action=current,
-            t=t,
+            t=t_expert,
             prompt_cache=prompt_cache,
             prompt_attention_mask=prompt_attention_mask,
         )
         current = current + dt * velocity
     return expert.denormalize(current)
+
+
+def reshape_flow_matching_timesteps(
+    t: torch.Tensor,
+    *,
+    batch_size: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Normalize Flow Matching timestep tensors for both mixing and expert conditioning.
+
+    The Stage 1B expert path expects a single diffusion timestep per batch item, but
+    call sites may carry it as `[B]`, `[B, 1]`, or `[B, 1, 1]` depending on whether
+    the source is the loss path or the Euler sampler.
+    """
+
+    t = t.to(dtype=torch.float32)
+    if t.shape[0] != batch_size:
+        raise RuntimeError(
+            "Flow Matching timestep batch size does not match the expert batch.\n"
+            f"batch_size={batch_size}\n"
+            f"t.shape={tuple(t.shape)!r}"
+        )
+    if t.dim() == 1:
+        return t.unsqueeze(-1), t.view(batch_size, 1, 1)
+    if t.dim() == 2:
+        if t.shape[1] != 1:
+            raise RuntimeError(
+                "Flow Matching timestep tensor must carry exactly one scalar per sample.\n"
+                f"t.shape={tuple(t.shape)!r}"
+            )
+        return t, t.unsqueeze(-1)
+    if t.dim() == 3:
+        if tuple(t.shape[1:]) != (1, 1):
+            raise RuntimeError(
+                "Flow Matching timestep tensor must carry exactly one scalar per sample.\n"
+                f"t.shape={tuple(t.shape)!r}"
+            )
+        return t.view(batch_size, 1), t
+    raise RuntimeError(
+        "Unsupported Flow Matching timestep rank for Stage 1B expert.\n"
+        f"t.shape={tuple(t.shape)!r}"
+    )
 
 
 def load_action_expert_from_checkpoint(

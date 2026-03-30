@@ -23,7 +23,7 @@ from ....utils.json_config import (
     normalize_required_string_list,
     resolve_path_base,
 )
-from ....utils.preflight import require_expected_cuda_toolkit
+from ....utils.preflight import enforce_runtime_prerequisites
 from ....contract.task_spec import CanonicalStage1Spec
 from ...dataset import Stage1JsonlDataset
 from ....contract.prompt import DEFAULT_QUESTION, add_prompt_special_tokens, build_prompt_text
@@ -187,7 +187,7 @@ def main() -> None:
     )
     if device.type != "cuda":
         raise RuntimeError("This Stage 1 probe is intended to be run on CUDA to measure VRAM.")
-    require_expected_cuda_toolkit()
+    enforce_runtime_prerequisites(git_cwd=Path(__file__).resolve().parent)
 
     dataset = Stage1JsonlDataset(args.train_jsonl, max_samples=args.max_samples)
     if len(dataset) == 0:

@@ -19,7 +19,7 @@ from .utils.image_budget import (
     CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
-from .utils.preflight import require_expected_cuda_toolkit
+from .utils.preflight import enforce_runtime_prerequisites
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,7 +63,7 @@ def main() -> None:
     )
     if device.type != "cuda":
         raise RuntimeError("`test_inference.py` currently expects CUDA.")
-    require_expected_cuda_toolkit()
+    enforce_runtime_prerequisites(git_cwd=Path(__file__).resolve().parent)
 
     bundle = load_stage2_inference_bundle(
         stage2_checkpoint_path=args.stage2_checkpoint,

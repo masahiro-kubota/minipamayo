@@ -5,6 +5,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
+from ..models.action_expert import reshape_flow_matching_timesteps
 from .flow_matching import FlowMatching
 
 
@@ -66,11 +67,12 @@ class FlowMatchingDiffusion(BaseDiffusion):
             device=gt_action.device,
             dtype=torch.float32,
         )
-        mixed = t.unsqueeze(-1) * normalized_gt_action + (1.0 - t.unsqueeze(-1)) * noise
+        t_column, t_expert = reshape_flow_matching_timesteps(t, batch_size=gt_action.shape[0])
+        mixed = t_column * normalized_gt_action + (1.0 - t_column) * noise
         target = normalized_gt_action - noise
         pred = expert(
             noisy_action=mixed,
-            t=t,
+            t=t_expert,
             prompt_cache=prompt_cache,
             prompt_attention_mask=prompt_attention_mask,
         )
@@ -91,9 +93,10 @@ class FlowMatchingDiffusion(BaseDiffusion):
         )
 
         def step_fn(*, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+            _, t_expert = reshape_flow_matching_timesteps(t, batch_size=x.shape[0])
             return expert(
                 noisy_action=x,
-                t=t,
+                t=t_expert,
                 prompt_cache=prompt_cache,
                 prompt_attention_mask=prompt_attention_mask,
             )

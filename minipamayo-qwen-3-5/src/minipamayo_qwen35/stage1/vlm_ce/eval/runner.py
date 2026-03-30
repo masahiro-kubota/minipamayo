@@ -36,7 +36,7 @@ from ....utils.image_budget import (
     validate_canonical_image_budget,
 )
 from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
-from ....utils.preflight import require_expected_cuda_toolkit
+from ....utils.preflight import enforce_runtime_prerequisites
 from ....utils.run_metadata import (
     collect_dataset_view_fingerprint,
     collect_git_metadata,
@@ -950,7 +950,7 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
     )
     if device.type != "cuda":
         raise RuntimeError("Stage 1 evaluation currently expects CUDA.")
-    require_expected_cuda_toolkit()
+    enforce_runtime_prerequisites(git_cwd=Path(__file__).resolve().parent)
     git_metadata = collect_git_metadata(Path(__file__).resolve().parent)
     gpu_info = collect_gpu_info(device)
 

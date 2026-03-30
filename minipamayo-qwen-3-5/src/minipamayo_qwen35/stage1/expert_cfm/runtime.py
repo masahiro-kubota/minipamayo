@@ -17,7 +17,6 @@ from ...action_space.record_adapter import (
 from ...action_space.unicycle_accel_curvature import UnicycleAccelCurvatureActionSpace
 from ...contract.history_tokens import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ...diffusion.action_expert import FlowMatchingDiffusion
-from ...diffusion.flow_matching import FlowMatching
 from ...models.action_expert import Stage1ActionExpert, load_action_expert_from_checkpoint
 from .pid import apply_longitudinal_pid_override
 from .stage1a_bridge import (
@@ -74,81 +73,6 @@ def _stage1b_amp_context(device: torch.device):
     if device.type == "cuda":
         return torch.autocast("cuda", dtype=torch.bfloat16)
     return nullcontext()
-
-
-def _compute_flow_matching_loss(
-    *,
-    runtime: Stage1BRuntime,
-    gt_action: torch.Tensor,
-    condition: Stage1BCondition,
-) -> torch.Tensor:
-    """Match the canonical Flow Matching loss while supporting batched eval."""
-
-    if not isinstance(runtime.diffusion, FlowMatchingDiffusion):
-        return runtime.diffusion.loss(
-            expert=runtime.expert,
-            gt_action=gt_action,
-            prompt_cache=condition.prompt_cache,
-            prompt_attention_mask=condition.prompt_attention_mask,
-        )
-
-    normalized_gt_action = runtime.expert.normalize(gt_action)
-    noise = torch.randn_like(normalized_gt_action)
-    beta_dist = torch.distributions.Beta(
-        runtime.diffusion.beta_alpha,
-        runtime.diffusion.beta_beta,
-    )
-    t = beta_dist.sample((gt_action.shape[0],)).to(
-        device=gt_action.device,
-        dtype=torch.float32,
-    )
-    t_column = t.unsqueeze(-1)
-    t_expert = t.view(gt_action.shape[0], 1, 1)
-    mixed = t_column * normalized_gt_action + (1.0 - t_column) * noise
-    target = normalized_gt_action - noise
-    pred = runtime.expert(
-        noisy_action=mixed,
-        t=t_expert,
-        prompt_cache=condition.prompt_cache,
-        prompt_attention_mask=condition.prompt_attention_mask,
-    )
-    return torch.mean((pred - target) ** 2)
-
-
-def _sample_flow_matching_action(
-    *,
-    runtime: Stage1BRuntime,
-    condition: Stage1BCondition,
-) -> torch.Tensor:
-    """Sample a Stage 1B action with the timestep rank expected by the expert."""
-
-    if not isinstance(runtime.diffusion, FlowMatchingDiffusion):
-        return runtime.diffusion.sample(
-            expert=runtime.expert,
-            prompt_cache=condition.prompt_cache,
-            prompt_attention_mask=condition.prompt_attention_mask,
-        )
-
-    batch_size = int(condition.prompt_attention_mask.shape[0])
-    sampler = FlowMatching(
-        x_dims=runtime.expert.action_dim,
-        num_inference_steps=runtime.diffusion.n_steps,
-    )
-
-    def step_fn(*, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        return runtime.expert(
-            noisy_action=x,
-            t=t.unsqueeze(-1),
-            prompt_cache=condition.prompt_cache,
-            prompt_attention_mask=condition.prompt_attention_mask,
-        )
-
-    current = sampler.sample(
-        batch_size=batch_size,
-        step_fn=step_fn,
-        device=condition.prompt_attention_mask.device,
-    )
-    return runtime.expert.denormalize(current)
 
 
 def _resolve_stage1b_metadata(
@@ -265,14 +189,16 @@ def sample_stage1b_action(
     with _stage1b_amp_context(runtime.device):
         loss = None
         if compute_loss and gt_action is not None:
-            loss = _compute_flow_matching_loss(
-                runtime=runtime,
+            loss = runtime.diffusion.loss(
+                expert=runtime.expert,
                 gt_action=gt_action,
-                condition=condition,
+                prompt_cache=condition.prompt_cache,
+                prompt_attention_mask=condition.prompt_attention_mask,
             )
-        pred_action = _sample_flow_matching_action(
-            runtime=runtime,
-            condition=condition,
+        pred_action = runtime.diffusion.sample(
+            expert=runtime.expert,
+            prompt_cache=condition.prompt_cache,
+            prompt_attention_mask=condition.prompt_attention_mask,
         ).reshape(batch_size, -1, 2)
     return pred_action, loss
 
