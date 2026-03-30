@@ -41,7 +41,7 @@ from ..stage1a_conditioning import (
     load_stage1_condition_components,
     prepare_condition_inputs,
 )
-from ..stage1b_diffusion import FlowMatchingDiffusion
+from ..stage1b_diffusion import build_stage1b_diffusion_cfg, instantiate_stage1b_diffusion
 from .cli import parse_stage1b_json_only_args
 from .metadata import build_stage1b_metadata, compute_action_stats
 
@@ -188,7 +188,7 @@ def resolve_expert_text_config(model, args: argparse.Namespace) -> dict:
 @torch.no_grad()
 def evaluate(
     expert: Stage1ActionExpert,
-    diffusion: FlowMatchingDiffusion,
+    diffusion,
     model,
     dataloader: DataLoader,
     processor,
@@ -322,12 +322,14 @@ def main() -> None:
             kappa_mean=action_stats["kappa_mean"],
             kappa_std=action_stats["kappa_std"],
         ).to(device=device)
-        diffusion = FlowMatchingDiffusion()
+        diffusion_cfg = build_stage1b_diffusion_cfg()
+        diffusion = instantiate_stage1b_diffusion(diffusion_cfg=diffusion_cfg)
         stage1b_metadata = build_stage1b_metadata(
             train_loader.dataset,
             args,
             vars(expert.export_config()),
             action_stats,
+            diffusion_cfg,
         )
 
         total_optimizer_steps = max(

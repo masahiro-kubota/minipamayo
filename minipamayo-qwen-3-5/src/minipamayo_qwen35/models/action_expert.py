@@ -12,6 +12,7 @@ import torch.nn as nn
 from transformers import AutoConfig, AutoModel
 
 from .action_in_proj import PerWaypointActionInProjV2
+from ..diffusion.flow_matching import FlowMatching
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,15 @@ class Stage1ActionExpertConfig:
     mlp_num_layers: int
 
 
+@dataclass(frozen=True)
+class Stage1ExpertConditioning:
+    """Precomputed expert conditioning shared across detached diffusion steps."""
+
+    prompt_cache: object
+    position_ids: torch.Tensor
+    attention_mask: torch.Tensor
+
+
 def build_text_config(config_dict: dict):
     payload = dict(config_dict)
     if "model_type" not in payload:
@@ -46,7 +56,7 @@ def prompt_cache_seq_length(prompt_cache, fallback_seq_len: int) -> int:
     return int(fallback_seq_len)
 
 
-def clone_prompt_cache_for_expert(prompt_cache, num_layers: int):
+def _validate_prompt_cache_layers(prompt_cache, num_layers: int) -> None:
     if hasattr(prompt_cache, "key_cache") and hasattr(prompt_cache, "value_cache"):
         if len(prompt_cache.key_cache) < num_layers or len(prompt_cache.value_cache) < num_layers:
             raise RuntimeError(
@@ -54,10 +64,7 @@ def clone_prompt_cache_for_expert(prompt_cache, num_layers: int):
                 f"prompt_cache_layers={len(prompt_cache.key_cache)}\n"
                 f"expert_layers={num_layers}"
             )
-        cloned = copy.deepcopy(prompt_cache)
-        cloned.key_cache = list(cloned.key_cache[:num_layers])
-        cloned.value_cache = list(cloned.value_cache[:num_layers])
-        return cloned
+        return
     if isinstance(prompt_cache, tuple):
         if len(prompt_cache) < num_layers:
             raise RuntimeError(
@@ -65,7 +72,7 @@ def clone_prompt_cache_for_expert(prompt_cache, num_layers: int):
                 f"prompt_cache_layers={len(prompt_cache)}\n"
                 f"expert_layers={num_layers}"
             )
-        return tuple(prompt_cache[:num_layers])
+        return
     if isinstance(prompt_cache, list):
         if len(prompt_cache) < num_layers:
             raise RuntimeError(
@@ -73,6 +80,20 @@ def clone_prompt_cache_for_expert(prompt_cache, num_layers: int):
                 f"prompt_cache_layers={len(prompt_cache)}\n"
                 f"expert_layers={num_layers}"
             )
+        return
+    raise RuntimeError(f"Unsupported prompt cache type for Stage 1B expert: {type(prompt_cache)!r}")
+
+
+def clone_prompt_cache_for_expert(prompt_cache, num_layers: int):
+    _validate_prompt_cache_layers(prompt_cache, num_layers)
+    if hasattr(prompt_cache, "key_cache") and hasattr(prompt_cache, "value_cache"):
+        cloned = copy.deepcopy(prompt_cache)
+        cloned.key_cache = list(cloned.key_cache[:num_layers])
+        cloned.value_cache = list(cloned.value_cache[:num_layers])
+        return cloned
+    if isinstance(prompt_cache, tuple):
+        return tuple(prompt_cache[:num_layers])
+    if isinstance(prompt_cache, list):
         return list(prompt_cache[:num_layers])
     raise RuntimeError(f"Unsupported prompt cache type for Stage 1B expert: {type(prompt_cache)!r}")
 
@@ -178,6 +199,33 @@ def restore_action_shape(
         f"expected_flat_last_dim={action_dim}\n"
         f"expected_structured_suffix={action_dims!r}\n"
         f"found={tuple(reference.shape)!r}"
+    )
+
+
+def prepare_expert_conditioning(
+    *,
+    prompt_cache,
+    prompt_attention_mask: torch.Tensor,
+    future_token_count: int,
+    num_layers: int,
+) -> Stage1ExpertConditioning:
+    """Precompute the fixed expert-side conditioning tensors for detached decoding."""
+
+    if prompt_attention_mask.dim() != 2:
+        raise RuntimeError(
+            "Stage 1B expert expects a 2D prompt attention mask.\n"
+            f"prompt_attention_mask.shape={tuple(prompt_attention_mask.shape)!r}"
+        )
+    _validate_prompt_cache_layers(prompt_cache, num_layers)
+    prefill_seq_len = prompt_cache_seq_length(prompt_cache, prompt_attention_mask.shape[1])
+    return Stage1ExpertConditioning(
+        prompt_cache=prompt_cache,
+        position_ids=build_expert_position_ids(prompt_attention_mask, future_token_count),
+        attention_mask=build_expert_attention_mask(
+            prompt_attention_mask,
+            prefill_seq_len,
+            future_token_count,
+        ),
     )
 
 
@@ -310,18 +358,35 @@ class Stage1ActionExpert(nn.Module):
             action_dim=self.action_dim,
         )
 
-    def forward(
+    def prepare_conditioning(
+        self,
+        *,
+        prompt_cache,
+        prompt_attention_mask: torch.Tensor,
+    ) -> Stage1ExpertConditioning:
+        return prepare_expert_conditioning(
+            prompt_cache=prompt_cache,
+            prompt_attention_mask=prompt_attention_mask,
+            future_token_count=self.k,
+            num_layers=self.expert_num_layers,
+        )
+
+    def forward_with_conditioning(
         self,
         *,
         noisy_action: torch.Tensor,
         t: torch.Tensor,
-        prompt_cache,
-        prompt_attention_mask: torch.Tensor,
+        conditioning: Stage1ExpertConditioning,
     ) -> torch.Tensor:
-        if prompt_attention_mask.dim() != 2:
+        if conditioning.attention_mask.dim() != 2:
             raise RuntimeError(
-                "Stage 1B expert expects a 2D prompt attention mask.\n"
-                f"prompt_attention_mask.shape={tuple(prompt_attention_mask.shape)!r}"
+                "Stage 1B expert expects a 2D expert attention mask.\n"
+                f"conditioning.attention_mask.shape={tuple(conditioning.attention_mask.shape)!r}"
+            )
+        if conditioning.position_ids.dim() != 3:
+            raise RuntimeError(
+                "Stage 1B expert expects 3D position ids.\n"
+                f"conditioning.position_ids.shape={tuple(conditioning.position_ids.shape)!r}"
             )
 
         structured_noisy_action = reshape_action_for_expert(
@@ -330,25 +395,18 @@ class Stage1ActionExpert(nn.Module):
             action_dim=self.action_dim,
         )
         batch_size = structured_noisy_action.shape[0]
-        if prompt_attention_mask.shape[0] != batch_size:
+        if conditioning.attention_mask.shape[0] != batch_size:
             raise RuntimeError(
-                "Stage 1B expert batch size does not match the prompt attention mask.\n"
+                "Stage 1B expert batch size does not match the expert conditioning.\n"
                 f"batch_size={batch_size}\n"
-                f"prompt_attention_mask.shape={tuple(prompt_attention_mask.shape)!r}"
+                f"conditioning.attention_mask.shape={tuple(conditioning.attention_mask.shape)!r}"
             )
         future_token_embeds = self.action_in_proj(structured_noisy_action, t)
 
         # Qwen3_5DynamicCache does not implement crop(), so keep the prefill
         # cache immutable and hand each expert call its own clone.
-        expert_prompt_cache = clone_prompt_cache_for_expert(prompt_cache, self.expert_num_layers)
-        prefill_seq_len = prompt_cache_seq_length(
-            expert_prompt_cache, prompt_attention_mask.shape[1]
-        )
-        position_ids = build_expert_position_ids(prompt_attention_mask, self.k)
-        attention_mask = build_expert_attention_mask(
-            prompt_attention_mask,
-            prefill_seq_len,
-            self.k,
+        expert_prompt_cache = clone_prompt_cache_for_expert(
+            conditioning.prompt_cache, self.expert_num_layers
         )
         forward_kwargs = {}
         if self.expert_non_causal_attention:
@@ -356,9 +414,9 @@ class Stage1ActionExpert(nn.Module):
 
         expert_out = self.expert(
             inputs_embeds=future_token_embeds,
-            position_ids=position_ids,
+            position_ids=conditioning.position_ids,
             past_key_values=expert_prompt_cache,
-            attention_mask=attention_mask,
+            attention_mask=conditioning.attention_mask,
             use_cache=True,
             return_dict=True,
             **forward_kwargs,
@@ -372,6 +430,24 @@ class Stage1ActionExpert(nn.Module):
             action_dim=self.action_dim,
         )
 
+    def forward(
+        self,
+        *,
+        noisy_action: torch.Tensor,
+        t: torch.Tensor,
+        prompt_cache,
+        prompt_attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        conditioning = self.prepare_conditioning(
+            prompt_cache=prompt_cache,
+            prompt_attention_mask=prompt_attention_mask,
+        )
+        return self.forward_with_conditioning(
+            noisy_action=noisy_action,
+            t=t,
+            conditioning=conditioning,
+        )
+
 
 def cfm_loss(
     expert: Stage1ActionExpert,
@@ -379,6 +455,27 @@ def cfm_loss(
     prompt_cache,
     prompt_attention_mask: torch.Tensor,
     *,
+    beta_alpha: float = 2.0,
+    beta_beta: float = 5.0,
+) -> torch.Tensor:
+    conditioning = expert.prepare_conditioning(
+        prompt_cache=prompt_cache,
+        prompt_attention_mask=prompt_attention_mask,
+    )
+    return flow_matching_loss(
+        expert=expert,
+        gt_action=gt_action,
+        conditioning=conditioning,
+        beta_alpha=beta_alpha,
+        beta_beta=beta_beta,
+    )
+
+
+def flow_matching_loss(
+    *,
+    expert: Stage1ActionExpert,
+    gt_action: torch.Tensor,
+    conditioning: Stage1ExpertConditioning,
     beta_alpha: float = 2.0,
     beta_beta: float = 5.0,
 ) -> torch.Tensor:
@@ -397,11 +494,10 @@ def cfm_loss(
         t_mixed = t_mixed.unsqueeze(-1)
     mixed = t_mixed * normalized_gt_action + (1.0 - t_mixed) * noise
     target = normalized_gt_action - noise
-    pred = expert(
+    pred = expert.forward_with_conditioning(
         noisy_action=mixed,
         t=t_expert,
-        prompt_cache=prompt_cache,
-        prompt_attention_mask=prompt_attention_mask,
+        conditioning=conditioning,
     )
     return torch.mean((pred - target) ** 2)
 
@@ -414,31 +510,44 @@ def cfm_sample(
     *,
     n_steps: int = 10,
 ) -> torch.Tensor:
+    conditioning = expert.prepare_conditioning(
+        prompt_cache=prompt_cache,
+        prompt_attention_mask=prompt_attention_mask,
+    )
+    return flow_matching_sample(
+        expert=expert,
+        conditioning=conditioning,
+        n_steps=n_steps,
+    )
+
+
+@torch.no_grad()
+def flow_matching_sample(
+    *,
+    expert: Stage1ActionExpert,
+    conditioning: Stage1ExpertConditioning,
+    n_steps: int = 10,
+) -> torch.Tensor:
     if n_steps <= 0:
         raise RuntimeError("`n_steps` must be > 0 for Flow Matching sampling.")
-    batch_size = prompt_attention_mask.shape[0]
-    current = torch.randn(
-        batch_size,
-        *expert.action_dims,
-        device=prompt_attention_mask.device,
-        dtype=expert.action_out_proj.weight.dtype,
+    sampler = FlowMatching(
+        x_dims=expert.action_dims,
+        num_inference_steps=n_steps,
     )
-    dt = 1.0 / float(n_steps)
-    for step_idx in range(n_steps):
-        t = torch.full(
-            (batch_size,),
-            fill_value=float(step_idx) / float(n_steps),
-            device=current.device,
-            dtype=torch.float32,
-        )
-        _, t_expert = reshape_flow_matching_timesteps(t, batch_size=batch_size)
-        velocity = expert(
-            noisy_action=current,
+
+    def step_fn(*, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        _, t_expert = reshape_flow_matching_timesteps(t, batch_size=x.shape[0])
+        return expert.forward_with_conditioning(
+            noisy_action=x,
             t=t_expert,
-            prompt_cache=prompt_cache,
-            prompt_attention_mask=prompt_attention_mask,
+            conditioning=conditioning,
         )
-        current = current + dt * velocity
+
+    current = sampler.sample(
+        batch_size=conditioning.attention_mask.shape[0],
+        step_fn=step_fn,
+        device=conditioning.attention_mask.device,
+    )
     return expert.denormalize(current)
 
 

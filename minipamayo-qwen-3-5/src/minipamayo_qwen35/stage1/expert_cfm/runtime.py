@@ -17,7 +17,11 @@ from ...contract.record_adapter import (
 from ...action_space.unicycle_accel_curvature import UnicycleAccelCurvatureActionSpace
 from ...contract.history_tokens import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ...models.action_expert import Stage1ActionExpert, load_action_expert_from_checkpoint
-from ..stage1b_diffusion import FlowMatchingDiffusion
+from ..stage1b_diffusion import (
+    BaseDiffusion,
+    build_stage1b_diffusion_cfg,
+    instantiate_stage1b_diffusion,
+)
 from ..stage1a_conditioning import (
     extract_prompt_cache,
     freeze_module,
@@ -40,7 +44,7 @@ class Stage1BRuntime:
     history_quantizer: HistoryTrajectoryQuantizer
     expert: Stage1ActionExpert
     action_space: UnicycleAccelCurvatureActionSpace
-    diffusion: FlowMatchingDiffusion
+    diffusion: BaseDiffusion
     prompt_text: str
     dt: float
     stage1b_metadata: dict[str, Any]
@@ -77,7 +81,7 @@ def _stage1b_amp_context(device: torch.device):
 
 def _resolve_stage1b_metadata(
     checkpoint: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any], float]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], float]:
     if "stage1b_metadata" not in checkpoint or not isinstance(checkpoint["stage1b_metadata"], dict):
         raise RuntimeError("Stage 1B checkpoint is missing canonical `stage1b_metadata`.")
     stage1b_metadata = dict(checkpoint["stage1b_metadata"])
@@ -95,7 +99,17 @@ def _resolve_stage1b_metadata(
     action_space_cfg = stage1b_metadata["action_space_cfg"]
     if not isinstance(action_space_cfg, dict):
         raise RuntimeError("Stage 1B checkpoint metadata is missing canonical `action_space_cfg`.")
-    return stage1b_metadata, dict(action_space_cfg), float(stage1b_metadata["dt"])
+    diffusion_cfg = stage1b_metadata.get("diffusion_cfg")
+    if diffusion_cfg is None:
+        diffusion_cfg = build_stage1b_diffusion_cfg()
+    if not isinstance(diffusion_cfg, dict):
+        raise RuntimeError("Stage 1B checkpoint metadata is missing canonical `diffusion_cfg`.")
+    return (
+        stage1b_metadata,
+        dict(action_space_cfg),
+        dict(diffusion_cfg),
+        float(stage1b_metadata["dt"]),
+    )
 
 
 def load_stage1b_runtime(
@@ -125,10 +139,12 @@ def load_stage1b_runtime(
     prompt_text = infer_prompt_text(loaded_stage1_checkpoint, processor)
 
     expert, loaded_stage1b_checkpoint = load_action_expert_from_checkpoint(str(checkpoint), device)
-    stage1b_metadata, action_space_cfg, dt = _resolve_stage1b_metadata(loaded_stage1b_checkpoint)
+    stage1b_metadata, action_space_cfg, diffusion_cfg, dt = _resolve_stage1b_metadata(
+        loaded_stage1b_checkpoint
+    )
     action_space_cfg.pop("_target_", None)
     action_space = UnicycleAccelCurvatureActionSpace(**action_space_cfg)
-    diffusion = FlowMatchingDiffusion(n_steps=int(flow_steps))
+    diffusion = instantiate_stage1b_diffusion(diffusion_cfg=diffusion_cfg, n_steps=int(flow_steps))
     return Stage1BRuntime(
         stage1_checkpoint=loaded_stage1_checkpoint,
         stage1b_checkpoint=loaded_stage1b_checkpoint,

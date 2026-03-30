@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+import copy
+
+import hydra.utils as hyu
 import torch
 import torch.nn as nn
 
-from ..diffusion.flow_matching import FlowMatching
-from ..models.action_expert import reshape_action_for_expert, reshape_flow_matching_timesteps
+from ..models.action_expert import (
+    flow_matching_loss,
+    flow_matching_sample,
+)
+
+DEFAULT_STAGE1B_BETA_ALPHA = 2.0
+DEFAULT_STAGE1B_BETA_BETA = 5.0
+DEFAULT_STAGE1B_FLOW_STEPS = 10
 
 
 class BaseDiffusion(nn.Module):
@@ -60,31 +69,17 @@ class FlowMatchingDiffusion(BaseDiffusion):
         prompt_cache,
         prompt_attention_mask: torch.Tensor,
     ) -> torch.Tensor:
-        gt_action = reshape_action_for_expert(
-            gt_action,
-            action_dims=expert.action_dims,
-            action_dim=expert.action_dim,
-        )
-        normalized_gt_action = expert.normalize(gt_action)
-        noise = torch.randn_like(normalized_gt_action)
-        beta_dist = torch.distributions.Beta(self.beta_alpha, self.beta_beta)
-        t = beta_dist.sample((gt_action.shape[0],)).to(
-            device=gt_action.device,
-            dtype=torch.float32,
-        )
-        t_column, t_expert = reshape_flow_matching_timesteps(t, batch_size=gt_action.shape[0])
-        t_mixed = t_column
-        while t_mixed.dim() < normalized_gt_action.dim():
-            t_mixed = t_mixed.unsqueeze(-1)
-        mixed = t_mixed * normalized_gt_action + (1.0 - t_mixed) * noise
-        target = normalized_gt_action - noise
-        pred = expert(
-            noisy_action=mixed,
-            t=t_expert,
+        conditioning = expert.prepare_conditioning(
             prompt_cache=prompt_cache,
             prompt_attention_mask=prompt_attention_mask,
         )
-        return torch.mean((pred - target) ** 2)
+        return flow_matching_loss(
+            expert=expert,
+            gt_action=gt_action,
+            conditioning=conditioning,
+            beta_alpha=self.beta_alpha,
+            beta_beta=self.beta_beta,
+        )
 
     @torch.no_grad()
     def sample(
@@ -94,24 +89,42 @@ class FlowMatchingDiffusion(BaseDiffusion):
         prompt_cache,
         prompt_attention_mask: torch.Tensor,
     ) -> torch.Tensor:
-        batch_size = prompt_attention_mask.shape[0]
-        sampler = FlowMatching(
-            x_dims=expert.action_dims,
-            num_inference_steps=self.n_steps,
+        conditioning = expert.prepare_conditioning(
+            prompt_cache=prompt_cache,
+            prompt_attention_mask=prompt_attention_mask,
+        )
+        return flow_matching_sample(
+            expert=expert,
+            conditioning=conditioning,
+            n_steps=self.n_steps,
         )
 
-        def step_fn(*, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-            _, t_expert = reshape_flow_matching_timesteps(t, batch_size=x.shape[0])
-            return expert(
-                noisy_action=x,
-                t=t_expert,
-                prompt_cache=prompt_cache,
-                prompt_attention_mask=prompt_attention_mask,
-            )
 
-        current = sampler.sample(
-            batch_size=batch_size,
-            step_fn=step_fn,
-            device=prompt_attention_mask.device,
-        )
-        return expert.denormalize(current)
+def build_stage1b_diffusion_cfg(
+    *,
+    beta_alpha: float = DEFAULT_STAGE1B_BETA_ALPHA,
+    beta_beta: float = DEFAULT_STAGE1B_BETA_BETA,
+    n_steps: int = DEFAULT_STAGE1B_FLOW_STEPS,
+) -> dict:
+    return {
+        "_target_": "minipamayo_qwen35.stage1.stage1b_diffusion.FlowMatchingDiffusion",
+        "beta_alpha": float(beta_alpha),
+        "beta_beta": float(beta_beta),
+        "n_steps": int(n_steps),
+    }
+
+
+def instantiate_stage1b_diffusion(
+    *,
+    diffusion_cfg: dict | None = None,
+    n_steps: int | None = None,
+) -> BaseDiffusion:
+    resolved_cfg = (
+        build_stage1b_diffusion_cfg()
+        if diffusion_cfg is None
+        else copy.deepcopy(diffusion_cfg)
+    )
+    resolved_cfg.pop("x_dims", None)
+    if n_steps is not None:
+        resolved_cfg["n_steps"] = int(n_steps)
+    return hyu.instantiate(resolved_cfg)

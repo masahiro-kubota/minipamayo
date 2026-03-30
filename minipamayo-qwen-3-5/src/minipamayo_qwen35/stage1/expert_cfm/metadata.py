@@ -26,7 +26,13 @@ def compute_action_stats(dataset) -> dict[str, float]:
     }
 
 
-def build_stage1b_metadata(dataset, args, expert_config: dict, action_stats: dict) -> dict:
+def build_stage1b_metadata(
+    dataset,
+    args,
+    expert_config: dict,
+    action_stats: dict,
+    diffusion_cfg: dict,
+) -> dict:
     record = dataset[0]
     action = record["action"]
     gt_waypoints = record["gt_waypoints"]
@@ -43,6 +49,7 @@ def build_stage1b_metadata(dataset, args, expert_config: dict, action_stats: dic
         "dt": dt_value,
         "expert_architecture": "alpamayo_style_action_expert",
         "diffusion_architecture": "flow_matching",
+        "diffusion_cfg": dict(diffusion_cfg),
         "action_space_contract": "alpamayo_unicycle_accel_curvature_single_traj_group",
         "action_space_cfg": {
             "_target_": "minipamayo_qwen35.action_space.unicycle_accel_curvature.UnicycleAccelCurvatureActionSpace",

@@ -144,6 +144,9 @@ diff -u \
   - detached path だが、現在は `FlowMatching(x_dims=expert.action_dims)` を使い、
     timestep も expert 側 shared helper で整形している
   - つまり action-space shape / timestep rank の契約は Alpamayo 本家の integrated path に揃えている
+  - `loss/sample` 本体は `models/action_expert.py` の shared helper に寄せており、
+    `stage1b_diffusion.py` 自体は thin wrapper に留めている
+  - detached runtime 側の diffusion 組み立ても `diffusion_cfg` 相当の dict から instantiate する
   - 差分の主因は「integrated `AlpamayoR1.diffusion.sample(step_fn=...)` を、
     `Stage1B` 単体 runner から呼べるように切り出していること」であり、
     shape 契約そのものではない
