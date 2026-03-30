@@ -10,8 +10,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from ..checkpoint_completion import require_completed_training_run
-from ..dataset import Stage1JsonlDataset
-from ..vlm_ce.train import stage1_collate
+from ..dataset import Stage1JsonlDataset, stage1_collate
 from .cli import (
     COMMON_CONFIG_PATH_KEYS,
     add_stage1b_common_args,

@@ -25,11 +25,11 @@ from ....utils.json_config import (
 )
 from ....utils.preflight import enforce_runtime_prerequisites
 from ....contract.task_spec import CanonicalStage1Spec
-from ...dataset import Stage1JsonlDataset
+from ...dataset import Stage1JsonlDataset, stage1_collate
 from ....contract.prompt import DEFAULT_QUESTION, add_prompt_special_tokens, build_prompt_text
 from ....contract.history_tokens import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ....contract.trajectory_tokens import Stage1TokenRegistry
-from .runner import format_gib, model_forward_inputs, prepare_batch, stage1_collate
+from .runner import format_gib, model_forward_inputs, prepare_batch
 from .runner import build_model_load_kwargs
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]

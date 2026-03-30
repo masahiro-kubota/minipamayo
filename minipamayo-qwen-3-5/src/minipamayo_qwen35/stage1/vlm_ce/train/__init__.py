@@ -1,5 +1,6 @@
 """Stage 1 training entrypoints and shared helpers."""
 
+from ...dataset import stage1_collate
 from .runner import (
     CHECKPOINT_KIND_FULL,
     CHECKPOINT_KIND_MODEL_ONLY,
@@ -24,7 +25,6 @@ from .runner import (
     prepare_prompt_inputs_with_history,
     release_cuda_memory,
     set_seed,
-    stage1_collate,
     write_run_config,
 )
 

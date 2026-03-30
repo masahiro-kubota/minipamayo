@@ -13,7 +13,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, random_split
 
-from ..dataset import Stage1JsonlDataset
+from ..dataset import Stage1JsonlDataset, stage1_collate
 from ..vlm_ce.train import (
     format_gib,
     log_gpu_preflight,
@@ -22,7 +22,6 @@ from ..vlm_ce.train import (
     metric_improved,
     release_cuda_memory,
     set_seed,
-    stage1_collate,
     write_run_config,
 )
 from ...utils.image_budget import CANONICAL_IMAGE_MAX_PIXELS, CANONICAL_IMAGE_MIN_PIXELS

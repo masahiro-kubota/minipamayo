@@ -117,3 +117,17 @@ class Stage1JsonlDataset(Dataset):
             "ego_future_rot": ego_future_rot,
             "command": record["command"],
         }
+
+
+def stage1_collate(samples: list[dict]) -> dict:
+    return {
+        "sample_id": [sample["sample_id"] for sample in samples],
+        "image_path": [sample["image_path"] for sample in samples],
+        "action": torch.stack([sample["action"] for sample in samples], dim=0),
+        "v0": torch.stack([sample["v0"] for sample in samples], dim=0),
+        "dt": torch.stack([sample["dt"] for sample in samples], dim=0),
+        "gt_waypoints": torch.stack([sample["gt_waypoints"] for sample in samples], dim=0),
+        "ego_history_xyz": torch.stack([sample["ego_history_xyz"] for sample in samples], dim=0),
+        "ego_history_rot": torch.stack([sample["ego_history_rot"] for sample in samples], dim=0),
+        "command": [sample["command"] for sample in samples],
+    }

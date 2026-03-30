@@ -55,6 +55,7 @@ from ....contract.prompt import (
 from ....contract.history_tokens import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ....contract.trajectory_tokens import Stage1TokenRegistry
 from ....helper import to_device
+from ...dataset import stage1_collate
 from ..train import (
     CHECKPOINT_KIND_FULL,
     CHECKPOINT_KIND_MODEL_ONLY,
@@ -66,7 +67,6 @@ from ..train import (
     inject_history_inputs_embeds,
     load_checkpoint,
     model_forward_inputs,
-    stage1_collate,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]

@@ -45,7 +45,7 @@ from ....utils.run_metadata import (
     collect_processor_settings,
 )
 from ....contract.task_spec import CanonicalStage1Spec, Stage1TaskSpec
-from ...dataset import Stage1JsonlDataset
+from ...dataset import Stage1JsonlDataset, stage1_collate
 from ....contract.prompt import (
     DEFAULT_QUESTION,
     PROMPT_SPECIAL_TOKENS,
@@ -383,20 +383,6 @@ def write_run_config(save_dir: Path, args: argparse.Namespace, run_metadata: dic
             indent=2,
             ensure_ascii=False,
         )
-
-
-def stage1_collate(samples: list[dict]) -> dict:
-    return {
-        "sample_id": [sample["sample_id"] for sample in samples],
-        "image_path": [sample["image_path"] for sample in samples],
-        "action": torch.stack([sample["action"] for sample in samples], dim=0),
-        "v0": torch.stack([sample["v0"] for sample in samples], dim=0),
-        "dt": torch.stack([sample["dt"] for sample in samples], dim=0),
-        "gt_waypoints": torch.stack([sample["gt_waypoints"] for sample in samples], dim=0),
-        "ego_history_xyz": torch.stack([sample["ego_history_xyz"] for sample in samples], dim=0),
-        "ego_history_rot": torch.stack([sample["ego_history_rot"] for sample in samples], dim=0),
-        "command": [sample["command"] for sample in samples],
-    }
 
 
 def build_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader | None, int, int]:
