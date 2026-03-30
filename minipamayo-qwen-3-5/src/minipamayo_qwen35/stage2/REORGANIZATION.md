@@ -183,10 +183,7 @@ stage2/
     ├── train.py
     ├── eval.py
     ├── inference.py
-    ├── preprocess/
-    │   ├── __init__.py
-    │   ├── __main__.py
-    │   └── build_jsonl.py
+    ├── preprocess.py
 ```
 
 この構成での役割分担は次です。
@@ -207,7 +204,7 @@ stage2/
 補足です。
 
 - `common.py` はこの構成では不要にするか、残すとしてもごく小さい pure helper のみを置く
-- `preprocess/` は当面は独立のままでよい
+- `preprocess.py` は独立 entrypoint のままでよい
 - `train/`, `eval/`, `inference/` のネストは `stage1` と揃わないので、最終形としては採らない
 - もし既存の module path 互換が必要なら、`train/`, `eval/`, `inference/` は一時的な shim としてだけ残す
 
@@ -604,7 +601,7 @@ runner から消すべきものは次です。
 今回の整理では、次は無理にやらない方がよいです。
 
 - `stage2` 全体をさらに細かい micro utility に分解すること
-- `preprocess/build_jsonl.py` まで同じ CLI に完全統一すること
+- `preprocess.py` まで同じ CLI に完全統一すること
 - Alpamayo wrapper のアルゴリズム自体を変更すること
 - `stage1a` / `stage1b` と完全に同じファイル名構成にそろえること
 
