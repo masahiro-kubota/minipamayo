@@ -503,81 +503,86 @@ def prepare_batch(
     prompt_text: str,
     device: torch.device,
 ) -> tuple[dict, torch.Tensor]:
-    images = [Image.open(path).convert("RGB") for path in batch["image_path"]]
-    try:
-        target_token_id_rows = task_spec.encode_target_token_rows_from_batch(
-            batch,
-            registry,
-            quantizer,
-        )
+    prompt_inputs = prepare_prompt_inputs_with_history(
+        model,
+        batch,
+        processor,
+        history_registry,
+        history_quantizer,
+        prompt_text,
+        device,
+    )
+    return build_full_inputs_from_prompt_inputs(
+        model=model,
+        prompt_inputs=prompt_inputs,
+        batch=batch,
+        registry=registry,
+        quantizer=quantizer,
+        task_spec=task_spec,
+        device=device,
+    )
 
-        prompt_inputs = processor(
-            text=[prompt_text] * len(images),
-            images=images,
-            return_tensors="pt",
-            padding=True,
-        )
-        prompt_inputs = move_inputs_to_device(prompt_inputs, device)
-        prompt_inputs = inject_history_inputs_embeds(
-            model=model,
-            prompt_inputs=prompt_inputs,
-            history_registry=history_registry,
-            history_quantizer=history_quantizer,
-            history_xyz=batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
-            history_rot=batch["ego_history_rot"].to(device=device, dtype=torch.float32),
-        )
-        target_token_ids = torch.tensor(target_token_id_rows, dtype=torch.long)
-        target_token_ids = target_token_ids.to(device)
 
-        prompt_input_ids = prompt_inputs["input_ids"]
-        prompt_attention_mask = prompt_inputs["attention_mask"]
-        batch_size = prompt_input_ids.shape[0]
-        target_len = target_token_ids.shape[1]
+def build_full_inputs_from_prompt_inputs(
+    *,
+    model,
+    prompt_inputs: dict,
+    batch: dict,
+    registry: Stage1TokenRegistry,
+    quantizer,
+    task_spec: Stage1TaskSpec,
+    device: torch.device,
+) -> tuple[dict, torch.Tensor]:
+    target_token_id_rows = task_spec.encode_target_token_rows_from_batch(
+        batch,
+        registry,
+        quantizer,
+    )
+    target_token_ids = torch.tensor(target_token_id_rows, dtype=torch.long, device=device)
 
-        input_ids = torch.cat([prompt_input_ids, target_token_ids], dim=1)
-        attention_mask = torch.cat(
+    prompt_input_ids = prompt_inputs["input_ids"]
+    prompt_attention_mask = prompt_inputs["attention_mask"]
+    batch_size = prompt_input_ids.shape[0]
+    target_len = target_token_ids.shape[1]
+
+    input_ids = torch.cat([prompt_input_ids, target_token_ids], dim=1)
+    attention_mask = torch.cat(
+        [
+            prompt_attention_mask,
+            torch.ones(
+                (batch_size, target_len),
+                dtype=prompt_attention_mask.dtype,
+                device=prompt_attention_mask.device,
+            ),
+        ],
+        dim=1,
+    )
+    labels = torch.full_like(input_ids, -100)
+    labels[:, -target_len:] = target_token_ids
+
+    full_inputs = {
+        key: value
+        for key, value in prompt_inputs.items()
+        if key not in {"input_ids", "attention_mask", "inputs_embeds"}
+    }
+    full_inputs["input_ids"] = input_ids
+    full_inputs["attention_mask"] = attention_mask
+    if "inputs_embeds" in prompt_inputs:
+        target_embeds = model.get_input_embeddings()(target_token_ids)
+        full_inputs["inputs_embeds"] = torch.cat([prompt_inputs["inputs_embeds"], target_embeds], dim=1)
+    if "mm_token_type_ids" in full_inputs:
+        full_inputs["mm_token_type_ids"] = torch.cat(
             [
-                prompt_attention_mask,
-                torch.ones(
+                full_inputs["mm_token_type_ids"],
+                torch.zeros(
                     (batch_size, target_len),
-                    dtype=prompt_attention_mask.dtype,
-                    device=prompt_attention_mask.device,
+                    dtype=full_inputs["mm_token_type_ids"].dtype,
+                    device=full_inputs["mm_token_type_ids"].device,
                 ),
             ],
             dim=1,
         )
-        labels = torch.full_like(input_ids, -100)
-        labels[:, -target_len:] = target_token_ids
-
-        full_inputs = {
-            key: value
-            for key, value in prompt_inputs.items()
-            if key not in {"input_ids", "attention_mask", "inputs_embeds"}
-        }
-        full_inputs["input_ids"] = input_ids
-        full_inputs["attention_mask"] = attention_mask
-        if "inputs_embeds" in prompt_inputs:
-            target_embeds = model.get_input_embeddings()(target_token_ids)
-            full_inputs["inputs_embeds"] = torch.cat(
-                [prompt_inputs["inputs_embeds"], target_embeds], dim=1
-            )
-        if "mm_token_type_ids" in full_inputs:
-            full_inputs["mm_token_type_ids"] = torch.cat(
-                [
-                    full_inputs["mm_token_type_ids"],
-                    torch.zeros(
-                        (batch_size, target_len),
-                        dtype=full_inputs["mm_token_type_ids"].dtype,
-                        device=full_inputs["mm_token_type_ids"].device,
-                    ),
-                ],
-                dim=1,
-            )
-        labels = labels.to(device)
-        return full_inputs, labels
-    finally:
-        for image in images:
-            image.close()
+    return full_inputs, labels
 
 
 def prepare_prompt_inputs_with_history(

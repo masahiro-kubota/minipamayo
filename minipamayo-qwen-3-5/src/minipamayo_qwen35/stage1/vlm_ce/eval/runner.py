@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import copy
 import json
 import sys
 from pathlib import Path
@@ -22,7 +23,12 @@ from mcap.well_known import MessageEncoding, SchemaEncoding
 from mcap.writer import CompressionType, Writer
 from PIL import Image
 from torch.utils.data import DataLoader
-from transformers import AutoModelForImageTextToText, AutoProcessor
+from transformers import (
+    AutoModelForImageTextToText,
+    AutoProcessor,
+    LogitsProcessor,
+    LogitsProcessorList,
+)
 
 from ....utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
@@ -41,22 +47,25 @@ from ...checkpoint_completion import require_completed_training_run
 from ....contract.task_spec import CanonicalStage1Spec, Stage1TaskSpec
 from ...dataset import Stage1JsonlDataset
 from ....action_space.record_adapter import rollout_waypoints_from_action_tensor
-from ....contract.prompt import add_prompt_special_tokens
+from ....contract.prompt import (
+    add_prompt_special_tokens,
+    build_multimodal_messages,
+    build_stage1_question_user_text,
+)
 from ....contract.history_tokens import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ....contract.trajectory_tokens import Stage1TokenRegistry
+from ....helper import to_device
 from ..train import (
     CHECKPOINT_KIND_FULL,
     CHECKPOINT_KIND_MODEL_ONLY,
-    append_token_to_model_inputs,
+    build_full_inputs_from_prompt_inputs,
     build_processor_kwargs,
     build_model_load_kwargs,
-    build_prompt_text,
     compute_token_accuracy,
     format_gib,
+    inject_history_inputs_embeds,
     load_checkpoint,
     model_forward_inputs,
-    prepare_batch,
-    prepare_prompt_inputs_with_history,
     stage1_collate,
 )
 
@@ -171,6 +180,42 @@ def resolve_dtype(dtype_name: str) -> torch.dtype:
     if dtype_name == "fp16":
         return torch.float16
     return torch.bfloat16
+
+
+def prepare_alpamayo_prompt_inputs_with_history(
+    *,
+    model,
+    batch: dict,
+    processor,
+    history_registry: HistoryTokenRegistry,
+    history_quantizer: HistoryTrajectoryQuantizer,
+    question: str,
+    history_token_count: int,
+    device: torch.device,
+) -> dict:
+    user_text = build_stage1_question_user_text(question, history_token_count)
+    message_batch: list[list[dict]] = []
+    for image_path in batch["image_path"]:
+        with Image.open(image_path) as raw_image:
+            image = raw_image.convert("RGB")
+            frame_tensor = torch.from_numpy(np.array(image, copy=True)).permute(2, 0, 1).unsqueeze(0)
+        message_batch.append(build_multimodal_messages(frames=frame_tensor, user_text=user_text))
+    prompt_inputs = processor.apply_chat_template(
+        message_batch,
+        tokenize=True,
+        add_generation_prompt=True,
+        return_dict=True,
+        return_tensors="pt",
+    )
+    prompt_inputs = to_device(prompt_inputs, device=device)
+    return inject_history_inputs_embeds(
+        model=model,
+        prompt_inputs=prompt_inputs,
+        history_registry=history_registry,
+        history_quantizer=history_quantizer,
+        history_xyz=batch["ego_history_xyz"].to(device=device, dtype=torch.float32),
+        history_rot=batch["ego_history_rot"].to(device=device, dtype=torch.float32),
+    )
 
 
 def load_components(
@@ -324,7 +369,18 @@ def ns_to_timestamp(ns: int) -> dict:
 def require_extract_summary(test_jsonl: str) -> dict:
     summary_path = Path(test_jsonl).parent / "extract_summary.json"
     if not summary_path.exists():
-        raise RuntimeError(f"Test dataset is missing extract_summary.json: {summary_path}")
+        with Path(test_jsonl).open("r", encoding="utf-8") as f:
+            first_line = f.readline().strip()
+        if not first_line:
+            raise RuntimeError(f"Test dataset is empty: {test_jsonl}")
+        first_record = json.loads(first_line)
+        image_path = first_record.get("image_path")
+        if not isinstance(image_path, str) or not image_path:
+            raise RuntimeError(f"Test dataset is missing extract_summary.json: {summary_path}")
+        candidate_path = Path(image_path).resolve().parent.parent / "extract_summary.json"
+        if not candidate_path.exists():
+            raise RuntimeError(f"Test dataset is missing extract_summary.json: {summary_path}")
+        summary_path = candidate_path
     with summary_path.open("r", encoding="utf-8") as f:
         summary = json.load(f)
     if not isinstance(summary, dict):
@@ -820,6 +876,22 @@ def write_json_message(
     )
 
 
+class ActionTokenLogitsProcessor(LogitsProcessor):
+    def __init__(self, allowed_token_ids: list[int]):
+        self.allowed_token_ids = tuple(int(token_id) for token_id in allowed_token_ids)
+
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
+        del input_ids
+        allowed_token_ids = torch.tensor(
+            self.allowed_token_ids,
+            device=scores.device,
+            dtype=torch.long,
+        )
+        masked_scores = torch.full_like(scores, torch.finfo(scores.dtype).min)
+        masked_scores.index_copy_(1, allowed_token_ids, scores.index_select(1, allowed_token_ids))
+        return masked_scores
+
+
 @torch.no_grad()
 def greedy_generate_action_tokens(
     model,
@@ -828,23 +900,40 @@ def greedy_generate_action_tokens(
     action_len: int,
     model_dtype: torch.dtype,
 ) -> torch.Tensor:
-    action_token_ids = torch.tensor(
-        registry.token_ids, device=prompt_inputs["input_ids"].device, dtype=torch.long
-    )
-    current_inputs = dict(prompt_inputs)
-    generated: list[torch.Tensor] = []
-
-    for _ in range(action_len):
-        with torch.autocast("cuda", dtype=model_dtype):
-            outputs = model(**model_forward_inputs(current_inputs))
-        next_logits = outputs.logits[:, -1, :]
-        action_logits = next_logits.index_select(dim=-1, index=action_token_ids)
-        next_indices = action_logits.argmax(dim=-1)
-        next_token = action_token_ids[next_indices]
-        generated.append(next_token)
-        append_token_to_model_inputs(model, current_inputs, next_token)
-
-    return torch.stack(generated, dim=1)
+    generation_config = copy.deepcopy(model.generation_config)
+    generation_config.do_sample = False
+    generation_config.num_return_sequences = 1
+    generation_config.max_new_tokens = int(action_len)
+    generation_config.min_new_tokens = int(action_len)
+    generation_config.return_dict_in_generate = True
+    pad_token_id = generation_config.pad_token_id
+    if pad_token_id is None:
+        pad_token_id = getattr(model.config, "pad_token_id", None)
+    if pad_token_id is None:
+        eos_token_id = generation_config.eos_token_id
+        if isinstance(eos_token_id, list):
+            pad_token_id = int(eos_token_id[0]) if eos_token_id else None
+        elif eos_token_id is not None:
+            pad_token_id = int(eos_token_id)
+    if pad_token_id is None:
+        raise RuntimeError("Stage 1 greedy generation requires `pad_token_id` or `eos_token_id`.")
+    generation_config.pad_token_id = int(pad_token_id)
+    logits_processor = LogitsProcessorList([ActionTokenLogitsProcessor(list(registry.token_ids))])
+    prompt_len = int(prompt_inputs["input_ids"].shape[1])
+    with torch.autocast("cuda", dtype=model_dtype):
+        outputs = model.generate(
+            **prompt_inputs,
+            generation_config=generation_config,
+            logits_processor=logits_processor,
+        )
+    generated_ids = outputs.sequences[:, prompt_len:]
+    if generated_ids.shape[1] != int(action_len):
+        raise RuntimeError(
+            "Stage 1 greedy generation returned an unexpected number of action tokens.\n"
+            f"expected_action_len={int(action_len)}\n"
+            f"generated_shape={tuple(generated_ids.shape)!r}"
+        )
+    return generated_ids
 
 
 def main(task_spec: Stage1TaskSpec | None = None) -> None:
@@ -919,12 +1008,8 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
         raise RuntimeError(
             "Checkpoint is missing canonical Stage 1 metadata:\n" + "\n".join(missing_stage1_keys)
         )
-    question = stage1_metadata["question"]
-    prompt_text = build_prompt_text(
-        processor,
-        question,
-        history_token_count=int(stage1_metadata["history_token_count"]),
-    )
+    question = str(stage1_metadata["question"])
+    history_token_count = int(stage1_metadata["history_token_count"])
     target_dim = int(stage1_metadata["target_dim"])
     full_action_dim = int(stage1_metadata["full_action_dim"])
     k_steps = int(stage1_metadata["k"])
@@ -1014,17 +1099,24 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
         with torch.no_grad():
             sample_index = 0
             for batch in loader:
-                full_inputs, labels = prepare_batch(
-                    model,
-                    batch,
-                    processor,
-                    registry,
-                    history_registry,
-                    history_quantizer,
-                    quantizer,
-                    task_spec,
-                    prompt_text,
-                    device,
+                prompt_inputs = prepare_alpamayo_prompt_inputs_with_history(
+                    model=model,
+                    batch=batch,
+                    processor=processor,
+                    history_registry=history_registry,
+                    history_quantizer=history_quantizer,
+                    question=question,
+                    history_token_count=history_token_count,
+                    device=device,
+                )
+                full_inputs, labels = build_full_inputs_from_prompt_inputs(
+                    model=model,
+                    prompt_inputs=prompt_inputs,
+                    batch=batch,
+                    registry=registry,
+                    quantizer=quantizer,
+                    task_spec=task_spec,
+                    device=device,
                 )
                 with torch.autocast("cuda", dtype=model_dtype):
                     outputs = model(**model_forward_inputs(full_inputs), labels=labels)
@@ -1043,15 +1135,6 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                     dim=1
                 )
 
-                prompt_inputs = prepare_prompt_inputs_with_history(
-                    model,
-                    batch,
-                    processor,
-                    history_registry,
-                    history_quantizer,
-                    prompt_text,
-                    device,
-                )
                 generated_token_ids = greedy_generate_action_tokens(
                     model=model,
                     prompt_inputs=prompt_inputs,

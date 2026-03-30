@@ -49,7 +49,7 @@ from ..train import (
     inject_history_inputs_embeds,
     load_checkpoint,
 )
-from ....helper import MAX_PIXELS, MIN_PIXELS, get_processor, to_device
+from ....helper import MAX_PIXELS, MIN_PIXELS, to_device
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {
@@ -176,8 +176,12 @@ def main() -> None:
     processor_path = resolve_processor_path(checkpoint_path)
     model_path = str(checkpoint_args["model_path"])
     model_dtype = resolve_dtype(str(checkpoint_args["dtype"]))
-    saved_processor = AutoProcessor.from_pretrained(processor_path, trust_remote_code=True)
-    processor = get_processor(saved_processor.tokenizer)
+    processor = AutoProcessor.from_pretrained(
+        processor_path,
+        trust_remote_code=True,
+        min_pixels=MIN_PIXELS,
+        max_pixels=MAX_PIXELS,
+    )
     tokenizer = processor.tokenizer
     add_prompt_special_tokens(tokenizer)
 
