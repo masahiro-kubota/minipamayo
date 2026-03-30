@@ -1,7 +1,8 @@
-"""Shared helpers for canonical Stage 2 reasoning SFT."""
+"""Shared runtime helpers for canonical Stage 2 reasoning SFT."""
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import Any
 
 import torch
@@ -22,7 +23,6 @@ from ...stage1.stage1a_prompting import (
     move_inputs_to_device,
     prepare_prompt_inputs_with_history,
 )
-from .dataset import ReasoningSftJsonlDataset
 
 
 class TrajectoryLogitsProcessor(LogitsProcessor):
@@ -40,23 +40,10 @@ class TrajectoryLogitsProcessor(LogitsProcessor):
         return scores
 
 
-def build_handoff_probe_dataset(args: Any):
-    if args.handoff_probe_jsonl:
-        max_per_jsonl = args.handoff_probe_max_per_jsonl
-        if max_per_jsonl <= 0:
-            raise RuntimeError(
-                "`handoff_probe_max_per_jsonl` must be > 0 when `handoff_probe_jsonl` is set."
-            )
-        probe_samples = []
-        for jsonl_path in args.handoff_probe_jsonl:
-            source_dataset = ReasoningSftJsonlDataset(jsonl_path)
-            source_count = min(max_per_jsonl, len(source_dataset))
-            for idx in range(source_count):
-                probe_samples.append(source_dataset[idx])
-        if not probe_samples:
-            raise RuntimeError("Explicit handoff probe dataset resolved to zero samples.")
-        return probe_samples
-    return None
+def _stage2_amp_context(device: torch.device, model_dtype: torch.dtype):
+    if device.type == "cuda":
+        return torch.autocast("cuda", dtype=model_dtype)
+    return nullcontext()
 
 
 def _build_target_rows(tokenizer, batch: dict) -> list[list[int]]:
@@ -221,8 +208,43 @@ def compute_token_metrics(logits: torch.Tensor, labels: torch.Tensor) -> dict[st
     return {"correct": correct, "total": total}
 
 
+def run_stage2_teacher_forced_batch(
+    *,
+    model,
+    batch: dict,
+    processor,
+    history_registry,
+    history_quantizer,
+    device: torch.device,
+    model_dtype: torch.dtype,
+    handoff_loss_weight: float,
+) -> dict[str, Any]:
+    full_inputs, labels, loss_weights = prepare_stage2_batch(
+        model=model,
+        batch=batch,
+        processor=processor,
+        history_registry=history_registry,
+        history_quantizer=history_quantizer,
+        device=device,
+        handoff_loss_weight=handoff_loss_weight,
+    )
+    with _stage2_amp_context(device, model_dtype):
+        outputs = model(**model_forward_inputs(full_inputs))
+        loss = compute_weighted_loss(outputs.logits, labels, loss_weights)
+    metrics = compute_token_metrics(outputs.logits.detach(), labels)
+    return {
+        "outputs": outputs,
+        "loss": loss,
+        "labels": labels,
+        "loss_weights": loss_weights,
+        "correct": metrics["correct"],
+        "total": metrics["total"],
+    }
+
+
 @torch.no_grad()
-def evaluate(
+def evaluate_stage2(
+    *,
     model,
     dataloader: DataLoader,
     processor,
@@ -239,24 +261,20 @@ def evaluate(
     total_tokens = 0
 
     for batch in dataloader:
-        full_inputs, labels, loss_weights = prepare_stage2_batch(
+        result = run_stage2_teacher_forced_batch(
             model=model,
             batch=batch,
             processor=processor,
             history_registry=history_registry,
             history_quantizer=history_quantizer,
             device=device,
+            model_dtype=model_dtype,
             handoff_loss_weight=handoff_loss_weight,
         )
-        with torch.autocast("cuda", dtype=model_dtype):
-            outputs = model(**model_forward_inputs(full_inputs))
-            loss = compute_weighted_loss(outputs.logits, labels, loss_weights)
-
-        metrics = compute_token_metrics(outputs.logits, labels)
-        total_loss += float(loss.detach().cpu())
+        total_loss += float(result["loss"].detach().cpu())
         total_batches += 1
-        total_correct += metrics["correct"]
-        total_tokens += metrics["total"]
+        total_correct += result["correct"]
+        total_tokens += result["total"]
 
     model.train()
     return {

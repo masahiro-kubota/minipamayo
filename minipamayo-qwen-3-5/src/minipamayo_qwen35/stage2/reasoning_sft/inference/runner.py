@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 from contextlib import nullcontext
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -27,13 +26,11 @@ from ....utils.image_budget import (
     CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
-from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
-from ....utils.preflight import enforce_runtime_prerequisites
 from ....utils.run_metadata import collect_processor_settings
-from ..dataset import ReasoningSftJsonlDataset
-from ..wrapper import load_stage2_inference_bundle
+from ..bundle import load_stage2_inference_bundle
+from ..cli import parse_stage2_json_only_args, require_stage2_cuda_device
+from ..dataset import load_reasoning_sample
 
-PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {
     "checkpoint",
     "stage1b_checkpoint",
@@ -63,46 +60,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _load_config_args(config_json: str, parser: argparse.ArgumentParser) -> tuple[str, dict, dict]:
-    config_path, payload = load_json_payload(config_json)
-    raw_config = payload.get("args") if isinstance(payload, dict) and "args" in payload else payload
-    if not isinstance(raw_config, dict):
-        raise RuntimeError("Config JSON must be an object or an object with an `args` object.")
-    base_dir = resolve_path_base(
-        config_path,
-        payload,
-        default_base="project_root",
-        base_dirs={"project_root": PROJECT_ROOT, "config_dir": config_path.parent},
-    )
-    config_args = normalize_arg_config(
-        raw_config,
-        parser,
-        exclude_dests={"help", "config_json"},
-        path_keys=CONFIG_PATH_KEYS,
-        base_dir=base_dir,
-    )
-    return str(config_path), payload, config_args
-
-
 def parse_args() -> argparse.Namespace:
-    if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
-        return build_parser().parse_args()
-
-    pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("--config-json", type=str, required=True)
-    pre_args, remaining = pre_parser.parse_known_args()
-    if remaining:
-        raise RuntimeError(
-            "Stage 2 inference accepts only --config-json. Put all settings in the JSON file."
-        )
-
     parser = build_parser()
-    config_path, config_payload, config_args = _load_config_args(pre_args.config_json, parser)
-    parser.set_defaults(**config_args, config_json=config_path)
-    args = parser.parse_args()
-    args.config_json = config_path
-    args.config_payload = config_payload
-    args.config_args = config_args
+    args = parse_stage2_json_only_args(
+        parser=parser,
+        path_keys=CONFIG_PATH_KEYS,
+        json_only_error="Stage 2 inference accepts only --config-json. Put all settings in the JSON file.",
+    )
     if not args.checkpoint or not args.stage1b_checkpoint or not args.sample_jsonl:
         raise RuntimeError(
             "`checkpoint`, `stage1b_checkpoint`, and `sample_jsonl` must be defined in config JSON."
@@ -121,15 +85,6 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`top_k` must be >= 0.")
     validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
     return args
-
-
-def load_reasoning_sample(sample_jsonl: str | Path, sample_index: int) -> dict[str, Any]:
-    dataset = ReasoningSftJsonlDataset(sample_jsonl)
-    if sample_index >= len(dataset):
-        raise RuntimeError(
-            f"`sample_index` {sample_index} is out of range for dataset size {len(dataset)}."
-        )
-    return dataset[sample_index]
 
 
 def build_wrapper_inputs_for_sample(
@@ -166,12 +121,11 @@ def build_wrapper_inputs_for_sample(
 
 def main() -> None:
     args = parse_args()
-    device = torch.device(
-        args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
+    device = require_stage2_cuda_device(
+        device_name=args.device,
+        git_cwd=Path(__file__).resolve().parent,
+        error_message="Canonical Stage 2 inference currently expects CUDA.",
     )
-    if device.type != "cuda":
-        raise RuntimeError("Canonical Stage 2 inference currently expects CUDA.")
-    enforce_runtime_prerequisites(git_cwd=Path(__file__).resolve().parent)
 
     bundle = load_stage2_inference_bundle(
         stage2_checkpoint_path=args.checkpoint,

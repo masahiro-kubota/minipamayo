@@ -4,26 +4,21 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import torch
-from torch.utils.data import DataLoader
 
-from ....stage1.stage1a_components import load_checkpoint, load_components
 from ....utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
-from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
-from ....utils.preflight import enforce_runtime_prerequisites
 from ....utils.run_metadata import collect_dataset_view_fingerprint, collect_processor_settings
-from ..common import evaluate
-from ..dataset import ReasoningSftJsonlDataset, reasoning_sft_collate
+from ..bundle import load_stage2_checkpoint_bundle
+from ..cli import parse_stage2_json_only_args, require_stage2_cuda_device
+from ..dataset import ReasoningSftJsonlDataset, build_reasoning_sft_dataloader
+from ..runtime import evaluate_stage2
 
-PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {"checkpoint", "eval_jsonl", "output_json"}
 
 
@@ -42,50 +37,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _load_config_args(config_json: str, parser: argparse.ArgumentParser) -> tuple[str, dict, dict]:
-    config_path, payload = load_json_payload(config_json)
-    raw_config = payload.get("args") if isinstance(payload, dict) and "args" in payload else payload
-    if not isinstance(raw_config, dict):
-        raise RuntimeError("Config JSON must be an object or an object with an `args` object.")
-
-    base_dir = resolve_path_base(
-        config_path,
-        payload,
-        default_base="project_root",
-        base_dirs={
-            "project_root": PROJECT_ROOT,
-            "config_dir": config_path.parent,
-        },
-    )
-    config_args = normalize_arg_config(
-        raw_config,
-        parser,
-        exclude_dests={"help", "config_json"},
-        path_keys=CONFIG_PATH_KEYS,
-        base_dir=base_dir,
-    )
-    return str(config_path), payload, config_args
-
-
 def parse_args() -> argparse.Namespace:
-    if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
-        return build_parser().parse_args()
-
-    pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("--config-json", type=str, required=True)
-    pre_args, remaining = pre_parser.parse_known_args()
-    if remaining:
-        raise RuntimeError(
-            "Stage 2 evaluation accepts only --config-json. Put all settings in the JSON file."
-        )
-
     parser = build_parser()
-    config_path, config_payload, config_args = _load_config_args(pre_args.config_json, parser)
-    parser.set_defaults(**config_args, config_json=config_path)
-    args = parser.parse_args()
-    args.config_json = config_path
-    args.config_payload = config_payload
-    args.config_args = config_args
+    args = parse_stage2_json_only_args(
+        parser=parser,
+        path_keys=CONFIG_PATH_KEYS,
+        json_only_error="Stage 2 evaluation accepts only --config-json. Put all settings in the JSON file.",
+    )
     if not args.checkpoint:
         raise RuntimeError("`checkpoint` must be defined in the config JSON.")
     if not args.eval_jsonl:
@@ -96,57 +54,40 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    device = torch.device(
-        args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
+    device = require_stage2_cuda_device(
+        device_name=args.device,
+        git_cwd=Path(__file__).resolve().parent,
+        error_message="This Stage 2 evaluator is intended to run on CUDA.",
     )
-    if device.type != "cuda":
-        raise RuntimeError("This Stage 2 evaluator is intended to run on CUDA.")
-    enforce_runtime_prerequisites(git_cwd=Path(__file__).resolve().parent)
-
-    checkpoint = load_checkpoint(Path(args.checkpoint))
-    checkpoint_args = checkpoint.get("args")
-    if not isinstance(checkpoint_args, dict) or "stage1a_checkpoint" not in checkpoint_args:
-        raise RuntimeError(
-            "Stage 2 checkpoint is missing canonical `stage1a_checkpoint` args metadata."
-        )
-    if "model_state_dict" not in checkpoint:
-        raise RuntimeError("Stage 2 checkpoint is missing canonical `model_state_dict`.")
 
     eval_dataset = ReasoningSftJsonlDataset(args.eval_jsonl, max_samples=args.max_samples)
     if len(eval_dataset) == 0:
         raise RuntimeError("Evaluation dataset is empty.")
-    eval_loader = DataLoader(
+    eval_loader = build_reasoning_sft_dataloader(
         eval_dataset,
         batch_size=args.batch_size,
-        shuffle=False,
-        drop_last=False,
         num_workers=args.num_workers,
-        pin_memory=True,
-        persistent_workers=args.num_workers > 0,
-        collate_fn=reasoning_sft_collate,
+        shuffle=False,
     )
 
-    stage1_args = SimpleNamespace(
-        checkpoint=str(checkpoint_args["stage1a_checkpoint"]),
+    bundle = load_stage2_checkpoint_bundle(
+        checkpoint_path=args.checkpoint,
         image_min_pixels=args.image_min_pixels,
         image_max_pixels=args.image_max_pixels,
+        device=device,
+        use_cache=False,
     )
-    (
-        stage1_checkpoint,
-        model,
-        processor,
-        _registry,
-        history_registry,
-        history_quantizer,
-        _quantizer,
-        model_dtype,
-    ) = load_components(stage1_args)
-    model.load_state_dict(checkpoint["model_state_dict"])
-    model.config.use_cache = False
-    model.to(device)
+    checkpoint = bundle["checkpoint"]
+    checkpoint_args = bundle["checkpoint_args"]
+    stage1_checkpoint = bundle["stage1_checkpoint"]
+    model = bundle["model"]
+    processor = bundle["processor"]
+    history_registry = bundle["history_registry"]
+    history_quantizer = bundle["history_quantizer"]
+    model_dtype = bundle["model_dtype"]
     model.train()
 
-    metrics = evaluate(
+    metrics = evaluate_stage2(
         model=model,
         dataloader=eval_loader,
         processor=processor,

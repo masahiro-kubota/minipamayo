@@ -9,13 +9,10 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import sys
 import time
 from pathlib import Path
-from types import SimpleNamespace
 
 import torch
-from torch.utils.data import DataLoader, random_split
 
 from ....contract.sequence_layout import STAGE2_PROMPT_CONTRACT, STAGE2_TARGET_LAYOUT
 from ....stage1.stage1_train_runtime import (
@@ -28,14 +25,11 @@ from ....stage1.stage1_train_runtime import (
     set_seed,
     write_run_config,
 )
-from ....stage1.stage1a_components import load_components
-from ....stage1.stage1a_prompting import model_forward_inputs
 from ....utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
-from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
 from ....utils.preflight import enforce_training_prerequisites
 from ....utils.run_metadata import (
     collect_dataset_view_fingerprint,
@@ -43,17 +37,14 @@ from ....utils.run_metadata import (
     collect_gpu_info,
     collect_processor_settings,
 )
-from ..common import (
-    build_handoff_probe_dataset,
-    compute_token_metrics,
-    compute_weighted_loss,
-    evaluate,
-    evaluate_handoff_probe,
-    prepare_stage2_batch,
+from ..bundle import load_stage2_training_bundle
+from ..cli import parse_stage2_json_only_args
+from ..dataset import (
+    build_stage2_handoff_probe_dataset,
+    build_stage2_train_val_dataloaders,
 )
-from ..dataset import ReasoningSftJsonlDataset, reasoning_sft_collate
+from ..runtime import evaluate_handoff_probe, evaluate_stage2, run_stage2_teacher_forced_batch
 
-PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {
     "stage1a_checkpoint",
     "train_jsonl",
@@ -61,6 +52,7 @@ CONFIG_PATH_KEYS = {
     "handoff_probe_jsonl",
     "save_dir",
 }
+CONFIG_LIST_KEYS = {"train_jsonl", "val_jsonl", "handoff_probe_jsonl"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -99,51 +91,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _load_config_args(config_json: str, parser: argparse.ArgumentParser) -> tuple[str, dict, dict]:
-    config_path, payload = load_json_payload(config_json)
-    raw_config = payload.get("args") if isinstance(payload, dict) and "args" in payload else payload
-    if not isinstance(raw_config, dict):
-        raise RuntimeError("Config JSON must be an object or an object with an `args` object.")
-
-    base_dir = resolve_path_base(
-        config_path,
-        payload,
-        default_base="project_root",
-        base_dirs={
-            "project_root": PROJECT_ROOT,
-            "config_dir": config_path.parent,
-        },
-    )
-    config_args = normalize_arg_config(
-        raw_config,
-        parser,
-        exclude_dests={"help", "config_json"},
-        path_keys=CONFIG_PATH_KEYS,
-        list_keys={"train_jsonl", "val_jsonl", "handoff_probe_jsonl"},
-        base_dir=base_dir,
-    )
-    return str(config_path), payload, config_args
-
-
 def parse_args() -> argparse.Namespace:
-    if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
-        return build_parser().parse_args()
-
-    pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("--config-json", type=str, required=True)
-    pre_args, remaining = pre_parser.parse_known_args()
-    if remaining:
-        raise RuntimeError(
-            "Stage 2 training accepts only --config-json. Put all settings in the JSON file."
-        )
-
     parser = build_parser()
-    config_path, config_payload, config_args = _load_config_args(pre_args.config_json, parser)
-    parser.set_defaults(**config_args, config_json=config_path)
-    args = parser.parse_args()
-    args.config_json = config_path
-    args.config_payload = config_payload
-    args.config_args = config_args
+    args = parse_stage2_json_only_args(
+        parser=parser,
+        path_keys=CONFIG_PATH_KEYS,
+        list_keys=CONFIG_LIST_KEYS,
+        json_only_error="Stage 2 training accepts only --config-json. Put all settings in the JSON file.",
+    )
     if not args.stage1a_checkpoint:
         raise RuntimeError("`stage1a_checkpoint` must be defined in the config JSON.")
     if not args.train_jsonl:
@@ -162,45 +117,6 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`early_stopping_min_delta` must be >= 0.")
     validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
     return args
-
-
-def build_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader | None, int, int]:
-    train_dataset = ReasoningSftJsonlDataset(args.train_jsonl, max_samples=args.max_samples)
-    if len(train_dataset) == 0:
-        raise RuntimeError("Training dataset is empty.")
-
-    if args.val_jsonl:
-        val_dataset = ReasoningSftJsonlDataset(args.val_jsonl)
-        if len(val_dataset) == 0:
-            raise RuntimeError("Validation dataset is empty.")
-    elif len(train_dataset) >= 2 and args.val_fraction > 0:
-        val_size = max(1, int(round(len(train_dataset) * args.val_fraction)))
-        val_size = min(val_size, len(train_dataset) - 1)
-        train_size = len(train_dataset) - val_size
-        generator = torch.Generator().manual_seed(args.seed)
-        train_dataset, val_dataset = random_split(
-            train_dataset, [train_size, val_size], generator=generator
-        )
-    else:
-        val_dataset = None
-
-    loader_kwargs = {
-        "batch_size": args.batch_size,
-        "num_workers": args.num_workers,
-        "pin_memory": True,
-        "collate_fn": reasoning_sft_collate,
-        "persistent_workers": args.num_workers > 0,
-    }
-    train_loader = DataLoader(train_dataset, shuffle=True, drop_last=False, **loader_kwargs)
-    val_loader = None
-    if val_dataset is not None:
-        val_loader = DataLoader(val_dataset, shuffle=False, drop_last=False, **loader_kwargs)
-    return (
-        train_loader,
-        val_loader,
-        len(train_dataset),
-        len(val_dataset) if val_dataset is not None else 0,
-    )
 
 
 def build_stage2_metadata(dataset, args: argparse.Namespace) -> dict:
@@ -279,10 +195,21 @@ def main() -> None:
         git_metadata = collect_git_metadata(Path(__file__).resolve().parent)
         set_seed(args.seed)
 
-        train_loader, val_loader, train_size, val_size = build_dataloaders(args)
+        train_loader, val_loader, train_size, val_size = build_stage2_train_val_dataloaders(
+            train_jsonl=args.train_jsonl,
+            val_jsonl=args.val_jsonl,
+            max_samples=args.max_samples,
+            val_fraction=args.val_fraction,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            seed=args.seed,
+        )
         if len(train_loader) == 0:
             raise RuntimeError("Train DataLoader is empty.")
-        explicit_handoff_probe_dataset = build_handoff_probe_dataset(args)
+        explicit_handoff_probe_dataset = build_stage2_handoff_probe_dataset(
+            handoff_probe_jsonl=args.handoff_probe_jsonl,
+            handoff_probe_max_per_jsonl=args.handoff_probe_max_per_jsonl,
+        )
         train_dataset_fingerprint = collect_dataset_view_fingerprint(train_loader.dataset)
         val_dataset_fingerprint = (
             collect_dataset_view_fingerprint(val_loader.dataset) if val_loader is not None else None
@@ -291,21 +218,20 @@ def main() -> None:
         save_dir = Path(args.save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
 
-        stage1_args = SimpleNamespace(
-            checkpoint=args.stage1a_checkpoint,
+        training_bundle = load_stage2_training_bundle(
+            stage1a_checkpoint=args.stage1a_checkpoint,
             image_min_pixels=args.image_min_pixels,
             image_max_pixels=args.image_max_pixels,
+            device=device,
         )
-        (
-            checkpoint,
-            model,
-            processor,
-            registry,
-            history_registry,
-            history_quantizer,
-            action_quantizer,
-            model_dtype,
-        ) = load_components(stage1_args)
+        checkpoint = training_bundle["stage1_checkpoint"]
+        model = training_bundle["model"]
+        processor = training_bundle["processor"]
+        registry = training_bundle["registry"]
+        history_registry = training_bundle["history_registry"]
+        history_quantizer = training_bundle["history_quantizer"]
+        action_quantizer = training_bundle["quantizer"]
+        model_dtype = training_bundle["model_dtype"]
         processor_settings = collect_processor_settings(
             processor,
             requested_min_pixels=args.image_min_pixels or None,
@@ -317,7 +243,6 @@ def main() -> None:
             model.enable_input_require_grads()
         else:
             model.gradient_checkpointing_disable()
-        model.to(device)
         model.train()
 
         stage2_metadata = build_stage2_metadata(train_loader.dataset, args)
@@ -361,7 +286,7 @@ def main() -> None:
 
         initial_eval_loader = val_loader if val_loader is not None else train_loader
         initial_eval_split = "val" if val_loader is not None else "train"
-        initial_eval = evaluate(
+        initial_eval = evaluate_stage2(
             model=model,
             dataloader=initial_eval_loader,
             processor=processor,
@@ -450,25 +375,22 @@ def main() -> None:
 
             optimizer.zero_grad(set_to_none=True)
             for batch_idx, batch in enumerate(train_loader, start=1):
-                full_inputs, labels, loss_weights = prepare_stage2_batch(
+                result = run_stage2_teacher_forced_batch(
                     model=model,
                     batch=batch,
                     processor=processor,
                     history_registry=history_registry,
                     history_quantizer=history_quantizer,
                     device=device,
+                    model_dtype=model_dtype,
                     handoff_loss_weight=args.handoff_loss_weight,
                 )
-                with torch.autocast("cuda", dtype=model_dtype):
-                    outputs = model(**model_forward_inputs(full_inputs))
-                    loss = compute_weighted_loss(outputs.logits, labels, loss_weights)
-
+                loss = result["loss"]
                 (loss / args.grad_accum_steps).backward()
-                metrics = compute_token_metrics(outputs.logits.detach(), labels)
                 train_loss_total += float(loss.detach().cpu())
                 train_batches += 1
-                train_correct += metrics["correct"]
-                train_tokens += metrics["total"]
+                train_correct += result["correct"]
+                train_tokens += result["total"]
 
                 should_step = batch_idx % args.grad_accum_steps == 0 or batch_idx == len(
                     train_loader
@@ -504,7 +426,7 @@ def main() -> None:
             train_token_accuracy = train_correct / max(train_tokens, 1)
 
             if val_loader is not None:
-                val_metrics = evaluate(
+                val_metrics = evaluate_stage2(
                     model=model,
                     dataloader=val_loader,
                     processor=processor,
