@@ -1,7 +1,8 @@
 # Stage1 Shared Boundary Plan
 
 状態:
-- 2026-03-30 時点で、この plan はコード反映済み。
+- 2026-03-30 時点で、この方針はコード反映済み。
+- 以下は「何を `stage1/` 配下の shared source に置き、何を `vlm_ce/` / `expert_cfm/` の front-end に残すか」の現状整理である。
 
 このメモは、`src/minipamayo_qwen35/stage1/vlm_ce` と
 `src/minipamayo_qwen35/stage1/expert_cfm` のあいだで共通化できるものを、
@@ -13,37 +14,29 @@
   まず `Stage1A front-end` と `Stage1B front-end` のあいだの依存を正すことが目的。
 - Alpamayo mirror file は触らない。
 
-## いま問題になっている依存
+## 解消した依存
 
-現状、`expert_cfm` はまだ `vlm_ce` package を shared library として見ている箇所がある。
+この整理で、以下の依存は解消した。
 
-もっとも明確なのはこれ:
 - `stage1/expert_cfm/train.py`
-  - `from ..vlm_ce.train import format_gib, log_gpu_preflight, maybe_wandb_finish, maybe_wandb_log, metric_improved, release_cuda_memory, set_seed, write_run_config`
-
-さらに、
+  - 以前は `vlm_ce.train` から train helper を import していた
+  - いまは `stage1_train_runtime.py` と `stage1_train_data.py` を使う
 - `stage1/stage1a_conditioning.py`
-  - `stage1.vlm_ce.prompting`
-  - `stage1.vlm_ce.runtime`
-  に依存している
+  - 以前は `vlm_ce.prompting` / `vlm_ce.runtime` に依存していた
+  - いまは `stage1a_prompting.py` / `stage1a_runtime.py` に依存する
+- `stage2/` / `stage3/`
+  - 以前は `stage1.vlm_ce.components/prompting/runtime` を shared source として見ていた
+  - いまは `stage1a_components.py` / `stage1a_prompting.py` / `stage1_train_runtime.py` を参照する
 
-つまり今は、
-- `vlm_ce`
-  - entrypoint package
-- `expert_cfm`
-  - 別 entrypoint package
-
-であるはずなのに、`vlm_ce` の中身が `expert_cfm` から shared source として見えている。
-
-これをやめて、
-- `stage1/` 直下
+つまり現在の境界は、
+- `stage1/`
   - Stage1 shared source
-- `vlm_ce/`
+- `stage1/vlm_ce/`
   - Stage1A front-end
-- `expert_cfm/`
+- `stage1/expert_cfm/`
   - Stage1B front-end
 
-という構造に揃える。
+に揃っている。
 
 ## すでに `stage1/` 直下で正しいもの
 
@@ -61,12 +54,9 @@
 - `stage1/stage1b_diffusion_adapter.py`
   - Stage1B detached diffusion adapter
 
-## `stage1/` 直下へ出すべきもの
+## `stage1/` 直下に置くもの
 
 ### 1. `stage1_train_runtime.py`
-
-現在の問題:
-- `expert_cfm/train.py` が `vlm_ce.train` から train helper を import している
 
 `stage1/` へ出す対象:
 - `set_seed`
@@ -84,14 +74,7 @@
 - これらは `Stage1A` 専用でも `Stage1B` 専用でもない
 - 今のように `expert_cfm -> vlm_ce.train` で引くのは境界が悪い
 
-補足:
-- 将来的には `utils/` に上げてもよいが、まずは `stage1/` 直下に切り出して
-  `vlm_ce` package 依存を消すのが先
-
 ### 2. `stage1_train_data.py`
-
-現在の問題:
-- `vlm_ce/train.py` と `expert_cfm/train.py` がそれぞれ `build_dataloaders(...)` を持っている
 
 `stage1/` へ出す対象:
 - `Stage1JsonlDataset + stage1_collate` を前提にした
@@ -109,18 +92,6 @@
 - ここに差分が残ると、Stage1A / Stage1B の学習条件ズレになる
 
 ### 3. `stage1_json_cli.py`
-
-現在の問題:
-- `vlm_ce/cli.py`
-- `expert_cfm/cli.py`
-
-がどちらも
-- `load_json_payload`
-- `resolve_path_base`
-- `normalize_arg_config`
-- `--config-json only`
-
-の流れを別実装で持っている
 
 `stage1/` へ出す対象:
 - generic な
@@ -143,9 +114,6 @@
 
 ### 4. `stage1a_components.py`
 
-現在の置き場:
-- `stage1/vlm_ce/components.py`
-
 `stage1/` へ出す対象:
 - `resolve_dtype`
 - `resolve_checkpoint_kind`
@@ -165,9 +133,6 @@
 
 ### 5. `stage1a_prompting.py`
 
-現在の置き場:
-- `stage1/vlm_ce/prompting.py`
-
 `stage1/` へ出す対象:
 - `move_inputs_to_device`
 - `model_forward_inputs`
@@ -185,9 +150,6 @@
 
 ### 6. `stage1a_runtime.py`
 
-現在の置き場:
-- `stage1/vlm_ce/runtime.py`
-
 `stage1/` へ出す対象:
 - `Stage1ARuntime`
 - `load_stage1a_runtime`
@@ -197,11 +159,14 @@
 - `decode_stage1a_generated_batch`
 - `run_stage1a_rollout_batch`
 - `extract_prompt_cache`
+- `compute_token_accuracy`
+- `greedy_generate_action_tokens`
 
 理由:
 - これは `vlm_ce` runner の loop ではなく、Stage1A runtime contract
 - `stage1a_conditioning.py` がここに依存している以上、
   `stage1/` shared source にする方が境界が自然
+- token accuracy と discrete token generation も、`train.py` / `eval.py` / `inference.py` を跨いで使う Stage1A runtime の一部なので、最終的に `stage1a_runtime.py` に寄せた
 
 ## package-local のまま残すもの
 
@@ -215,10 +180,10 @@
   - single-sample payload
 - `vlm_ce/profile.py`
   - smoke/profile
-- `vlm_ce/generation.py`
-  - Stage1A discrete action-token generation
 - `vlm_ce/metrics.py`
-  - token accuracy / inference payload 向け helper
+  - `require_record_field`
+  - `infer_vision_tokens`
+  - つまり eval/inference payload 向け helper だけ
 - `vlm_ce/eval_artifacts.py`
   - MCAP / artifact 出力
 - `vlm_ce/train_steer_only.py`
@@ -239,7 +204,7 @@
 - `expert_cfm/pid.py`
 - `expert_cfm/cli.py`
 
-## リファクタ後の目標像
+## 現在の配置
 
 ```text
 stage1/
@@ -258,6 +223,45 @@ stage1/
   vlm_ce/
     __init__.py
     cli.py
+    eval.py
+    eval_artifacts.py
+    eval_steer_only.py
+    inference.py
+    metrics.py
+    profile.py
+    train.py
+    train_steer_only.py
+  expert_cfm/
+    cli.py
+    eval.py
+    inference.py
+    metadata.py
+    metrics.py
+    pid.py
+    runtime.py
+    train.py
+```
+
+## 残してよい差分
+
+この整理後も、`vlm_ce` と `expert_cfm` の front-end は完全一致にはしない。
+
+- `vlm_ce`
+  - token CE 学習
+  - rollout/eval artifact
+  - single-sample payload
+- `expert_cfm`
+  - prompt cache conditioning
+  - diffusion expert loss/sample
+  - PID override
+
+つまり、
+- `stage1/` 直下
+  - package 間で再利用する contract / runtime / CLI / train-data policy
+- `vlm_ce/` と `expert_cfm/`
+  - stage 固有の loop / payload / artifact
+
+という境界を維持する。
     train.py
     eval.py
     eval_artifacts.py

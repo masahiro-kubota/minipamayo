@@ -1,16 +1,5 @@
 from __future__ import annotations
 
-import torch
-
-
-def compute_token_accuracy(logits: torch.Tensor, labels: torch.Tensor) -> tuple[int, int]:
-    shifted_logits = logits[:, :-1, :].argmax(dim=-1)
-    shifted_labels = labels[:, 1:]
-    mask = shifted_labels != -100
-    correct = ((shifted_logits == shifted_labels) & mask).sum().item()
-    total = mask.sum().item()
-    return int(correct), int(total)
-
 
 def require_record_field(record: dict, key: str):
     if key not in record:

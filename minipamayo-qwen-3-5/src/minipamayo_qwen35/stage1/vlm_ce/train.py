@@ -53,11 +53,11 @@ from ..stage1a_components import (
 from ..stage1a_prompting import model_forward_inputs
 from ..stage1a_runtime import (
     Stage1ARuntime,
+    compute_token_accuracy,
     prepare_stage1a_training_batch,
     run_stage1a_teacher_forced_batch,
 )
 from .cli import parse_config_json_only_args
-from .metrics import compute_token_accuracy
 
 CONFIG_PATH_KEYS = {
     "train_jsonl",
