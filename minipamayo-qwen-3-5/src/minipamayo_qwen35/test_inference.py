@@ -1,123 +1,100 @@
-"""Alpamayo-style end-to-end inference smoke script for minipamayo."""
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-from __future__ import annotations
+# End-to-end example script for the inference pipeline:
+# This script loads a JSONL sample, runs inference, and computes the minADE.
+# It can be used to test the inference pipeline.
 
 import argparse
-import json
-from pathlib import Path
 
 import numpy as np
 import torch
 
-from .utils.image_budget import (
-    CANONICAL_IMAGE_MAX_PIXELS,
-    CANONICAL_IMAGE_MIN_PIXELS,
-    validate_canonical_image_budget,
+parser = argparse.ArgumentParser(
+    description="Run Alpamayo-style end-to-end inference for one JSONL sample."
 )
-from .utils.preflight import enforce_runtime_prerequisites
+parser.add_argument("--stage2-checkpoint", type=str, required=True)
+parser.add_argument("--stage1b-checkpoint", type=str, required=True)
+parser.add_argument("--sample-jsonl", type=str, required=True)
+parser.add_argument("--sample-index", type=int, default=0)
+parser.add_argument("--device", type=str, default="cuda")
+args = parser.parse_args()
 
+from . import helper
+from .load_reasoning_jsonl import load_reasoning_jsonl_sample
+from .models.checkpoint_loader import load_stage2_inference_bundle
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Run Alpamayo-style end-to-end wrapper inference on one JSONL sample."
-    )
-    parser.add_argument("--stage2-checkpoint", type=str, required=True)
-    parser.add_argument("--stage1b-checkpoint", type=str, required=True)
-    parser.add_argument("--sample-jsonl", type=str, required=True)
-    parser.add_argument("--sample-index", type=int, default=0)
-    parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--num-traj-samples", type=int, default=1)
-    parser.add_argument("--num-traj-sets", type=int, default=1)
-    parser.add_argument("--max-generation-length", type=int, default=256)
-    parser.add_argument("--flow-steps", type=int, default=10)
-    parser.add_argument("--temperature", type=float, default=0.6)
-    parser.add_argument("--top-p", type=float, default=0.98)
-    parser.add_argument("--top-k", type=int, default=0)
-    parser.add_argument("--image-min-pixels", type=int, default=CANONICAL_IMAGE_MIN_PIXELS)
-    parser.add_argument("--image-max-pixels", type=int, default=CANONICAL_IMAGE_MAX_PIXELS)
-    parser.add_argument("--output-json", type=str, default="")
-    return parser
+if args.sample_index < 0:
+    raise RuntimeError("`sample_index` must be >= 0.")
 
+device = torch.device(args.device)
+if device.type != "cuda":
+    raise RuntimeError("`test_inference.py` currently expects CUDA.")
 
-def main() -> None:
-    args = build_parser().parse_args()
-    from .stage2.reasoning_sft.bundle import load_stage2_inference_bundle
-    from .stage2.reasoning_sft.dataset import load_reasoning_sample
-    from .stage2.reasoning_sft.inference import build_wrapper_inputs_for_sample
+print(f"Loading dataset for sample_index: {args.sample_index}...")
+data = load_reasoning_jsonl_sample(args.sample_jsonl, sample_index=args.sample_index)
+print("Dataset loaded.")
+messages = helper.create_message(data["image_frames"].flatten(0, 1))
 
-    if args.sample_index < 0:
-        raise RuntimeError("`sample_index` must be >= 0.")
-    if args.num_traj_samples <= 0:
-        raise RuntimeError("`num_traj_samples` must be > 0.")
-    if args.num_traj_sets <= 0:
-        raise RuntimeError("`num_traj_sets` must be > 0.")
-    if args.max_generation_length <= 0:
-        raise RuntimeError("`max_generation_length` must be > 0.")
-    if args.flow_steps <= 0:
-        raise RuntimeError("`flow_steps` must be > 0.")
-    validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
+bundle = load_stage2_inference_bundle(
+    stage2_checkpoint_path=args.stage2_checkpoint,
+    stage1b_checkpoint_path=args.stage1b_checkpoint,
+    image_min_pixels=helper.MIN_PIXELS,
+    image_max_pixels=helper.MAX_PIXELS,
+    flow_steps=10,
+    device=device,
+)
+model = bundle["wrapper"]
+processor = helper.get_processor(model.tokenizer)
 
-    device = torch.device(
-        args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
-    )
-    if device.type != "cuda":
-        raise RuntimeError("`test_inference.py` currently expects CUDA.")
-    enforce_runtime_prerequisites(git_cwd=Path(__file__).resolve().parent)
+inputs = processor.apply_chat_template(
+    messages,
+    tokenize=True,
+    add_generation_prompt=False,
+    continue_final_message=True,
+    return_dict=True,
+    return_tensors="pt",
+)
+model_inputs = {
+    "tokenized_data": inputs,
+    "ego_history_xyz": data["ego_history_xyz"],
+    "ego_history_rot": data["ego_history_rot"],
+}
 
-    bundle = load_stage2_inference_bundle(
-        stage2_checkpoint_path=args.stage2_checkpoint,
-        stage1b_checkpoint_path=args.stage1b_checkpoint,
-        image_min_pixels=args.image_min_pixels,
-        image_max_pixels=args.image_max_pixels,
-        flow_steps=args.flow_steps,
-        device=device,
-    )
-    sample = load_reasoning_sample(args.sample_jsonl, args.sample_index)
-    wrapper_inputs = build_wrapper_inputs_for_sample(
-        processor=bundle["processor"],
-        sample=sample,
-        history_token_count=int(bundle["history_quantizer"].token_count),
-        device=device,
+model_inputs = helper.to_device(model_inputs, device)
+
+torch.cuda.manual_seed_all(42)
+with torch.autocast("cuda", dtype=torch.bfloat16):
+    pred_xyz, pred_rot, extra = model.sample_trajectories_from_data_with_vlm_rollout(
+        data=model_inputs,
+        top_p=0.98,
+        temperature=0.6,
+        num_traj_samples=1,
+        max_generation_length=256,
+        return_extra=True,
     )
 
-    torch.cuda.manual_seed_all(42)
-    with torch.autocast("cuda", dtype=torch.bfloat16):
-        pred_xyz, pred_rot, extra = bundle["wrapper"].sample_trajectories_from_data_with_vlm_rollout(
-            data=wrapper_inputs,
-            top_p=args.top_p,
-            top_k=None if args.top_k <= 0 else int(args.top_k),
-            temperature=args.temperature,
-            num_traj_samples=args.num_traj_samples,
-            num_traj_sets=args.num_traj_sets,
-            max_generation_length=args.max_generation_length,
-            return_extra=True,
-        )
+print("Chain-of-Causation (per trajectory):\n", extra["cot"][0])
 
-    print("Chain-of-Causation (per trajectory):\n", extra["cot"][0])
-
-    gt_xy = sample["ego_future_xyz"].cpu().numpy()[0, :, :2]
-    pred_xy = pred_xyz.detach().cpu().numpy()[0, :, :, :, :2].reshape(-1, gt_xy.shape[0], 2)
-    diff = np.linalg.norm(pred_xy - gt_xy[None, ...], axis=-1).mean(-1)
-    min_ade = float(diff.min())
-    print("minADE:", min_ade, "meters")
-
-    payload = {
-        "stage2_checkpoint": str(Path(args.stage2_checkpoint).resolve()),
-        "stage1b_checkpoint": str(Path(args.stage1b_checkpoint).resolve()),
-        "sample_jsonl": str(Path(args.sample_jsonl).resolve()),
-        "sample_index": int(args.sample_index),
-        "sample_id": str(sample["sample_id"]),
-        "min_ade_m": min_ade,
-        "cot": extra["cot"][0].tolist(),
-        "prediction_shape": list(pred_xyz.shape),
-        "prediction_xyz": pred_xyz.detach().cpu().tolist(),
-        "prediction_rot": pred_rot.detach().cpu().tolist(),
-    }
-    if args.output_json:
-        output_path = Path(args.output_json).resolve()
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-if __name__ == "__main__":
-    main()
+gt_xy = data["ego_future_xyz"].cpu()[0, 0, :, :2].T.numpy()
+pred_xy = pred_xyz.cpu().numpy()[0, 0, :, :, :2].transpose(0, 2, 1)
+diff = np.linalg.norm(pred_xy - gt_xy[None, ...], axis=1).mean(-1)
+min_ade = diff.min()
+print("minADE:", min_ade, "meters")
+print(
+    "Note: VLA-reasoning models produce nondeterministic outputs due to trajectory sampling, "
+    "hardware differences, etc. With num_traj_samples=1 (set for GPU memory compatibility), "
+    "variance in minADE is expected. For visual sanity checks, see notebooks/inference.ipynb"
+)
