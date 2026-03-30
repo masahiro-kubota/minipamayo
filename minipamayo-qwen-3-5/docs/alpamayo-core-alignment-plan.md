@@ -59,8 +59,10 @@ diff -u \
   のみ
 - top-level shared core 配下で Alpamayo 側に同名 file が無い extra file は、現時点では
   - `contract/record_adapter.py`
-  - `models/action_expert.py`
-  のみ
+  - `models/expert_cache_utils.py`
+- `Stage1B` 固有の extra file は、現時点では
+  - `stage1/stage1b_expert.py`
+  - `stage1/stage1b_diffusion.py`
 - `Stage1B` 専用 diffusion adapter は mirror を汚さないため
   `stage1/stage1b_diffusion.py` へ退避した
 - したがって、`helper.py`, `config.py`, `geometry/rotation.py`, `models/action_in_proj.py`,
@@ -144,7 +146,7 @@ diff -u \
   - detached path だが、現在は `FlowMatching(x_dims=expert.action_dims)` を使い、
     timestep も expert 側 shared helper で整形している
   - つまり action-space shape / timestep rank の契約は Alpamayo 本家の integrated path に揃えている
-  - `loss/sample` 本体は `models/action_expert.py` の shared helper に寄せており、
+  - `loss/sample` 本体は `stage1/stage1b_expert.py` の shared helper に寄せており、
     `stage1b_diffusion.py` 自体は thin wrapper に留めている
   - detached runtime 側の diffusion 組み立ても `diffusion_cfg` 相当の dict から instantiate する
   - 差分の主因は「integrated `AlpamayoR1.diffusion.sample(step_fn=...)` を、
@@ -152,13 +154,18 @@ diff -u \
     shape 契約そのものではない
   - `Qwen3.5` 由来ではない
   - `過去 image なし` 由来でもない
-- `models/action_expert.py` `[STAGE-SPLIT]` `[QWEN3.5-RUNTIME]` `[NOT-NO-PAST-IMAGE]`
+- `stage1/stage1b_expert.py` `[STAGE-SPLIT]` `[QWEN3.5-RUNTIME]` `[NOT-NO-PAST-IMAGE]`
   - `Stage1B` 用 shared action expert 本体
   - ファイルが存在する主因は、Alpamayo 本家では `AlpamayoR1` の中に内包されている expert path を、
     `Stage1B` 単体の checkpoint / train / eval / inference から使えるように外出ししていること
   - したがって主ラベルは `[STAGE-SPLIT]`
   - ただし実装の一部には `Qwen3_5DynamicCache` の `crop()` 非対応に合わせた cache clone 処理が入っており、
     そこは `[QWEN3.5-RUNTIME]` 差分
+  - `過去 image なし` はこのファイルの主因ではない
+- `models/expert_cache_utils.py` `[QWEN3.5-RUNTIME]` `[NOT-NO-PAST-IMAGE]`
+  - `clone_prompt_cache_for_expert` など、`AlpamayoR1` と detached `Stage1B` の両方が使う cache utility
+  - `models/` に残しているのは、この最小 shared utility を `alpamayo_r1.py` から直接使うため
+  - 主因は `Qwen3_5DynamicCache` の `crop()` 非対応を吸う runtime 差分
   - `過去 image なし` はこのファイルの主因ではない
 
 ### 5. 差分ソース抜粋
@@ -251,22 +258,18 @@ def canonical_action_tensor_from_record(record: dict) -> torch.Tensor:
 `stage1/stage1b_diffusion.py`
 
 ```python
-sampler = FlowMatching(
-    x_dims=expert.action_dims,
-    num_inference_steps=self.n_steps,
+conditioning = expert.prepare_conditioning(
+    prompt_cache=prompt_cache,
+    prompt_attention_mask=prompt_attention_mask,
 )
-
-def step_fn(*, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-    _, t_expert = reshape_flow_matching_timesteps(t, batch_size=x.shape[0])
-    return expert(
-        noisy_action=x,
-        t=t_expert,
-        prompt_cache=prompt_cache,
-        prompt_attention_mask=prompt_attention_mask,
-    )
+return flow_matching_sample(
+    expert=expert,
+    conditioning=conditioning,
+    n_steps=self.n_steps,
+)
 ```
 
-`models/action_expert.py`
+`models/expert_cache_utils.py`
 
 ```python
 def clone_prompt_cache_for_expert(prompt_cache, num_layers: int):
@@ -283,17 +286,20 @@ def clone_prompt_cache_for_expert(prompt_cache, num_layers: int):
 
 対象:
 - `contract/record_adapter.py`
-- `models/action_expert.py`
+- `models/expert_cache_utils.py`
+- `stage1/stage1b_expert.py`
 - `stage1/stage1b_diffusion.py`
 
 方針:
-- `contract/record_adapter.py` と `models/action_expert.py` は
-  「Alpamayo に無い repo 固有 core」として top-level shared に残す
-- `stage1/stage1b_diffusion.py` は Stage1B 専用 adapter として `stage1/` に置く
+- `contract/record_adapter.py` と `models/expert_cache_utils.py` は
+  「Alpamayo に無い repo 固有 shared utility」として top-level に残す
+- `stage1/stage1b_expert.py` と `stage1/stage1b_diffusion.py` は
+  Stage1B 専用実装として `stage1/` に置く
 - pure Alpamayo mirror を置く `diffusion/` には戻さない
 
 注意:
 - `record_adapter.py` は Alpamayo loader 不在を埋める層であり、`contract/` に置く
+- `expert_cache_utils.py` は `alpamayo_r1.py` から直接使う最小 shared utility だけを残す
 - `stage1b_diffusion.py` は Stage1B train/eval/inference が使う stage-specific shared 実装
   - detached adapter ではあるが、action-space shape / timestep rank の契約は
     Alpamayo 本家の integrated path に揃えている

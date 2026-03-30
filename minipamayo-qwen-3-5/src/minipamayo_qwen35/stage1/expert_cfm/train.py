@@ -33,7 +33,6 @@ from ...utils.run_metadata import (
     collect_gpu_info,
     collect_processor_settings,
 )
-from ...models.action_expert import Stage1ActionExpert
 from ..stage1a_conditioning import (
     extract_prompt_cache,
     freeze_module,
@@ -42,6 +41,7 @@ from ..stage1a_conditioning import (
     prepare_condition_inputs,
 )
 from ..stage1b_diffusion import build_stage1b_diffusion_cfg, instantiate_stage1b_diffusion
+from ..stage1b_expert import Stage1ActionExpert
 from .cli import parse_stage1b_json_only_args
 from .metadata import build_stage1b_metadata, compute_action_stats
 

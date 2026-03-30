@@ -215,7 +215,7 @@
 
 問題:
 
-- Stage3 が top-level `models/action_expert.py` / `stage1/stage1b_diffusion.py` を十分活用していない
+- Stage3 が `stage1/stage1b_expert.py` / `stage1/stage1b_diffusion.py` を十分活用していない
 
 扱い:
 

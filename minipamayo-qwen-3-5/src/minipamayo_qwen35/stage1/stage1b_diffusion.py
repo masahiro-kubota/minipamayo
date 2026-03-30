@@ -8,7 +8,7 @@ import hydra.utils as hyu
 import torch
 import torch.nn as nn
 
-from ..models.action_expert import (
+from .stage1b_expert import (
     flow_matching_loss,
     flow_matching_sample,
 )

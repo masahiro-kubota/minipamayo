@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +10,8 @@ import torch
 import torch.nn as nn
 from transformers import AutoConfig, AutoModel
 
-from .action_in_proj import PerWaypointActionInProjV2
+from ..models.action_in_proj import PerWaypointActionInProjV2
+from ..models.expert_cache_utils import clone_prompt_cache_for_expert, validate_prompt_cache_layers
 from ..diffusion.flow_matching import FlowMatching
 
 
@@ -54,48 +54,6 @@ def prompt_cache_seq_length(prompt_cache, fallback_seq_len: int) -> int:
         if seq_len > 0:
             return seq_len
     return int(fallback_seq_len)
-
-
-def _validate_prompt_cache_layers(prompt_cache, num_layers: int) -> None:
-    if hasattr(prompt_cache, "key_cache") and hasattr(prompt_cache, "value_cache"):
-        if len(prompt_cache.key_cache) < num_layers or len(prompt_cache.value_cache) < num_layers:
-            raise RuntimeError(
-                "Prompt cache does not have enough layers for the configured expert.\n"
-                f"prompt_cache_layers={len(prompt_cache.key_cache)}\n"
-                f"expert_layers={num_layers}"
-            )
-        return
-    if isinstance(prompt_cache, tuple):
-        if len(prompt_cache) < num_layers:
-            raise RuntimeError(
-                "Prompt cache tuple does not have enough layers for the configured expert.\n"
-                f"prompt_cache_layers={len(prompt_cache)}\n"
-                f"expert_layers={num_layers}"
-            )
-        return
-    if isinstance(prompt_cache, list):
-        if len(prompt_cache) < num_layers:
-            raise RuntimeError(
-                "Prompt cache list does not have enough layers for the configured expert.\n"
-                f"prompt_cache_layers={len(prompt_cache)}\n"
-                f"expert_layers={num_layers}"
-            )
-        return
-    raise RuntimeError(f"Unsupported prompt cache type for Stage 1B expert: {type(prompt_cache)!r}")
-
-
-def clone_prompt_cache_for_expert(prompt_cache, num_layers: int):
-    _validate_prompt_cache_layers(prompt_cache, num_layers)
-    if hasattr(prompt_cache, "key_cache") and hasattr(prompt_cache, "value_cache"):
-        cloned = copy.deepcopy(prompt_cache)
-        cloned.key_cache = list(cloned.key_cache[:num_layers])
-        cloned.value_cache = list(cloned.value_cache[:num_layers])
-        return cloned
-    if isinstance(prompt_cache, tuple):
-        return tuple(prompt_cache[:num_layers])
-    if isinstance(prompt_cache, list):
-        return list(prompt_cache[:num_layers])
-    raise RuntimeError(f"Unsupported prompt cache type for Stage 1B expert: {type(prompt_cache)!r}")
 
 
 def build_expert_position_ids(
@@ -216,7 +174,7 @@ def prepare_expert_conditioning(
             "Stage 1B expert expects a 2D prompt attention mask.\n"
             f"prompt_attention_mask.shape={tuple(prompt_attention_mask.shape)!r}"
         )
-    _validate_prompt_cache_layers(prompt_cache, num_layers)
+    validate_prompt_cache_layers(prompt_cache, num_layers)
     prefill_seq_len = prompt_cache_seq_length(prompt_cache, prompt_attention_mask.shape[1])
     return Stage1ExpertConditioning(
         prompt_cache=prompt_cache,

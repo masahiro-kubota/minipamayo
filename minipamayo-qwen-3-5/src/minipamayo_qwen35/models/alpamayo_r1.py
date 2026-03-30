@@ -27,7 +27,7 @@ from transformers.generation.logits_process import LogitsProcessor, LogitsProces
 from minipamayo_qwen35.action_space.action_space import ActionSpace
 from minipamayo_qwen35.config import AlpamayoR1Config
 from minipamayo_qwen35.diffusion.base import BaseDiffusion
-from minipamayo_qwen35.models.action_expert import clone_prompt_cache_for_expert
+from minipamayo_qwen35.models.expert_cache_utils import clone_prompt_cache_for_expert
 from minipamayo_qwen35.models.base_model import ReasoningVLA
 from minipamayo_qwen35.models.token_utils import (
     StopAfterEOS,
