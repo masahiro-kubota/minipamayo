@@ -69,7 +69,11 @@ def create_message(frames: torch.Tensor):
 
 
 def get_processor(tokenizer: AutoTokenizer) -> AutoProcessor:
-    """Get the processor for the Qwen3-VL-2B-Instruct model."""
+    """Get the processor for the tokenizer, reusing a saved processor when available."""
+    saved_processor = getattr(tokenizer, "_minipamayo_saved_processor", None)
+    if saved_processor is not None:
+        return saved_processor
+
     processor_kwargs = {
         "min_pixels": MIN_PIXELS,
         "max_pixels": MAX_PIXELS,

@@ -167,7 +167,7 @@ def checkpoint_payload(
 def main() -> None:
     wandb_run = None
     args = parse_args()
-    from .bundle import load_stage2_training_bundle
+    from ...models.checkpoint_loader import load_stage2_training_bundle
     from .dataset import (
         build_stage2_handoff_probe_dataset,
         build_stage2_train_val_dataloaders,

@@ -119,7 +119,7 @@ def main() -> None:
     args = parse_args()
     from ...contract.prompt import TRAJ_FUTURE_START_TOKEN
     from ...contract.record_adapter import canonicalize_history_batch_for_action_space
-    from .bundle import load_stage2_inference_bundle
+    from ...models.checkpoint_loader import load_stage2_inference_bundle
     from .dataset import load_reasoning_sample
 
     device = require_stage2_cuda_device(

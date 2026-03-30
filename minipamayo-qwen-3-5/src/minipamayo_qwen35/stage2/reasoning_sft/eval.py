@@ -51,7 +51,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    from .bundle import load_stage2_checkpoint_bundle
+    from ...models.checkpoint_loader import load_stage2_checkpoint_bundle
     from .dataset import ReasoningSftJsonlDataset, build_reasoning_sft_dataloader
     from .runtime import evaluate_stage2
 
