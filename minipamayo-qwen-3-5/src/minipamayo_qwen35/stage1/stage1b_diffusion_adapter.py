@@ -8,7 +8,7 @@ import hydra.utils as hyu
 import torch
 import torch.nn as nn
 
-from .stage1b_expert import (
+from .stage1b_action_expert import (
     flow_matching_loss,
     flow_matching_sample,
 )
@@ -107,7 +107,7 @@ def build_stage1b_diffusion_cfg(
     n_steps: int = DEFAULT_STAGE1B_FLOW_STEPS,
 ) -> dict:
     return {
-        "_target_": "minipamayo_qwen35.stage1.stage1b_diffusion.FlowMatchingDiffusion",
+        "_target_": "minipamayo_qwen35.stage1.stage1b_diffusion_adapter.FlowMatchingDiffusion",
         "beta_alpha": float(beta_alpha),
         "beta_beta": float(beta_beta),
         "n_steps": int(n_steps),

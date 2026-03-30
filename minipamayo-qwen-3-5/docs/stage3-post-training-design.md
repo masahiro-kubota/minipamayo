@@ -198,8 +198,8 @@ o -> Reason tokens + discrete action tokens -> continuous trajectory for reward/
   - trajectory reward と motion eval の基盤にする
 - 中身:
   - `models/alpamayo_r1.py`
-  - `stage1/stage1b_expert.py`
-  - `stage1/stage1b_diffusion.py`
+  - `stage1/stage1b_action_expert.py`
+  - `stage1/stage1b_diffusion_adapter.py`
   - `action_space/`
 
 ## rollout contract

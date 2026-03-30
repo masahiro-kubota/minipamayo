@@ -61,7 +61,7 @@
 今の repo では `kappa_only` は `Stage1A` の discrete target 実験としては存在するが、
 `Stage1B` は canonical `(accel, kappa)` を前提にしている。
 
-特に [stage1b_expert.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/stage1b_expert.py) は
+特に [stage1b_action_expert.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/stage1b_action_expert.py) は
 `2 action channels` を前提にしているため、`Stage1B` をそのまま `kappa_only` 化すると
 action space, normalization, rollout, checkpoint contract をまとめて崩す。
 
@@ -413,7 +413,7 @@ PID 置換で大きく悪化した場合、候補は主に 3 つ。
 - action rollout 側:
   [record_adapter.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/contract/record_adapter.py)
   と
-  [stage1b_expert.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/stage1b_expert.py)
+  [stage1b_action_expert.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/stage1b_action_expert.py)
   の契約に合わせる
 
 到達条件:

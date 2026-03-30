@@ -16,12 +16,12 @@ from ...contract.record_adapter import (
 )
 from ...action_space.unicycle_accel_curvature import UnicycleAccelCurvatureActionSpace
 from ...contract.history_tokens import HistoryTokenRegistry, HistoryTrajectoryQuantizer
-from ..stage1b_diffusion import (
+from ..stage1b_diffusion_adapter import (
     BaseDiffusion,
     build_stage1b_diffusion_cfg,
     instantiate_stage1b_diffusion,
 )
-from ..stage1b_expert import Stage1ActionExpert, load_action_expert_from_checkpoint
+from ..stage1b_action_expert import Stage1ActionExpert, load_action_expert_from_checkpoint
 from ..stage1a_conditioning import (
     extract_prompt_cache,
     freeze_module,

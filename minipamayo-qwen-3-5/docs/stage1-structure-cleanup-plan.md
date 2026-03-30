@@ -48,9 +48,9 @@
 いまの `core/` は実質 compatibility wrapper である。
 
 - `model.py`
-  - `stage1/stage1b_expert.py` の再 export
+  - `stage1/stage1b_action_expert.py` の再 export
 - `diffusion.py`
-  - `stage1/stage1b_diffusion.py` の再 export
+  - `stage1/stage1b_diffusion_adapter.py` の再 export
 - `common.py`
   - Stage1B 固有の prompt-cache / metadata helper
 
@@ -91,7 +91,7 @@ stage1/
 反映:
 - `stage1/expert_cfm/core/model.py` は削除した
 - `stage1/expert_cfm/core/diffusion.py` は削除した
-- 必要な import は `stage1.stage1b_expert` / `stage1.stage1b_diffusion` に直した
+- 必要な import は `stage1.stage1b_action_expert` / `stage1.stage1b_diffusion_adapter` に直した
 - `stage1/expert_cfm/core/common.py` は `stage1/expert_cfm/common.py` に移した
 
 理由:
