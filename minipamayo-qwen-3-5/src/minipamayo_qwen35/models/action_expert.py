@@ -140,6 +140,47 @@ def build_expert_attention_mask_from_offsets(
     return build_expert_attention_mask(prompt_mask, prefill_seq_len, future_token_count)
 
 
+def reshape_action_for_expert(
+    action: torch.Tensor,
+    *,
+    action_dims: tuple[int, int],
+    action_dim: int,
+) -> torch.Tensor:
+    """Canonicalize flat or structured Stage 1B actions to action-space shape."""
+
+    if action.dim() >= 2 and tuple(action.shape[-2:]) == action_dims:
+        return action
+    if action.shape[-1] == action_dim:
+        return action.reshape(*action.shape[:-1], *action_dims)
+    raise RuntimeError(
+        "Stage 1B action tensor does not match the canonical action-space contract.\n"
+        f"expected_flat_last_dim={action_dim}\n"
+        f"expected_structured_suffix={action_dims!r}\n"
+        f"found={tuple(action.shape)!r}"
+    )
+
+
+def restore_action_shape(
+    structured_action: torch.Tensor,
+    *,
+    reference: torch.Tensor,
+    action_dims: tuple[int, int],
+    action_dim: int,
+) -> torch.Tensor:
+    """Restore an action-space tensor to the caller's original flat/structured shape."""
+
+    if reference.dim() >= 2 and tuple(reference.shape[-2:]) == action_dims:
+        return structured_action
+    if reference.shape[-1] == action_dim:
+        return structured_action.reshape(*reference.shape[:-1], action_dim)
+    raise RuntimeError(
+        "Stage 1B action tensor does not match the canonical action-space contract.\n"
+        f"expected_flat_last_dim={action_dim}\n"
+        f"expected_structured_suffix={action_dims!r}\n"
+        f"found={tuple(reference.shape)!r}"
+    )
+
+
 class Stage1ActionExpert(nn.Module):
     """Prompt-cache-conditioned action expert aligned with public Alpamayo structure."""
 
@@ -238,16 +279,36 @@ class Stage1ActionExpert(nn.Module):
         )
 
     def normalize(self, action: torch.Tensor) -> torch.Tensor:
-        out = action.to(torch.float32).clone()
-        out[:, 0::2] = (out[:, 0::2] - self.accel_mean) / self.accel_std
-        out[:, 1::2] = (out[:, 1::2] - self.kappa_mean) / self.kappa_std
-        return out
+        structured_action = reshape_action_for_expert(
+            action,
+            action_dims=self.action_dims,
+            action_dim=self.action_dim,
+        )
+        out = structured_action.to(torch.float32).clone()
+        out[..., 0] = (out[..., 0] - self.accel_mean) / self.accel_std
+        out[..., 1] = (out[..., 1] - self.kappa_mean) / self.kappa_std
+        return restore_action_shape(
+            out,
+            reference=action,
+            action_dims=self.action_dims,
+            action_dim=self.action_dim,
+        )
 
     def denormalize(self, action: torch.Tensor) -> torch.Tensor:
-        out = action.to(torch.float32).clone()
-        out[:, 0::2] = out[:, 0::2] * self.accel_std + self.accel_mean
-        out[:, 1::2] = out[:, 1::2] * self.kappa_std + self.kappa_mean
-        return out
+        structured_action = reshape_action_for_expert(
+            action,
+            action_dims=self.action_dims,
+            action_dim=self.action_dim,
+        )
+        out = structured_action.to(torch.float32).clone()
+        out[..., 0] = out[..., 0] * self.accel_std + self.accel_mean
+        out[..., 1] = out[..., 1] * self.kappa_std + self.kappa_mean
+        return restore_action_shape(
+            out,
+            reference=action,
+            action_dims=self.action_dims,
+            action_dim=self.action_dim,
+        )
 
     def forward(
         self,
@@ -257,19 +318,25 @@ class Stage1ActionExpert(nn.Module):
         prompt_cache,
         prompt_attention_mask: torch.Tensor,
     ) -> torch.Tensor:
-        if noisy_action.shape[-1] != self.action_dim:
-            raise RuntimeError(
-                f"Expected action dim {self.action_dim}, got {noisy_action.shape[-1]}."
-            )
         if prompt_attention_mask.dim() != 2:
             raise RuntimeError(
                 "Stage 1B expert expects a 2D prompt attention mask.\n"
                 f"prompt_attention_mask.shape={tuple(prompt_attention_mask.shape)!r}"
             )
 
-        batch_size = noisy_action.shape[0]
-        noisy_action = noisy_action.reshape(batch_size, self.k, self.action_dims[-1])
-        future_token_embeds = self.action_in_proj(noisy_action, t)
+        structured_noisy_action = reshape_action_for_expert(
+            noisy_action,
+            action_dims=self.action_dims,
+            action_dim=self.action_dim,
+        )
+        batch_size = structured_noisy_action.shape[0]
+        if prompt_attention_mask.shape[0] != batch_size:
+            raise RuntimeError(
+                "Stage 1B expert batch size does not match the prompt attention mask.\n"
+                f"batch_size={batch_size}\n"
+                f"prompt_attention_mask.shape={tuple(prompt_attention_mask.shape)!r}"
+            )
+        future_token_embeds = self.action_in_proj(structured_noisy_action, t)
 
         # Qwen3_5DynamicCache does not implement crop(), so keep the prefill
         # cache immutable and hand each expert call its own clone.
@@ -297,8 +364,13 @@ class Stage1ActionExpert(nn.Module):
             **forward_kwargs,
         )
         last_hidden = expert_out.last_hidden_state[:, -self.k :]
-        pred = self.action_out_proj(last_hidden).reshape(batch_size, self.action_dim)
-        return pred
+        pred = self.action_out_proj(last_hidden)
+        return restore_action_shape(
+            pred,
+            reference=noisy_action,
+            action_dims=self.action_dims,
+            action_dim=self.action_dim,
+        )
 
 
 def cfm_loss(
@@ -310,12 +382,20 @@ def cfm_loss(
     beta_alpha: float = 2.0,
     beta_beta: float = 5.0,
 ) -> torch.Tensor:
+    gt_action = reshape_action_for_expert(
+        gt_action,
+        action_dims=expert.action_dims,
+        action_dim=expert.action_dim,
+    )
     normalized_gt_action = expert.normalize(gt_action)
     noise = torch.randn_like(normalized_gt_action)
     beta_dist = torch.distributions.Beta(beta_alpha, beta_beta)
     t = beta_dist.sample((gt_action.shape[0],)).to(device=gt_action.device, dtype=torch.float32)
     t_column, t_expert = reshape_flow_matching_timesteps(t, batch_size=gt_action.shape[0])
-    mixed = t_column * normalized_gt_action + (1.0 - t_column) * noise
+    t_mixed = t_column
+    while t_mixed.dim() < normalized_gt_action.dim():
+        t_mixed = t_mixed.unsqueeze(-1)
+    mixed = t_mixed * normalized_gt_action + (1.0 - t_mixed) * noise
     target = normalized_gt_action - noise
     pred = expert(
         noisy_action=mixed,
@@ -339,7 +419,7 @@ def cfm_sample(
     batch_size = prompt_attention_mask.shape[0]
     current = torch.randn(
         batch_size,
-        expert.action_dim,
+        *expert.action_dims,
         device=prompt_attention_mask.device,
         dtype=expert.action_out_proj.weight.dtype,
     )

@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 
 from ..diffusion.flow_matching import FlowMatching
-from ..models.action_expert import reshape_flow_matching_timesteps
+from ..models.action_expert import reshape_action_for_expert, reshape_flow_matching_timesteps
 
 
 class BaseDiffusion(nn.Module):
@@ -60,6 +60,11 @@ class FlowMatchingDiffusion(BaseDiffusion):
         prompt_cache,
         prompt_attention_mask: torch.Tensor,
     ) -> torch.Tensor:
+        gt_action = reshape_action_for_expert(
+            gt_action,
+            action_dims=expert.action_dims,
+            action_dim=expert.action_dim,
+        )
         normalized_gt_action = expert.normalize(gt_action)
         noise = torch.randn_like(normalized_gt_action)
         beta_dist = torch.distributions.Beta(self.beta_alpha, self.beta_beta)
@@ -68,7 +73,10 @@ class FlowMatchingDiffusion(BaseDiffusion):
             dtype=torch.float32,
         )
         t_column, t_expert = reshape_flow_matching_timesteps(t, batch_size=gt_action.shape[0])
-        mixed = t_column * normalized_gt_action + (1.0 - t_column) * noise
+        t_mixed = t_column
+        while t_mixed.dim() < normalized_gt_action.dim():
+            t_mixed = t_mixed.unsqueeze(-1)
+        mixed = t_mixed * normalized_gt_action + (1.0 - t_mixed) * noise
         target = normalized_gt_action - noise
         pred = expert(
             noisy_action=mixed,
@@ -88,7 +96,7 @@ class FlowMatchingDiffusion(BaseDiffusion):
     ) -> torch.Tensor:
         batch_size = prompt_attention_mask.shape[0]
         sampler = FlowMatching(
-            x_dims=expert.action_dim,
+            x_dims=expert.action_dims,
             num_inference_steps=self.n_steps,
         )
 

@@ -141,12 +141,12 @@ diff -u \
   - `過去 image なし` 由来でもない
 - `stage1/stage1b_diffusion.py` `[STAGE-SPLIT]` `[NOT-NO-PAST-IMAGE]`
   - `Stage1B` の expert decoding に必要な diffusion adapter
-  - ただし Alpamayo 本家の integrated inference path と shape 契約が完全一致しているわけではない
-  - 現状は `x_dims=expert.action_dim` の平坦化に repo 固有差分がある
-  - `t` rank の扱いは shared 側で正規化したが、Alpamayo 本家の integrated path と完全一致したわけではない
-  - したがって「repo 固有 core」ではあるが、Alpamayo との継続 diff 対象でもある
-  - 主因は Alpamayo 本家の integrated `AlpamayoR1.diffusion.sample(step_fn=...)` を、
-    `Stage1B` 単体 runner から呼べるように切り出していること
+  - detached path だが、現在は `FlowMatching(x_dims=expert.action_dims)` を使い、
+    timestep も expert 側 shared helper で整形している
+  - つまり action-space shape / timestep rank の契約は Alpamayo 本家の integrated path に揃えている
+  - 差分の主因は「integrated `AlpamayoR1.diffusion.sample(step_fn=...)` を、
+    `Stage1B` 単体 runner から呼べるように切り出していること」であり、
+    shape 契約そのものではない
   - `Qwen3.5` 由来ではない
   - `過去 image なし` 由来でもない
 - `models/action_expert.py` `[STAGE-SPLIT]` `[QWEN3.5-RUNTIME]` `[NOT-NO-PAST-IMAGE]`
@@ -249,7 +249,7 @@ def canonical_action_tensor_from_record(record: dict) -> torch.Tensor:
 
 ```python
 sampler = FlowMatching(
-    x_dims=expert.action_dim,
+    x_dims=expert.action_dims,
     num_inference_steps=self.n_steps,
 )
 
@@ -292,8 +292,10 @@ def clone_prompt_cache_for_expert(prompt_cache, num_layers: int):
 注意:
 - `record_adapter.py` は Alpamayo loader 不在を埋める層であり、`contract/` に置く
 - `stage1b_diffusion.py` は Stage1B train/eval/inference が使う stage-specific shared 実装
-  - ただし「shared に置いたら比較完了」ではない
-  - Alpamayo 本家の integrated path と shape / contract がずれていないかは別途確認し続ける
+  - detached adapter ではあるが、action-space shape / timestep rank の契約は
+    Alpamayo 本家の integrated path に揃えている
+  - 今後比較対象になるのは「shape 契約」ではなく、
+    detached adapter という配置そのものが必要かどうか
 
 ### 2. wrapper builder は当面 runner に残す
 

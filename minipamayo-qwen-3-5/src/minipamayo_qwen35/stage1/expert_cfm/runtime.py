@@ -185,7 +185,6 @@ def sample_stage1b_action(
 
     if compute_loss and gt_action is None:
         raise RuntimeError("`gt_action` is required when `compute_loss=True`.")
-    batch_size = int(condition.prompt_attention_mask.shape[0])
     with _stage1b_amp_context(runtime.device):
         loss = None
         if compute_loss and gt_action is not None:
@@ -199,7 +198,7 @@ def sample_stage1b_action(
             expert=runtime.expert,
             prompt_cache=condition.prompt_cache,
             prompt_attention_mask=condition.prompt_attention_mask,
-        ).reshape(batch_size, -1, 2)
+        )
     return pred_action, loss
 
 
