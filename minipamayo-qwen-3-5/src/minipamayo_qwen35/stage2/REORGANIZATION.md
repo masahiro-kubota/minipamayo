@@ -36,11 +36,8 @@
   - `parse_*_json_only_args(...)`
   - 共通 path key / list key の定義
   - CUDA 前提や runtime 前提の共通検証
-- `train_data.py`
-  - `stage1/stage1_train_data.py` 相当
-  - `ReasoningSftJsonlDataset` 用の train/val dataloader 構築
-  - `val_fraction` 分割ロジック
-  - handoff probe dataset 構築
+- `dataset.py`
+  - `ReasoningSftJsonlDataset`, collate, train/val dataloader, handoff probe dataset
 - `runtime.py`
   - `stage1/stage1a_runtime.py`, `stage1/expert_cfm/runtime.py` 相当
   - 学習周辺の足回りは `stage1/stage1_train_runtime.py` をそのまま使う
@@ -50,10 +47,6 @@
   - teacher-forced eval
   - reasoning rollout + handoff 用 helper
   - runtime dataclass の定義
-- `metadata.py`
-  - `stage1/expert_cfm/metadata.py` 相当
-  - `stage2_metadata` の生成
-  - checkpoint payload / summary payload の canonical builder
 - `bundle.py`
   - `stage2 inference/eval/train` が共有する復元経路
   - Stage 1A 復元は `stage1a_components` / `stage1a_conditioning` に委譲する
@@ -63,6 +56,13 @@
 - `wrapper.py`
   - Alpamayo wrapper の組み立てに専念
   - config 解析や sample I/O は持たない
+
+必要になったら第二段階で次を追加抽出する。
+
+- `train_data.py`
+  - dataset/dataloader 周辺がさらに肥大化したときだけ切り出す
+- `metadata.py`
+  - checkpoint payload / summary payload builder が複数 caller に広がったときだけ切り出す
 
 ## 想定ディレクトリ構成
 
@@ -77,30 +77,16 @@ stage2/
     ├── __init__.py
     ├── cli.py
     ├── dataset.py
-    ├── train_data.py
     ├── runtime.py
-    ├── metadata.py
     ├── bundle.py
     ├── wrapper.py
+    ├── train.py
+    ├── eval.py
+    ├── inference.py
     ├── preprocess/
     │   ├── __init__.py
     │   ├── __main__.py
     │   └── build_jsonl.py
-    ├── train/
-    │   ├── __init__.py
-    │   ├── __main__.py
-    │   ├── canonical.py
-    │   └── runner.py
-    ├── eval/
-    │   ├── __init__.py
-    │   ├── __main__.py
-    │   ├── canonical.py
-    │   └── runner.py
-    └── inference/
-        ├── __init__.py
-        ├── __main__.py
-        ├── canonical.py
-        └── runner.py
 ```
 
 この構成での役割分担は次です。
@@ -108,25 +94,176 @@ stage2/
 - `cli.py`
   - `train/eval/inference` が共有する config-json 解決と引数 validation
 - `dataset.py`
-  - `ReasoningSftJsonlDataset` と collate
-- `train_data.py`
-  - train/val split, dataloader, handoff probe dataset
+  - `ReasoningSftJsonlDataset`, collate, train/val split, dataloader, handoff probe dataset
 - `runtime.py`
   - teacher-forced batch 準備、loss、metrics、eval、rollout helper
-- `metadata.py`
-  - `stage2_metadata`, checkpoint payload, summary payload
 - `bundle.py`
   - Stage 1A / Stage 2 / Stage 1B をまたぐ復元経路の共通化
 - `wrapper.py`
   - Alpamayo wrapper の assembly
-- `train/eval/inference/runner.py`
+- `train.py`, `eval.py`, `inference.py`
   - entrypoint ごとの薄い orchestration
 
 補足です。
 
 - `common.py` はこの構成では不要にするか、残すとしてもごく小さい pure helper のみを置く
 - `preprocess/` は当面は独立のままでよい
-- `canonical.py` と `__main__.py` は公開 entrypoint 名を壊さないための薄いラッパとして残す
+- `train/`, `eval/`, `inference/` のネストは `stage1` と揃わないので、最終形としては採らない
+- もし既存の module path 互換が必要なら、`train/`, `eval/`, `inference/` は一時的な shim としてだけ残す
+
+## リファクタ開始前に固定しておく前提
+
+着手前に、次の前提を文書上で固定しておく必要があります。
+
+### 1. 最初の PR では挙動を変えない
+
+最初の PR の目的は構造整理であって、学習ロジックや推論ロジックの改善ではありません。
+
+そのため、最初の PR では次を変えない前提で進めます。
+
+- config JSON の schema
+- CLI 引数名
+- checkpoint schema
+- summary / output JSON の key
+- seed, autocast, generation parameter の既定動作
+- Stage 1A / Stage 1B checkpoint の解釈方法
+
+### 2. 公開 entrypoint は壊さない
+
+少なくとも次の実行経路は、リファクタ途中でも維持する前提にします。
+
+- `python -m minipamayo_qwen35.stage2.reasoning_sft.preprocess`
+- `python -m minipamayo_qwen35.stage2.reasoning_sft.train`
+- `python -m minipamayo_qwen35.stage2.reasoning_sft.eval`
+- `python -m minipamayo_qwen35.stage2.reasoning_sft.inference`
+
+### 3. 既存 import path も確認対象に含める
+
+現状は docs や補助コードが次のような path を参照しています。
+
+- `minipamayo_qwen35.stage2.reasoning_sft.train`
+- `minipamayo_qwen35.stage2.reasoning_sft.eval`
+- `minipamayo_qwen35.stage2.reasoning_sft.inference`
+- `minipamayo_qwen35.stage2.reasoning_sft.inference.runner`
+
+特に `src/minipamayo_qwen35/test_inference.py` は `inference.runner` を直接 import しています。
+
+このため、`train.py` / `eval.py` / `inference.py` への flatten は最終形としては自然でも、最初の PR では次のどちらかが必要です。
+
+- 旧 path を shim で残す
+- 参照箇所を同じ PR で一括更新する
+
+結論として、flatten は第一段階の必須条件ではなく、互換性整理とセットで扱うべきです。
+
+## 最初の PR のスコープ
+
+最初の PR は、移動よりも「共通責務の抽出」を優先します。
+
+含めるもの:
+
+- `cli.py` の追加
+- `dataset.py` への dataloader / handoff probe 構築の寄せ
+- `runtime.py` の追加
+- `bundle.py` の追加
+- `wrapper.py` の責務縮小
+- 既存 runner から shared module を呼ぶ形への書き換え
+
+含めないもの:
+
+- いきなりの大規模ファイル移動
+- public module path の削除
+- checkpoint schema の変更
+- output JSON schema の変更
+
+この文書の想定ディレクトリ構成は最終形の候補であって、第一段階の PR で必ずそこまで到達する必要はありません。
+
+## 旧実装から新責務への対応表
+
+着手時に迷わないよう、まずは次の対応表で移すのがよいです。
+
+| 現在の場所 | 新しい置き場 | 備考 |
+| --- | --- | --- |
+| `train/runner.py:_load_config_args`, `eval/runner.py:_load_config_args`, `inference/runner.py:_load_config_args` | `cli.py` | `stage1_json_cli.py` の wrapper に寄せる |
+| `train/runner.py:build_dataloaders` | `dataset.py` | handoff probe dataset 構築も同じ場所に寄せる |
+| `common.py:prepare_stage2_batch` | `runtime.py` | teacher-forced path の中心 |
+| `common.py:compute_weighted_loss` | `runtime.py` | pure function のままでよい |
+| `common.py:compute_token_metrics` | `runtime.py` | pure function のままでよい |
+| `common.py:evaluate` | `runtime.py` | `evaluate_stage2(...)` に寄せる |
+| `common.py:generate_reasoning_handoff` | `runtime.py` | rollout helper |
+| `common.py:evaluate_handoff_probe` | `runtime.py` | probe 専用 helper |
+| `wrapper.py:load_stage2_inference_bundle` | `bundle.py` | `wrapper.py` 自体は assembly 専用に縮小する |
+| `train/runner.py` の `stage2_metadata` / checkpoint payload 生成 | 当面は `train/runner.py` に残す | schema を固定した後、必要なら `metadata.py` へ出す |
+
+## どの時点で flatten するか
+
+`stage1` と揃えるなら、最終的には `reasoning_sft/train.py`, `eval.py`, `inference.py` が自然です。
+
+ただし、現状は次の制約があります。
+
+- `python -m minipamayo_qwen35.stage2.reasoning_sft.train` などの entrypoint が存在する
+- docs が `stage2/reasoning_sft/train` という現在構成を前提に書かれている
+- 一部コードが `inference.runner` を import している
+
+そのため、flatten の推奨順は次です。
+
+1. まず shared module を追加し、既存 `train/runner.py`, `eval/runner.py`, `inference/runner.py` を薄くする
+2. 互換性 shim を作るか、参照箇所を一括更新できる状態にする
+3. そのあとで `train.py`, `eval.py`, `inference.py` へ flatten する
+
+つまり、flatten 自体は「整理の仕上げ」であって、「最初の分割作業」ではありません。
+
+## リファクタ中の互換性ルール
+
+途中段階では、次を壊したら失敗とみなします。
+
+- `uv run python -m minipamayo_qwen35.stage2.reasoning_sft.train --help`
+- `uv run python -m minipamayo_qwen35.stage2.reasoning_sft.eval --help`
+- `uv run python -m minipamayo_qwen35.stage2.reasoning_sft.inference --help`
+- 既存 config JSON での引数解決
+- 既存 checkpoint の load
+- `test_inference.py` が依存している import path
+
+## 最低限の検証項目
+
+リファクタ各段階で、少なくとも次は確認します。
+
+### import / entrypoint
+
+- `python -m minipamayo_qwen35.stage2.reasoning_sft.train --help`
+- `python -m minipamayo_qwen35.stage2.reasoning_sft.eval --help`
+- `python -m minipamayo_qwen35.stage2.reasoning_sft.inference --help`
+- `python -m minipamayo_qwen35.stage2.reasoning_sft.preprocess --help`
+
+### config / runtime
+
+- 既存 config JSON を 1 つ使って `parse_args()` が通る
+- train/eval/inference で path resolution の結果が変わっていない
+- Stage 2 checkpoint から `stage1a_checkpoint` を引く経路が維持されている
+
+### payload / schema
+
+- train checkpoint の top-level key が変わっていない
+- eval summary の top-level key が変わっていない
+- inference output JSON の top-level key が変わっていない
+
+### behavior smoke
+
+- teacher-forced eval が 1 batch 動く
+- inference が 1 sample 動く
+- handoff probe が有効時に code path を通る
+
+## Open Questions
+
+着手前に埋めるべき open question は次です。
+
+- flatten を第一段階でやるか、第二段階に送るか
+  - 現時点では第二段階を推奨
+- `stage2_metadata` builder を初手から作るか
+  - 現時点では不要
+- `dataset.py` に train loader helper を寄せるか、すぐ `train_data.py` を作るか
+  - 現時点では `dataset.py` で十分
+- `inference.runner` import を public API とみなすか
+  - 少なくとも移行期間中は壊さない前提で扱う
 
 ## Stage 1 と共通化できるところ
 
@@ -234,9 +371,11 @@ stage2/
 
 特に `run_stage2_teacher_forced_batch(...)` を導入すると、`train` と `eval` が `stage1a` の `run_stage1a_teacher_forced_batch(...)` と同じ読み味になります。
 
-## 4. Data loader を `stage1_train_data.py` 型に外出しする
+## 4. Data loader はまず `dataset.py` に寄せる
 
-今の `build_dataloaders(args)` は `train/runner.py` に閉じていますが、これは `stage1/stage1_train_data.py` と同じく shared に出してよい責務です。
+今の `build_dataloaders(args)` は `train/runner.py` に閉じていますが、これは少なくとも runner からは外に出すべきです。
+
+ただし `stage2` はまだ単一タスクなので、初手から `train_data.py` を増やす必要はありません。まずは `dataset.py` に寄せるのが妥当です。
 
 最低限ほしい API は次です。
 
@@ -245,9 +384,13 @@ stage2/
 
 これにより、train runner から dataset 分割と loader 設定を外せます。validation split の条件や `max_samples` の扱いも 1 箇所に固定できます。
 
-## 5. metadata / checkpoint schema を builder 化する
+もし将来 `dataset.py` が肥大化したら、その時点で `stage1/stage1_train_data.py` 相当として `train_data.py` を追加すれば十分です。
 
-`stage2_metadata` の組み立て、checkpoint payload、summary payload は runner の中に直接書かず、builder にまとめるべきです。
+## 5. metadata / checkpoint schema は最初は runner に残してよい
+
+`stage2_metadata` の組み立て、checkpoint payload、summary payload は、まず schema と key 名を安定させることを優先します。
+
+ただし、これも初手から `metadata.py` を増やす必要はありません。まずは key 名と schema を安定させ、複数 caller で同じ payload builder が欲しくなった時点で切り出す方が自然です。
 
 候補 API:
 
@@ -270,7 +413,7 @@ stage2/
 
 - `bundle.py` が checkpoint / stage1a / stage1b の読み込み順序を管理する
 - `wrapper.py` は「必要な部品が揃ったら Alpamayo wrapper を組む」だけにする
-- `inference/runner.py` は sample 読み込みと output payload 生成だけに寄せる
+- `inference.py` は sample 読み込みと output payload 生成だけに寄せる
 
 つまり依存方向を次に固定します。
 
@@ -286,20 +429,20 @@ stage2/
 
 整理後の runner は次だけを持つのが望ましいです。
 
-### train/runner.py
+### train.py
 
 - train 用 parser
 - `main()`
 - optimizer / scheduler / early stopping の orchestration
 - log 出力
 
-### eval/runner.py
+### eval.py
 
 - eval 用 parser
 - `main()`
 - runtime を呼んで summary を書く
 
-### inference/runner.py
+### inference.py
 
 - inference 用 parser
 - sample 1 件の I/O
@@ -318,11 +461,12 @@ runner から消すべきものは次です。
 一気にやると壊れやすいので、次の順番を推奨します。
 
 1. `cli.py` を追加し、`train/eval/inference` の config 解決を共通化する
-2. `train_data.py` を追加し、train 側の dataset / split / handoff probe 構築を外出しする
+2. `dataset.py` に train 側の dataset / split / handoff probe 構築を寄せる
 3. `runtime.py` を追加し、`prepare_stage2_batch`, `evaluate`, `generate_reasoning_handoff` を移す
-4. `metadata.py` を追加し、`stage2_metadata` と checkpoint payload を builder 化する
-5. `bundle.py` を追加し、`eval` / `inference` の復元経路を共通化する
+4. `bundle.py` を追加し、`eval` / `inference` の復元経路を共通化する
+5. `wrapper.py` を assembly 専用に縮小する
 6. 最後に `common.py` を縮小し、runner を薄くする
+7. 必要になったら `train_data.py` / `metadata.py` を追加抽出する
 
 この順番なら、各段階で runner の public behavior をほぼ変えずに内部整理できます。
 
@@ -339,26 +483,32 @@ runner から消すべきものは次です。
 
 ## 完了条件
 
-整理が完了したと言える状態は次です。
+第一段階の完了条件は次です。
 
 - `train/eval/inference` に `_load_config_args(...)` が残っていない
 - `train/eval/inference` に `load_components(...)` の直呼びが残っていない
-- `stage2_metadata` と checkpoint payload が builder 経由でしか生成されない
 - Stage 2 の teacher-forced 評価 API が 1 箇所に定義されている
 - inference の wrapper 構築が bundle 経由に統一されている
+- `python -m minipamayo_qwen35.stage2.reasoning_sft.train/eval/inference` の entrypoint が壊れていない
 - README と code structure が一致している
+
+第二段階まで含めて整理完了と言うなら、さらに次を満たす状態です。
+
+- 必要なら `train.py`, `eval.py`, `inference.py` への flatten が完了している
+- 旧 import path が shim か一括更新で整理されている
+- `stage2_metadata` / checkpoint payload / summary payload builder を shared 化する必要が実際に生じており、その抽出が完了している
 
 ## ひとことで言うと
 
 `stage2` は今、機能自体よりも「entrypoint ごとの再実装」が負債になっています。
 
-`stage1a` / `stage1b` を参考にするなら、整理の軸は
+`stage1a` / `stage1b` を参考にするなら、第一段階の整理軸は
 
 - `json_cli`
-- `train_data`
+- `dataset`
 - `runtime`
-- `metadata`
 - `bundle`
+- `wrapper`
 
 の 5 層です。
 
