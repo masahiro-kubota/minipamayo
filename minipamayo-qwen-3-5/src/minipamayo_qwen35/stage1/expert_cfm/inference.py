@@ -9,6 +9,7 @@ from pathlib import Path
 import torch
 
 from ..dataset import Stage1JsonlDataset
+from ..vlm_ce.train import stage1_collate
 from .cli import (
     COMMON_CONFIG_PATH_KEYS,
     add_stage1b_common_args,
@@ -56,17 +57,7 @@ def main() -> None:
             f"`sample_index` {args.sample_index} is out of range for dataset size {len(dataset)}."
         )
     sample = dataset[args.sample_index]
-    batch = {
-        "sample_id": [sample["sample_id"]],
-        "image_path": [sample["image_path"]],
-        "action": sample["action"].unsqueeze(0),
-        "v0": sample["v0"].unsqueeze(0),
-        "dt": sample["dt"].unsqueeze(0),
-        "gt_waypoints": sample["gt_waypoints"].unsqueeze(0),
-        "ego_history_xyz": sample["ego_history_xyz"].unsqueeze(0),
-        "ego_history_rot": sample["ego_history_rot"].unsqueeze(0),
-        "command": [sample["command"]],
-    }
+    batch = stage1_collate([sample])
 
     runtime = load_stage1b_runtime(
         stage1_checkpoint=args.stage1_checkpoint,

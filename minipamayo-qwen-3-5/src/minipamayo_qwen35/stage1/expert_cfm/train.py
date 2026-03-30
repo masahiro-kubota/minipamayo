@@ -36,15 +36,15 @@ from ...utils.run_metadata import (
 )
 from ...diffusion.action_expert import FlowMatchingDiffusion
 from ...models.action_expert import Stage1ActionExpert
-from .cli import parse_stage1b_json_only_args
-from .metadata import build_stage1b_metadata, compute_action_stats
-from .stage1a_bridge import (
+from ..stage1a_conditioning import (
     extract_prompt_cache,
     freeze_module,
     infer_prompt_text,
     load_stage1_condition_components,
     prepare_condition_inputs,
 )
+from .cli import parse_stage1b_json_only_args
+from .metadata import build_stage1b_metadata, compute_action_stats
 
 CONFIG_PATH_KEYS = {
     "stage1_checkpoint",

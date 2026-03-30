@@ -18,14 +18,14 @@ from ...action_space.unicycle_accel_curvature import UnicycleAccelCurvatureActio
 from ...contract.history_tokens import HistoryTokenRegistry, HistoryTrajectoryQuantizer
 from ...diffusion.action_expert import FlowMatchingDiffusion
 from ...models.action_expert import Stage1ActionExpert, load_action_expert_from_checkpoint
-from .pid import apply_longitudinal_pid_override
-from .stage1a_bridge import (
+from ..stage1a_conditioning import (
     extract_prompt_cache,
     freeze_module,
     infer_prompt_text,
     load_stage1_condition_components,
     prepare_condition_inputs,
 )
+from .pid import apply_longitudinal_pid_override
 
 
 @dataclass(frozen=True)

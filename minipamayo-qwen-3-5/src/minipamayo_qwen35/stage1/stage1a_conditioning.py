@@ -1,4 +1,4 @@
-"""Frozen Stage 1A bridge helpers for canonical Stage 1B."""
+"""Shared Stage 1A conditioning helpers reused by downstream stages."""
 
 from __future__ import annotations
 
@@ -6,11 +6,11 @@ from pathlib import Path
 
 import torch
 
-from ...contract.task_spec import CanonicalStage1Spec
-from ...contract.prompt import DEFAULT_QUESTION, build_prompt_text
-from ...utils.image_budget import CANONICAL_IMAGE_MAX_PIXELS, CANONICAL_IMAGE_MIN_PIXELS
-from ..vlm_ce.eval import load_components
-from ..vlm_ce.train import model_forward_inputs, prepare_prompt_inputs_with_history
+from ..contract.prompt import DEFAULT_QUESTION, build_prompt_text
+from ..contract.task_spec import CanonicalStage1Spec
+from ..utils.image_budget import CANONICAL_IMAGE_MAX_PIXELS, CANONICAL_IMAGE_MIN_PIXELS
+from .vlm_ce.eval import load_components
+from .vlm_ce.train import model_forward_inputs, prepare_prompt_inputs_with_history
 
 
 def freeze_module(module) -> None:
@@ -21,16 +21,12 @@ def freeze_module(module) -> None:
 
 def infer_prompt_text(checkpoint: dict, processor) -> str:
     if "stage1_metadata" not in checkpoint or not isinstance(checkpoint["stage1_metadata"], dict):
-        raise RuntimeError(
-            "Stage 1B requires canonical `stage1_metadata` in the Stage 1A checkpoint."
-        )
+        raise RuntimeError("Stage 1A conditioning requires canonical `stage1_metadata`.")
     stage1_metadata = checkpoint["stage1_metadata"]
     if "question" not in stage1_metadata:
         raise RuntimeError("Stage 1A checkpoint metadata is missing canonical `question`.")
     if "history_token_count" not in stage1_metadata:
-        raise RuntimeError(
-            "Stage 1A checkpoint metadata is missing canonical `history_token_count`."
-        )
+        raise RuntimeError("Stage 1A checkpoint metadata is missing canonical `history_token_count`.")
     question = str(stage1_metadata["question"])
     if not question:
         question = DEFAULT_QUESTION
@@ -44,7 +40,7 @@ def infer_prompt_text(checkpoint: dict, processor) -> str:
 
 def load_stage1_condition_components(args):
     stage1_args = type(
-        "Stage1ExpertArgs",
+        "Stage1ConditionArgs",
         (),
         {
             "checkpoint": str(Path(args.stage1_checkpoint).resolve()),
@@ -112,6 +108,6 @@ def extract_prompt_cache(
     )
     past_key_values = outputs.past_key_values
     if not past_key_values:
-        raise RuntimeError("Frozen Stage 1 VLM did not return `past_key_values` for Stage 1B.")
+        raise RuntimeError("Frozen Stage 1A VLM did not return `past_key_values`.")
     attention_mask = prompt_inputs["attention_mask"].detach()
     return past_key_values, attention_mask
