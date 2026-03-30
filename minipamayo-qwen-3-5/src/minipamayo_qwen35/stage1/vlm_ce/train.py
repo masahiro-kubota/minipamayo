@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader, Subset, random_split
+from torch.utils.data import DataLoader, random_split
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
 from ...contract.prompt import DEFAULT_QUESTION
@@ -190,19 +190,6 @@ def build_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader 
         collate_fn=stage1_collate,
     )
     return train_loader, val_loader, len(train_dataset), len(val_dataset)
-
-
-def first_record_from_dataset(dataset) -> dict:
-    base_dataset = dataset
-    while isinstance(base_dataset, Subset):
-        base_dataset = base_dataset.dataset
-    if not hasattr(base_dataset, "records") or not base_dataset.records:
-        raise RuntimeError("Dataset does not expose canonical `records`.")
-    if isinstance(dataset, Subset):
-        first_index = int(dataset.indices[0])
-    else:
-        first_index = 0
-    return base_dataset.records[first_index]
 
 
 def evaluate(
