@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
 from ...contract.prompt import DEFAULT_QUESTION
@@ -27,9 +27,20 @@ from ...utils.run_metadata import (
     collect_gpu_info,
     collect_processor_settings,
 )
-from ..dataset import Stage1JsonlDataset, stage1_collate
-from .cli import parse_config_json_only_args
-from .components import (
+from ..stage1_train_data import build_stage1_train_val_dataloaders
+from ..stage1_train_runtime import (
+    best_metric_from_history,
+    format_gib,
+    log_gpu_preflight,
+    maybe_wandb_finish,
+    maybe_wandb_log,
+    metric_improved,
+    move_optimizer_state_to_device,
+    release_cuda_memory,
+    set_seed,
+    write_run_config,
+)
+from ..stage1a_components import (
     CHECKPOINT_KIND_FULL,
     CHECKPOINT_KIND_MODEL_ONLY,
     build_model_load_kwargs,
@@ -39,23 +50,14 @@ from .components import (
     load_checkpoint,
     resolve_dtype,
 )
-from .metrics import compute_token_accuracy
-from .runtime import (
+from ..stage1a_prompting import model_forward_inputs
+from ..stage1a_runtime import (
     Stage1ARuntime,
-    best_metric_from_history,
-    format_gib,
-    log_gpu_preflight,
-    maybe_wandb_finish,
-    maybe_wandb_log,
-    metric_improved,
-    model_forward_inputs,
-    move_optimizer_state_to_device,
     prepare_stage1a_training_batch,
-    release_cuda_memory,
     run_stage1a_teacher_forced_batch,
-    set_seed,
-    write_run_config,
 )
+from .cli import parse_config_json_only_args
+from .metrics import compute_token_accuracy
 
 CONFIG_PATH_KEYS = {
     "train_jsonl",
@@ -141,55 +143,6 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`early_stopping_min_delta` must be >= 0.")
     validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
     return args
-
-
-def build_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader | None, int, int]:
-    dataset = Stage1JsonlDataset(args.train_jsonl, max_samples=args.max_samples)
-    if len(dataset) == 0:
-        raise RuntimeError("Training dataset is empty.")
-
-    if args.val_jsonl:
-        train_dataset = dataset
-        val_dataset = Stage1JsonlDataset(args.val_jsonl, max_samples=args.max_samples)
-        if len(val_dataset) == 0:
-            raise RuntimeError("Validation dataset is empty.")
-    else:
-        if not (0.0 < args.val_fraction < 1.0):
-            raise RuntimeError(
-                "`val_fraction` must be in (0, 1) when `val_jsonl` is not provided."
-            )
-        val_size = max(1, int(len(dataset) * args.val_fraction))
-        train_size = len(dataset) - val_size
-        if train_size <= 0:
-            raise RuntimeError(
-                "Validation split left no training samples. Reduce `val_fraction` or use more data."
-            )
-        generator = torch.Generator().manual_seed(args.seed)
-        train_dataset, val_dataset = random_split(
-            dataset,
-            [train_size, val_size],
-            generator=generator,
-        )
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=True,
-        persistent_workers=args.num_workers > 0,
-        collate_fn=stage1_collate,
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        pin_memory=True,
-        persistent_workers=args.num_workers > 0,
-        collate_fn=stage1_collate,
-    )
-    return train_loader, val_loader, len(train_dataset), len(val_dataset)
 
 
 def evaluate(
@@ -388,7 +341,16 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
         git_metadata = collect_git_metadata(Path(__file__).resolve().parent)
         set_seed(args.seed)
 
-        train_loader, val_loader, train_size, val_size = build_dataloaders(args)
+        train_loader, val_loader, train_size, val_size = build_stage1_train_val_dataloaders(
+            train_jsonl=args.train_jsonl,
+            val_jsonl=args.val_jsonl,
+            max_samples=args.max_samples,
+            val_fraction=args.val_fraction,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            seed=args.seed,
+            require_validation_split=True,
+        )
         if len(train_loader) == 0:
             raise RuntimeError("Train DataLoader is empty.")
         train_dataset_fingerprint = collect_dataset_view_fingerprint(train_loader.dataset)

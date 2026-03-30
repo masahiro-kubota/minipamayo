@@ -30,6 +30,12 @@ from ...utils.run_metadata import (
     collect_gpu_info,
     collect_processor_settings,
 )
+from ..stage1_train_runtime import format_gib
+from ..stage1a_runtime import (
+    load_stage1a_runtime,
+    run_stage1a_rollout_batch,
+    run_stage1a_teacher_forced_batch,
+)
 from ..checkpoint_completion import require_completed_training_run
 from ...contract.task_spec import CanonicalStage1Spec, Stage1TaskSpec
 from ..dataset import Stage1JsonlDataset, stage1_collate
@@ -48,12 +54,6 @@ from .eval_artifacts import (
     yaw_deg_to_quaternion,
 )
 from .metrics import require_record_field
-from .runtime import (
-    format_gib,
-    load_stage1a_runtime,
-    run_stage1a_rollout_batch,
-    run_stage1a_teacher_forced_batch,
-)
 
 CONFIG_PATH_KEYS = {
     "checkpoint",

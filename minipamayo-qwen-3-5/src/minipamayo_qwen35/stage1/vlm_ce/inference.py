@@ -17,9 +17,9 @@ from ...utils.preflight import enforce_runtime_prerequisites
 from ...utils.run_metadata import collect_processor_settings
 from ..checkpoint_completion import require_completed_training_run
 from ..dataset import Stage1JsonlDataset, stage1_collate
+from ..stage1a_runtime import load_stage1a_runtime, run_stage1a_rollout_batch
 from .cli import parse_config_json_only_args
 from .metrics import infer_vision_tokens, require_record_field
-from .runtime import load_stage1a_runtime, run_stage1a_rollout_batch
 
 CONFIG_PATH_KEYS = {
     "checkpoint",

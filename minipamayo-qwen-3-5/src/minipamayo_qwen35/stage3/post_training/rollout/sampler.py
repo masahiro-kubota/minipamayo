@@ -9,7 +9,7 @@ from typing import Any
 import torch
 
 from ....contract.prompt import build_reasoning_prompt_text
-from ....stage1.vlm_ce.prompting import (
+from ....stage1.stage1a_prompting import (
     append_token_to_model_inputs,
     model_forward_inputs,
     prepare_prompt_inputs_with_history,

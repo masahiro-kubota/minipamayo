@@ -17,8 +17,8 @@ from ....utils.image_budget import (
     validate_canonical_image_budget,
 )
 from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
-from ....stage1.vlm_ce.components import load_checkpoint
-from ....stage1.vlm_ce.runtime import format_gib, set_seed
+from ....stage1.stage1_train_runtime import format_gib, set_seed
+from ....stage1.stage1a_components import load_checkpoint
 from ..common import CANONICAL_STAGE3_POLICY_OUTPUT_CONTRACT
 from ..dataset import Stage3PostTrainingDataset, stage3_post_training_collate
 from ..rewards import RewardWeights, aggregate_rewards, build_reasoning_reward_scorer

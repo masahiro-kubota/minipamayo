@@ -10,10 +10,10 @@ import time
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 
-from ..dataset import Stage1JsonlDataset, stage1_collate
-from ..vlm_ce.train import (
+from ..stage1_train_data import build_stage1_train_val_dataloaders
+from ..stage1_train_runtime import (
     format_gib,
     log_gpu_preflight,
     maybe_wandb_finish,
@@ -108,45 +108,6 @@ def parse_args() -> argparse.Namespace:
     if args.decoder_intermediate_size <= 0:
         raise RuntimeError("`decoder_intermediate_size` must be > 0.")
     return args
-
-
-def build_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader | None, int, int]:
-    train_dataset = Stage1JsonlDataset(args.train_jsonl, max_samples=args.max_samples)
-    if len(train_dataset) == 0:
-        raise RuntimeError("Training dataset is empty.")
-
-    if args.val_jsonl:
-        val_dataset = Stage1JsonlDataset(args.val_jsonl)
-        if len(val_dataset) == 0:
-            raise RuntimeError("Validation dataset is empty.")
-    elif len(train_dataset) >= 2 and args.val_fraction > 0:
-        val_size = max(1, int(round(len(train_dataset) * args.val_fraction)))
-        val_size = min(val_size, len(train_dataset) - 1)
-        train_size = len(train_dataset) - val_size
-        generator = torch.Generator().manual_seed(args.seed)
-        train_dataset, val_dataset = random_split(
-            train_dataset, [train_size, val_size], generator=generator
-        )
-    else:
-        val_dataset = None
-
-    loader_kwargs = {
-        "batch_size": args.batch_size,
-        "num_workers": args.num_workers,
-        "pin_memory": True,
-        "collate_fn": stage1_collate,
-        "persistent_workers": args.num_workers > 0,
-    }
-    train_loader = DataLoader(train_dataset, shuffle=True, drop_last=False, **loader_kwargs)
-    val_loader = None
-    if val_dataset is not None:
-        val_loader = DataLoader(val_dataset, shuffle=False, drop_last=False, **loader_kwargs)
-    return (
-        train_loader,
-        val_loader,
-        len(train_dataset),
-        len(val_dataset) if val_dataset is not None else 0,
-    )
 
 
 def resolve_expert_text_config(model, args: argparse.Namespace) -> dict:
@@ -278,7 +239,16 @@ def main() -> None:
             git_cwd=Path(__file__).resolve().parent,
         )
         gpu_preflight = log_gpu_preflight(device)
-        train_loader, val_loader, train_size, val_size = build_dataloaders(args)
+        train_loader, val_loader, train_size, val_size = build_stage1_train_val_dataloaders(
+            train_jsonl=args.train_jsonl,
+            val_jsonl=args.val_jsonl,
+            max_samples=args.max_samples,
+            val_fraction=args.val_fraction,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            seed=args.seed,
+            require_validation_split=False,
+        )
 
         (
             stage1_checkpoint,

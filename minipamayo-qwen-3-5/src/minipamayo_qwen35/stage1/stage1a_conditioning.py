@@ -9,8 +9,8 @@ import torch
 from ..contract.prompt import DEFAULT_QUESTION, build_prompt_text
 from ..contract.task_spec import CanonicalStage1Spec
 from ..utils.image_budget import CANONICAL_IMAGE_MAX_PIXELS, CANONICAL_IMAGE_MIN_PIXELS
-from .vlm_ce.prompting import model_forward_inputs, prepare_prompt_inputs_with_history
-from .vlm_ce.runtime import load_stage1a_runtime
+from .stage1a_prompting import model_forward_inputs, prepare_prompt_inputs_with_history
+from .stage1a_runtime import load_stage1a_runtime
 
 
 def freeze_module(module) -> None:

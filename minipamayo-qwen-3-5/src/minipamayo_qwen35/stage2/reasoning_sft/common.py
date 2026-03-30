@@ -16,7 +16,7 @@ from ...contract.prompt import (
     build_reasoning_prompt_text,
 )
 from ...models.token_utils import StopAfterEOS
-from ...stage1.vlm_ce.prompting import (
+from ...stage1.stage1a_prompting import (
     inject_history_inputs_embeds,
     model_forward_inputs,
     move_inputs_to_device,

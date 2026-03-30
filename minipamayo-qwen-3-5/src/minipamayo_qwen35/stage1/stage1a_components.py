@@ -6,10 +6,10 @@ from typing import Any
 import torch
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
-from ...contract.history_tokens import HistoryTokenRegistry, HistoryTrajectoryQuantizer
-from ...contract.prompt import PROMPT_SPECIAL_TOKENS, add_prompt_special_tokens
-from ...contract.task_spec import CanonicalStage1Spec, KappaOnlyStage1Spec, Stage1TaskSpec
-from ...contract.trajectory_tokens import Stage1TokenRegistry
+from ..contract.history_tokens import HistoryTokenRegistry, HistoryTrajectoryQuantizer
+from ..contract.prompt import PROMPT_SPECIAL_TOKENS, add_prompt_special_tokens
+from ..contract.task_spec import CanonicalStage1Spec, KappaOnlyStage1Spec, Stage1TaskSpec
+from ..contract.trajectory_tokens import Stage1TokenRegistry
 
 CHECKPOINT_KIND_FULL = "full"
 CHECKPOINT_KIND_MODEL_ONLY = "model_only"

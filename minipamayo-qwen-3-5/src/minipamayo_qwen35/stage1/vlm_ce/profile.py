@@ -15,9 +15,16 @@ from ...contract.task_spec import CanonicalStage1Spec
 from ...utils.json_config import normalize_required_string_list
 from ...utils.preflight import enforce_runtime_prerequisites
 from ..dataset import Stage1JsonlDataset, stage1_collate
+from ..stage1_train_runtime import format_gib, set_seed
+from ..stage1a_components import (
+    build_model_load_kwargs,
+    build_stage1_metadata,
+    build_training_token_contract,
+    resolve_dtype,
+)
+from ..stage1a_prompting import model_forward_inputs
+from ..stage1a_runtime import Stage1ARuntime, prepare_stage1a_training_batch
 from .cli import parse_config_json_only_args
-from .components import build_model_load_kwargs, build_stage1_metadata, build_training_token_contract, resolve_dtype
-from .runtime import Stage1ARuntime, format_gib, model_forward_inputs, prepare_stage1a_training_batch, set_seed
 
 CONFIG_PATH_KEYS = {"train_jsonl", "model_path", "output_json"}
 MULTI_VALUE_CONFIG_KEYS = {"train_jsonl"}

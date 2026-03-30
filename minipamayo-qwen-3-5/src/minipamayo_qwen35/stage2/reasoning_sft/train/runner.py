@@ -18,9 +18,7 @@ import torch
 from torch.utils.data import DataLoader, random_split
 
 from ....contract.sequence_layout import STAGE2_PROMPT_CONTRACT, STAGE2_TARGET_LAYOUT
-from ....stage1.vlm_ce.components import load_components
-from ....stage1.vlm_ce.prompting import model_forward_inputs
-from ....stage1.vlm_ce.runtime import (
+from ....stage1.stage1_train_runtime import (
     format_gib,
     log_gpu_preflight,
     maybe_wandb_finish,
@@ -30,6 +28,8 @@ from ....stage1.vlm_ce.runtime import (
     set_seed,
     write_run_config,
 )
+from ....stage1.stage1a_components import load_components
+from ....stage1.stage1a_prompting import model_forward_inputs
 from ....utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,

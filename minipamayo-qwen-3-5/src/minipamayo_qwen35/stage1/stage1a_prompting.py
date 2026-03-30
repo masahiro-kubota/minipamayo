@@ -4,15 +4,15 @@ import numpy as np
 import torch
 from PIL import Image
 
-from ...contract.history_tokens import (
+from ..contract.history_tokens import (
     HistoryTokenRegistry,
     HistoryTrajectoryQuantizer,
     encode_history_token_id_rows,
 )
-from ...contract.prompt import build_multimodal_messages, build_stage1_question_user_text
-from ...contract.task_spec import Stage1TaskSpec
-from ...contract.trajectory_tokens import Stage1TokenRegistry
-from ...helper import to_device
+from ..contract.prompt import build_multimodal_messages, build_stage1_question_user_text
+from ..contract.task_spec import Stage1TaskSpec
+from ..contract.trajectory_tokens import Stage1TokenRegistry
+from ..helper import to_device
 
 
 def move_inputs_to_device(batch: dict, device: torch.device) -> dict:
