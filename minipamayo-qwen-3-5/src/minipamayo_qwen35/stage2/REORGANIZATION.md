@@ -42,7 +42,7 @@
 
 `stage2` の整理でいちばん重要なのは、`minipamayo_qwen35` top-level にある source-of-truth 層を `stage2` 配下で再実装しないことです。
 
-この source-of-truth 層は、docs の [alpamayo-core-alignment-plan.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/alpamayo-core-alignment-plan.md) を基準に、次の 2 群に分けて扱います。
+この source-of-truth 層は、docs の [alpamayo-core-alignment-plan.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/design/alpamayo-core-alignment-plan.md) を基準に、次の 2 群に分けて扱います。
 
 ### A. pure / near-pure Alpamayo mirror
 

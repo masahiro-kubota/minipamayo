@@ -1,0 +1,34 @@
+{
+  "path_base": "project_root",
+  "args": {
+    "stage1_checkpoint": "checkpoints/stage1/vlm_ce/canonical/ignore_rule_data_k64_dt01_12gb/best.pt",
+    "train_jsonl": [
+      "datasets/processed/stage1/ignore_rule_data_k64_dt01/20260327_231917_town01_intersection_weave_ccw_expert_eval_0025824a9fa8/samples.jsonl",
+      "datasets/processed/stage1/ignore_rule_data_k64_dt01/20260327_231917_town01_intersection_weave_cw_expert_eval_0025824a9fa8/samples.jsonl",
+      "datasets/processed/stage1/ignore_rule_data_k64_dt01/20260327_231917_town01_perimeter_cw_expert_eval_0025824a9fa8/samples.jsonl"
+    ],
+    "save_dir": "checkpoints/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_12gb_safe",
+    "batch_size": 1,
+    "grad_accum_steps": 1,
+    "max_epochs": 10,
+    "lr": 1e-04,
+    "weight_decay": 0.01,
+    "warmup_ratio": 0.05,
+    "max_grad_norm": 1.0,
+    "early_stopping_patience": 2,
+    "early_stopping_min_delta": 0.0,
+    "val_fraction": 0.2,
+    "num_workers": 0,
+    "log_every": 10,
+    "seed": 7,
+    "decoder_num_layers": 6,
+    "decoder_intermediate_size": 2048,
+    "expert_non_causal_attention": true,
+    "num_fourier_feats": 20,
+    "fourier_max_freq": 100.0,
+    "mlp_hidden_size": 1024,
+    "mlp_num_layers": 4,
+    "wandb_project": "minipamayo-qwen35",
+    "wandb_run_name": "stage1-expert-cfm-ignore-rule-k64-dt01-12gb-safe"
+  }
+}

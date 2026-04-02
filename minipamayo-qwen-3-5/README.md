@@ -95,7 +95,7 @@ Canonical `Stage2 / reasoning_sft` expects the same observation contract as `Sta
 
 - required additions over Stage1: `reasoning_text`
 - required observation fields carried over: `ego_history_xyz`, `ego_history_rot`
-- contract note: [stage2-reasoning-sft-dataset-contract.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/stage2-reasoning-sft-dataset-contract.md)
+- contract note: [stage2-reasoning-sft-dataset-contract.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/design/stage2-reasoning-sft-dataset-contract.md)
 
 Stage 1 train outputs record:
 

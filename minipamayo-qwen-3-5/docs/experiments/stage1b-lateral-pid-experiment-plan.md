@@ -306,7 +306,7 @@ PID は少なくとも以下を使う。
 
 実験結果は、計画書とは別に次の markdown へ蓄積する。
 
-- [stage1b-lateral-pid-experiment-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/stage1b-lateral-pid-experiment-results.md)
+- [stage1b-lateral-pid-experiment-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/experiments/stage1b-lateral-pid-experiment-results.md)
 
 運用:
 
@@ -506,7 +506,7 @@ PID 置換で大きく悪化した場合、候補は主に 3 つ。
 - この step は interface / metric の技術確認だけに使う
 - `probe16` の結果は、最終的な性能判断には使わない
 - 実行後は結果を
-  [stage1b-lateral-pid-experiment-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/stage1b-lateral-pid-experiment-results.md)
+  [stage1b-lateral-pid-experiment-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/experiments/stage1b-lateral-pid-experiment-results.md)
   の `probe16 smoke` 欄に追記する
 
 ### 手順6. perimeter_cw 128 sample rung を回す
@@ -565,7 +565,7 @@ PID 置換で大きく悪化した場合、候補は主に 3 つ。
 - `Stage1A` gate を通る
 - それでも `Stage1B + PID` の結論がまだ曖昧なら、次の rung へ進む
 - 実行後は結果を
-  [stage1b-lateral-pid-experiment-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/stage1b-lateral-pid-experiment-results.md)
+  [stage1b-lateral-pid-experiment-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/experiments/stage1b-lateral-pid-experiment-results.md)
   の `perimeter_cw_curve128` 欄に追記する
 
 ### 手順7. perimeter_cw 512 sample rung を回す
@@ -594,7 +594,7 @@ PID 置換で大きく悪化した場合、候補は主に 3 つ。
   を `512 sample` 条件で回す
 - `128 sample` rung の checkpoint は使い回さない
 - 実行後は結果を
-  [stage1b-lateral-pid-experiment-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/stage1b-lateral-pid-experiment-results.md)
+  [stage1b-lateral-pid-experiment-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/experiments/stage1b-lateral-pid-experiment-results.md)
   の `perimeter_cw_curve512` 欄に追記する
 
 ### 手順8. perimeter_cw 2048 sample rung を回す
@@ -622,7 +622,7 @@ PID 置換で大きく悪化した場合、候補は主に 3 つ。
   を `2048 sample` 条件で回す
 - `512 sample` rung の checkpoint は使い回さない
 - 実行後は結果を
-  [stage1b-lateral-pid-experiment-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/stage1b-lateral-pid-experiment-results.md)
+  [stage1b-lateral-pid-experiment-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/experiments/stage1b-lateral-pid-experiment-results.md)
   の `perimeter_cw_curve2048` 欄に追記する
 
 ### 手順9. perimeter_cw full rung を回す
@@ -650,7 +650,7 @@ PID 置換で大きく悪化した場合、候補は主に 3 つ。
 - 手順6と同じ実験サイクルを、`perimeter_cw` full で回す
 - subset rung の checkpoint は使い回さない
 - 実行後は結果を
-  [stage1b-lateral-pid-experiment-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/stage1b-lateral-pid-experiment-results.md)
+  [stage1b-lateral-pid-experiment-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/experiments/stage1b-lateral-pid-experiment-results.md)
   の `perimeter_cw_full` 欄に追記する
 
 ### 手順10. weave_cw, weave_ccw を順に追加する

@@ -22,7 +22,7 @@
 
 参照:
 
-- [alpamayo-stage1-training-notes.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/alpamayo-stage1-training-notes.md)
+- [alpamayo-stage1-training-notes.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/notes/alpamayo-stage1-training-notes.md)
 
 ## 目標
 
@@ -234,7 +234,7 @@ configs/
 
 参照:
 
-- [stage2-reasoning-sft-dataset-contract.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/stage2-reasoning-sft-dataset-contract.md)
+- [stage2-reasoning-sft-dataset-contract.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/design/stage2-reasoning-sft-dataset-contract.md)
 
 ### 現状との差
 

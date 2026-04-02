@@ -1,6 +1,6 @@
 # Stage1B Lateral PID Experiment Results
 
-このファイルは、[stage1b-lateral-pid-experiment-plan.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/stage1b-lateral-pid-experiment-plan.md)
+このファイルは、[stage1b-lateral-pid-experiment-plan.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/experiments/stage1b-lateral-pid-experiment-plan.md)
 に沿って進める `Stage1B lateral + longitudinal PID override` 実験の結果を記録する。
 
 使い方:
