@@ -7,7 +7,7 @@ import json
 import random
 from pathlib import Path
 
-from ....stage1.dataset import read_jsonl
+from ....utils.jsonl import read_jsonl
 
 
 def select_curated_records(

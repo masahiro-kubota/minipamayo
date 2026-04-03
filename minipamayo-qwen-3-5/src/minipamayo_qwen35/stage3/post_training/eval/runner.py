@@ -4,29 +4,25 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader
 
 from ....utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
-from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
-from ....stage1.stage1_train_runtime import format_gib, set_seed
-from ....stage1.stage1a_components import load_checkpoint
+from ....utils.checkpoint import load_checkpoint
+from ....utils.train_runtime import format_gib, set_seed
+from ..cli import parse_stage3_json_only_args, resolve_stage3_device
 from ..common import CANONICAL_STAGE3_POLICY_OUTPUT_CONTRACT
-from ..dataset import Stage3PostTrainingDataset, stage3_post_training_collate
-from ..rewards import RewardWeights, aggregate_rewards, build_reasoning_reward_scorer
-from ..rewards.consistency import score_consistency
-from ..rewards.trajectory import score_trajectory
+from ..dataset import Stage3PostTrainingDataset, build_stage3_dataloader
+from ..rewards import RewardWeights, build_reasoning_reward_scorer
 from ..rollout import generate_grouped_rollouts, load_stage3_rollout_bundle
+from ..runtime import sample_view_from_batch, score_stage3_rollout, write_json
 
-PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {
     "checkpoint",
     "stage2_checkpoint",
@@ -35,6 +31,7 @@ CONFIG_PATH_KEYS = {
     "manifest_jsonl",
     "save_dir",
 }
+CONFIG_LIST_KEYS = {"eval_jsonl"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -70,51 +67,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _load_config_args(config_json: str, parser: argparse.ArgumentParser) -> tuple[str, dict, dict]:
-    config_path, payload = load_json_payload(config_json)
-    raw_config = payload.get("args") if isinstance(payload, dict) and "args" in payload else payload
-    if not isinstance(raw_config, dict):
-        raise RuntimeError("Config JSON must be an object or an object with an `args` object.")
-    base_dir = resolve_path_base(
-        config_path,
-        payload,
-        default_base="project_root",
-        base_dirs={
-            "project_root": PROJECT_ROOT,
-            "config_dir": config_path.parent,
-        },
-    )
-    config_args = normalize_arg_config(
-        raw_config,
-        parser,
-        exclude_dests={"help", "config_json"},
-        path_keys=CONFIG_PATH_KEYS,
-        list_keys={"eval_jsonl"},
-        base_dir=base_dir,
-    )
-    return str(config_path), payload, config_args
-
-
 def parse_args() -> argparse.Namespace:
-    if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
-        return build_parser().parse_args()
-
-    pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("--config-json", type=str, required=True)
-    pre_args, remaining = pre_parser.parse_known_args()
-    if remaining:
-        raise RuntimeError(
-            "Stage 3 evaluation accepts only --config-json. Put all settings in the JSON file."
-        )
-
     parser = build_parser()
-    config_path, config_payload, config_args = _load_config_args(pre_args.config_json, parser)
-    parser.set_defaults(**config_args, config_json=config_path)
-    args = parser.parse_args()
-    args.config_json = config_path
-    args.config_payload = config_payload
-    args.config_args = config_args
-
+    args = parse_stage3_json_only_args(
+        parser=parser,
+        path_keys=CONFIG_PATH_KEYS,
+        list_keys=CONFIG_LIST_KEYS,
+        json_only_error="Stage 3 evaluation accepts only --config-json. Put all settings in the JSON file.",
+    )
     if not args.stage2_checkpoint:
         raise RuntimeError("`stage2_checkpoint` must be defined in the config JSON.")
     if not args.stage1b_checkpoint:
@@ -127,37 +87,10 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def _write_json(path: Path, payload: dict | list) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-
-def _sample_view(batch: dict) -> dict:
-    sample = {
-        "sample_id": batch["sample_id"][0],
-        "image_path": batch["image_path"][0],
-        "action": batch["action"][0].detach().cpu(),
-        "v0": batch["v0"][0].detach().cpu(),
-        "gt_waypoints": batch["gt_waypoints"][0].detach().cpu(),
-        "dt": float(batch["dt"][0]),
-        "ego_history_xyz": batch["ego_history_xyz"][0].detach().cpu(),
-        "ego_history_rot": batch["ego_history_rot"][0].detach().cpu(),
-        "ego_future_xyz": batch["ego_future_xyz"][0].detach().cpu(),
-        "ego_future_rot": batch["ego_future_rot"][0].detach().cpu(),
-        "reasoning_text": batch["reasoning_text"][0],
-    }
-    for key in ("command", "planner_state", "decision_longitudinal", "decision_lateral"):
-        if key in batch:
-            sample[key] = batch[key][0]
-    return sample
-
-
 def main() -> None:
     args = parse_args()
     set_seed(args.seed)
-    device = torch.device(
-        args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
-    )
+    device = resolve_stage3_device(args.device)
     if device.type != "cuda":
         raise RuntimeError("This Stage 3 evaluator is intended to run on CUDA.")
 
@@ -172,13 +105,11 @@ def main() -> None:
     )
     if len(dataset) == 0:
         raise RuntimeError("Stage 3 eval dataset is empty.")
-    dataloader = DataLoader(
+    dataloader = build_stage3_dataloader(
         dataset,
         batch_size=1,
-        shuffle=False,
-        drop_last=False,
         num_workers=0,
-        collate_fn=stage3_post_training_collate,
+        shuffle=False,
     )
 
     bundle = load_stage3_rollout_bundle(
@@ -215,7 +146,7 @@ def main() -> None:
     total_valid = 0.0
 
     for batch in dataloader:
-        sample = _sample_view(batch)
+        sample = sample_view_from_batch(batch)
         rollouts = generate_grouped_rollouts(
             bundle=bundle,
             batch=batch,
@@ -226,30 +157,17 @@ def main() -> None:
             max_new_tokens=args.max_gen_tokens,
             requires_policy_grad=False,
         )
-        reward_rows = []
-        for rollout in rollouts:
-            reasoning_result = reasoning_scorer.score(sample, rollout.parsed.reasoning_text)
-            consistency_result = score_consistency(
-                reasoning_text=rollout.parsed.reasoning_text,
-                pred_future_xyz=rollout.pred_future_xyz,
-                v0=float(sample["v0"].item()),
-                dt=float(sample["dt"]),
-            )
-            trajectory_result = score_trajectory(
+        reward_rows = [
+            score_stage3_rollout(
                 sample=sample,
-                pred_future_xyz=rollout.pred_future_xyz,
-                l2_weight=args.traj_l2_weight,
-                jerk_weight=args.traj_jerk_weight,
+                rollout=rollout,
+                reasoning_scorer=reasoning_scorer,
+                reward_weights=reward_weights,
+                traj_l2_weight=args.traj_l2_weight,
+                traj_jerk_weight=args.traj_jerk_weight,
             )
-            reward_rows.append(
-                aggregate_rewards(
-                    reasoning=reasoning_result,
-                    consistency=consistency_result,
-                    trajectory=trajectory_result,
-                    weights=reward_weights,
-                )
-            )
-
+            for rollout in rollouts
+        ]
         best_index = max(range(len(reward_rows)), key=lambda idx: reward_rows[idx].total_reward)
         best_rollout = rollouts[best_index]
         best_reward = reward_rows[best_index]
@@ -304,6 +222,6 @@ def main() -> None:
         ),
         "elapsed_seconds": round(time.perf_counter() - start_time, 3),
     }
-    _write_json(save_dir / "summary.json", summary)
-    _write_json(save_dir / "samples.json", sample_rows)
+    write_json(save_dir / "summary.json", summary)
+    write_json(save_dir / "samples.json", sample_rows)
     print(json.dumps(summary, ensure_ascii=False))

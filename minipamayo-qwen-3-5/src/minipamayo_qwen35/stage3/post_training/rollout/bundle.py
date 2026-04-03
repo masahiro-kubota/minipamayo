@@ -10,7 +10,7 @@ from typing import Any
 import torch
 
 from ....models.checkpoint_loader import load_stage2_inference_bundle
-from ....stage1.stage1a_components import load_checkpoint
+from ....utils.checkpoint import load_checkpoint
 from ..common import freeze_model, validate_stage2_policy_contract
 
 
