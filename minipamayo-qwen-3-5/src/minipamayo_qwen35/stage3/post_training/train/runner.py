@@ -4,27 +4,23 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
-import sys
 import time
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader, random_split
 
 from ....utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
-from ....utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
 from ....utils.preflight import enforce_training_prerequisites
 from ....utils.run_metadata import (
     collect_dataset_view_fingerprint,
     collect_git_metadata,
     collect_gpu_info,
 )
-from ....stage1.stage1_train_runtime import (
+from ....utils.train_runtime import (
     format_gib,
     log_gpu_preflight,
     maybe_wandb_finish,
@@ -39,13 +35,12 @@ from ..common import (
     configure_trainable_policy,
     stage3_checkpoint_payload,
 )
-from ..dataset import Stage3PostTrainingDataset, stage3_post_training_collate
-from ..rewards import RewardWeights, aggregate_rewards, build_reasoning_reward_scorer
-from ..rewards.consistency import score_consistency
-from ..rewards.trajectory import score_trajectory
+from ..cli import parse_stage3_json_only_args, resolve_stage3_device
+from ..dataset import build_stage3_train_val_dataloaders
+from ..rewards import RewardWeights, build_reasoning_reward_scorer
 from ..rollout import generate_grouped_rollouts, load_stage3_rollout_bundle
+from ..runtime import sample_view_from_batch, score_stage3_rollout, write_json
 
-PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_PATH_KEYS = {
     "stage2_checkpoint",
     "stage1b_checkpoint",
@@ -54,6 +49,7 @@ CONFIG_PATH_KEYS = {
     "manifest_jsonl",
     "save_dir",
 }
+CONFIG_LIST_KEYS = {"train_jsonl", "val_jsonl"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -103,52 +99,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _load_config_args(config_json: str, parser: argparse.ArgumentParser) -> tuple[str, dict, dict]:
-    config_path, payload = load_json_payload(config_json)
-    raw_config = payload.get("args") if isinstance(payload, dict) and "args" in payload else payload
-    if not isinstance(raw_config, dict):
-        raise RuntimeError("Config JSON must be an object or an object with an `args` object.")
-
-    base_dir = resolve_path_base(
-        config_path,
-        payload,
-        default_base="project_root",
-        base_dirs={
-            "project_root": PROJECT_ROOT,
-            "config_dir": config_path.parent,
-        },
-    )
-    config_args = normalize_arg_config(
-        raw_config,
-        parser,
-        exclude_dests={"help", "config_json"},
-        path_keys=CONFIG_PATH_KEYS,
-        list_keys={"train_jsonl", "val_jsonl"},
-        base_dir=base_dir,
-    )
-    return str(config_path), payload, config_args
-
-
 def parse_args() -> argparse.Namespace:
-    if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
-        return build_parser().parse_args()
-
-    pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("--config-json", type=str, required=True)
-    pre_args, remaining = pre_parser.parse_known_args()
-    if remaining:
-        raise RuntimeError(
-            "Stage 3 training accepts only --config-json. Put all settings in the JSON file."
-        )
-
     parser = build_parser()
-    config_path, config_payload, config_args = _load_config_args(pre_args.config_json, parser)
-    parser.set_defaults(**config_args, config_json=config_path)
-    args = parser.parse_args()
-    args.config_json = config_path
-    args.config_payload = config_payload
-    args.config_args = config_args
-
+    args = parse_stage3_json_only_args(
+        parser=parser,
+        path_keys=CONFIG_PATH_KEYS,
+        list_keys=CONFIG_LIST_KEYS,
+        json_only_error="Stage 3 training accepts only --config-json. Put all settings in the JSON file.",
+    )
     if not args.stage2_checkpoint:
         raise RuntimeError("`stage2_checkpoint` must be defined in the config JSON.")
     if not args.stage1b_checkpoint:
@@ -169,99 +127,6 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def build_dataloaders(args: argparse.Namespace) -> tuple[DataLoader, DataLoader | None, int, int]:
-    train_dataset = Stage3PostTrainingDataset(
-        args.train_jsonl,
-        manifest_jsonl=args.manifest_jsonl or None,
-        max_samples=args.max_samples,
-    )
-    if len(train_dataset) == 0:
-        raise RuntimeError("Stage 3 training dataset is empty.")
-
-    if args.val_jsonl:
-        val_dataset = Stage3PostTrainingDataset(args.val_jsonl, max_samples=args.max_samples)
-        if len(val_dataset) == 0:
-            raise RuntimeError("Stage 3 validation dataset is empty.")
-    elif len(train_dataset) >= 2 and args.val_fraction > 0:
-        val_size = max(1, int(round(len(train_dataset) * args.val_fraction)))
-        val_size = min(val_size, len(train_dataset) - 1)
-        train_size = len(train_dataset) - val_size
-        generator = torch.Generator().manual_seed(args.seed)
-        train_dataset, val_dataset = random_split(
-            train_dataset,
-            [train_size, val_size],
-            generator=generator,
-        )
-    else:
-        val_dataset = None
-
-    loader_kwargs = {
-        "batch_size": args.batch_size,
-        "num_workers": args.num_workers,
-        "pin_memory": True,
-        "collate_fn": stage3_post_training_collate,
-        "persistent_workers": args.num_workers > 0,
-    }
-    train_loader = DataLoader(train_dataset, shuffle=True, drop_last=False, **loader_kwargs)
-    val_loader = None
-    if val_dataset is not None:
-        val_loader = DataLoader(val_dataset, shuffle=False, drop_last=False, **loader_kwargs)
-    return (
-        train_loader,
-        val_loader,
-        len(train_dataset),
-        len(val_dataset) if val_dataset is not None else 0,
-    )
-
-
-def _sample_view(batch: dict) -> dict:
-    sample = {
-        "sample_id": batch["sample_id"][0],
-        "image_path": batch["image_path"][0],
-        "action": batch["action"][0].detach().cpu(),
-        "v0": batch["v0"][0].detach().cpu(),
-        "gt_waypoints": batch["gt_waypoints"][0].detach().cpu(),
-        "dt": float(batch["dt"][0]),
-        "ego_history_xyz": batch["ego_history_xyz"][0].detach().cpu(),
-        "ego_history_rot": batch["ego_history_rot"][0].detach().cpu(),
-        "ego_future_xyz": batch["ego_future_xyz"][0].detach().cpu(),
-        "ego_future_rot": batch["ego_future_rot"][0].detach().cpu(),
-        "reasoning_text": batch["reasoning_text"][0],
-        "sample_weight": float(batch["sample_weight"][0].item()),
-    }
-    for key in ("command", "planner_state", "decision_longitudinal", "decision_lateral"):
-        if key in batch:
-            sample[key] = batch[key][0]
-    return sample
-
-
-def _score_rollout(sample: dict, rollout, reasoning_scorer, reward_weights: RewardWeights, args):
-    reasoning_result = reasoning_scorer.score(sample, rollout.parsed.reasoning_text)
-    consistency_result = score_consistency(
-        reasoning_text=rollout.parsed.reasoning_text,
-        pred_future_xyz=rollout.pred_future_xyz,
-        v0=float(sample["v0"].item()),
-        dt=float(sample["dt"]),
-    )
-    trajectory_result = score_trajectory(
-        sample=sample,
-        pred_future_xyz=rollout.pred_future_xyz,
-        l2_weight=args.traj_l2_weight,
-        jerk_weight=args.traj_jerk_weight,
-    )
-    return aggregate_rewards(
-        reasoning=reasoning_result,
-        consistency=consistency_result,
-        trajectory=trajectory_result,
-        weights=reward_weights,
-    )
-
-
-def _write_json(path: Path, payload: dict | list) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-
 def main() -> None:
     wandb_run = None
     args = parse_args()
@@ -275,9 +140,7 @@ def main() -> None:
     wall_start = time.perf_counter()
 
     try:
-        device = torch.device(
-            args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
-        )
+        device = resolve_stage3_device(args.device)
         if device.type != "cuda":
             raise RuntimeError("This Stage 3 trainer is intended to run on CUDA.")
         gpu_preflight = log_gpu_preflight(device)
@@ -285,7 +148,16 @@ def main() -> None:
         git_metadata = collect_git_metadata(Path(__file__).resolve().parent)
         set_seed(args.seed)
 
-        train_loader, val_loader, train_size, val_size = build_dataloaders(args)
+        train_loader, val_loader, train_size, val_size = build_stage3_train_val_dataloaders(
+            train_jsonl=args.train_jsonl,
+            val_jsonl=args.val_jsonl or None,
+            manifest_jsonl=args.manifest_jsonl or None,
+            max_samples=args.max_samples,
+            val_fraction=args.val_fraction,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            seed=args.seed,
+        )
         train_dataset_fingerprint = collect_dataset_view_fingerprint(train_loader.dataset)
         val_dataset_fingerprint = (
             collect_dataset_view_fingerprint(val_loader.dataset) if val_loader is not None else None
@@ -385,7 +257,7 @@ def main() -> None:
 
             optimizer.zero_grad(set_to_none=True)
             for batch_idx, batch in enumerate(train_loader, start=1):
-                sample = _sample_view(batch)
+                sample = sample_view_from_batch(batch)
                 rollouts = generate_grouped_rollouts(
                     bundle=bundle,
                     batch=batch,
@@ -397,7 +269,14 @@ def main() -> None:
                     requires_policy_grad=True,
                 )
                 reward_rows = [
-                    _score_rollout(sample, rollout, reasoning_scorer, reward_weights, args)
+                    score_stage3_rollout(
+                        sample=sample,
+                        rollout=rollout,
+                        reasoning_scorer=reasoning_scorer,
+                        reward_weights=reward_weights,
+                        traj_l2_weight=args.traj_l2_weight,
+                        traj_jerk_weight=args.traj_jerk_weight,
+                    )
                     for rollout in rollouts
                 ]
                 rewards_tensor = torch.tensor(
@@ -507,7 +386,7 @@ def main() -> None:
                 "epoch_seconds": round(time.perf_counter() - epoch_start, 3),
             }
             metrics_history.append(epoch_metrics)
-            _write_json(save_dir / "history.json", metrics_history)
+            write_json(save_dir / "history.json", metrics_history)
 
             checkpoint = stage3_checkpoint_payload(
                 model=policy_model,
@@ -540,7 +419,7 @@ def main() -> None:
                 ),
                 "elapsed_seconds": round(time.perf_counter() - wall_start, 3),
             }
-            _write_json(save_dir / "summary.json", summary)
+            write_json(save_dir / "summary.json", summary)
             maybe_wandb_log(
                 wandb_run,
                 {

@@ -17,13 +17,13 @@ from ...contract.prompt import (
     TRAJ_FUTURE_START_TOKEN,
     build_reasoning_prompt_text,
 )
-from ...models.token_utils import StopAfterEOS
-from ...stage1.stage1a_prompting import (
+from ...models.prompt_inputs import (
     inject_history_inputs_embeds,
     model_forward_inputs,
     move_inputs_to_device,
     prepare_prompt_inputs_with_history,
 )
+from ...models.token_utils import StopAfterEOS
 
 
 class TrajectoryLogitsProcessor(LogitsProcessor):
