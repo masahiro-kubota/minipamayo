@@ -210,31 +210,63 @@ wait_for_main_run_to_finish() {
   done
 }
 
+wait_for_path_or_main_run_end() {
+  local path="$1"
+  local label="$2"
+  local required_state="$3"
+  local state=""
+  while true; do
+    if [ -e "${path}" ]; then
+      log_line "path_ready label=${label} path=${path}"
+      return 0
+    fi
+    state="$(read_main_run_state)"
+    log_line "waiting_for_path label=${label} state=${state} path=${path}"
+    case "${state}" in
+      completed|failed|interrupted)
+        if [ "${required_state}" = "strict" ]; then
+          log_line "path_missing_after_main_run_end label=${label} state=${state} path=${path}"
+          return 1
+        fi
+        return 0
+        ;;
+      *)
+        sleep "${POLL_INTERVAL_S}"
+        ;;
+    esac
+  done
+}
+
 main() {
   prepare_log_root
   backup_outputs
 
-  local main_state
-  main_state="$(wait_for_main_run_to_finish)"
-  log_line "main_run_finished state=${main_state}"
-
-  require_path "${STAGE1A_BEST}" || {
+  wait_for_path_or_main_run_end "${STAGE1A_BEST}" "stage1a_best" "strict" || {
     write_run_status "failed" 20
     return 20
   }
+  wait_for_path_or_main_run_end "${STAGE1B_BEST}" "stage1b_best" "strict" || {
+    write_run_status "failed" 30
+    return 30
+  }
+
   run_stage \
     "stage1a_curve_eval" \
     uv run python -m minipamayo_qwen35.stage1.vlm_ce.eval \
       --config-json "${STAGE1A_EVAL_CONFIG}" || log_line "non_blocking_failure stage=stage1a_curve_eval"
 
-  require_path "${STAGE1B_BEST}" || {
-    write_run_status "failed" 30
-    return 30
-  }
   run_stage \
     "stage1b_curve_eval" \
     uv run python -m minipamayo_qwen35.stage1.expert_cfm.eval \
       --config-json "${STAGE1B_EVAL_CONFIG}" || log_line "non_blocking_failure stage=stage1b_curve_eval"
+
+  local main_state
+  wait_for_path_or_main_run_end "${STAGE2_BEST}" "stage2_best" "strict" || {
+    write_run_status "failed" 50
+    return 50
+  }
+  main_state="$(read_main_run_state)"
+  log_line "main_run_stage2_ready state=${main_state}"
 
   run_stage \
     "stage2_curve_eval_preprocess" \
@@ -248,10 +280,6 @@ main() {
     return 41
   }
 
-  require_path "${STAGE2_BEST}" || {
-    write_run_status "failed" 50
-    return 50
-  }
   run_stage \
     "stage2_curve_eval" \
     uv run python -m minipamayo_qwen35.stage2.reasoning_sft.eval \
