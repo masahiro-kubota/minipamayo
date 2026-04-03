@@ -10,7 +10,7 @@
 
 結果の記録先:
 
-- [stage1-stage2-ignore-rule-completion-run-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/experiments/stage1-stage2-ignore-rule-completion-run-results.md)
+- [stage1-stage2-ignore-rule-completion-run-results.md](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/docs/experiments/stage1-stage2-ignore-rule-completion-run-results.md)
 
 ## 目的
 
@@ -27,7 +27,7 @@
 
 raw data の正本:
 
-- [ignore_rule_data](/home/masa/minipamayo/minipamayo-qwen-3-5/datasets/raw/ignore_rule_data)
+- [ignore_rule_data](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/datasets/raw/ignore_rule_data)
 
 今回固定する 3 run:
 
@@ -37,15 +37,15 @@ raw data の正本:
 
 Stage1 canonical extraction config:
 
-- [ignore_rule_data_k64_dt01.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/data/ignore_rule_data_k64_dt01.json)
+- [ignore_rule_data_k64_dt01.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage1/data/ignore_rule_data_k64_dt01.json)
 
 Stage1 train JSONL:
 
-- [weave_ccw samples.jsonl](/home/masa/minipamayo/minipamayo-qwen-3-5/datasets/processed/stage1/ignore_rule_data_k64_dt01/20260327_231917_town01_intersection_weave_ccw_expert_eval_0025824a9fa8/samples.jsonl)
+- [weave_ccw samples.jsonl](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/datasets/processed/stage1/ignore_rule_data_k64_dt01/20260327_231917_town01_intersection_weave_ccw_expert_eval_0025824a9fa8/samples.jsonl)
   - `6423 samples`
-- [weave_cw samples.jsonl](/home/masa/minipamayo/minipamayo-qwen-3-5/datasets/processed/stage1/ignore_rule_data_k64_dt01/20260327_231917_town01_intersection_weave_cw_expert_eval_0025824a9fa8/samples.jsonl)
+- [weave_cw samples.jsonl](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/datasets/processed/stage1/ignore_rule_data_k64_dt01/20260327_231917_town01_intersection_weave_cw_expert_eval_0025824a9fa8/samples.jsonl)
   - `4676 samples`
-- [perimeter_cw samples.jsonl](/home/masa/minipamayo/minipamayo-qwen-3-5/datasets/processed/stage1/ignore_rule_data_k64_dt01/20260327_231917_town01_perimeter_cw_expert_eval_0025824a9fa8/samples.jsonl)
+- [perimeter_cw samples.jsonl](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/datasets/processed/stage1/ignore_rule_data_k64_dt01/20260327_231917_town01_perimeter_cw_expert_eval_0025824a9fa8/samples.jsonl)
   - `6167 samples`
 
 Stage1 full train sample 数:
@@ -54,8 +54,8 @@ Stage1 full train sample 数:
 
 curve-focused eval holdout:
 
-- [split_manifest.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/split_manifest.json)
-- [curve_holdout.jsonl](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/curve_holdout.jsonl)
+- [split_manifest.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/split_manifest.json)
+- [curve_holdout.jsonl](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/curve_holdout.jsonl)
   - `569 samples`
 
 Stage2 は 2 系統の JSONL を使う。
@@ -71,11 +71,11 @@ Stage2 は 2 系統の JSONL を使う。
 
 train:
 
-- [ignore_rule_data_k64_dt01_completion_001_12gb.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/vlm_ce/train/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.json)
+- [ignore_rule_data_k64_dt01_completion_001_12gb.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage1/vlm_ce/train/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.json)
 
 curve eval:
 
-- [ignore_rule_data_k64_dt01_completion_001_curve_eval.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/vlm_ce/eval/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.json)
+- [ignore_rule_data_k64_dt01_completion_001_curve_eval.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage1/vlm_ce/eval/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.json)
 
 補足:
 
@@ -86,15 +86,15 @@ curve eval:
 
 train:
 
-- [ignore_rule_data_k64_dt01_completion_001_12gb_safe.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/expert_cfm/train/canonical/ignore_rule_data_k64_dt01_completion_001_12gb_safe.json)
+- [ignore_rule_data_k64_dt01_completion_001_12gb_safe.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage1/expert_cfm/train/canonical/ignore_rule_data_k64_dt01_completion_001_12gb_safe.json)
 
 curve eval:
 
-- [ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/expert_cfm/eval/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.json)
+- [ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage1/expert_cfm/eval/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.json)
 
 sample inference:
 
-- [ignore_rule_data_k64_dt01_completion_001_sample_safe.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/expert_cfm/inference/canonical/ignore_rule_data_k64_dt01_completion_001_sample_safe.json)
+- [ignore_rule_data_k64_dt01_completion_001_sample_safe.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage1/expert_cfm/inference/canonical/ignore_rule_data_k64_dt01_completion_001_sample_safe.json)
 
 safe profile の意図:
 
@@ -112,23 +112,23 @@ curve eval の補足:
 
 train reasoning JSONL preprocess:
 
-- [ignore_rule_data_k64_dt01_completion_001.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage2/reasoning_sft/data/ignore_rule_data_k64_dt01_completion_001.json)
+- [ignore_rule_data_k64_dt01_completion_001.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage2/reasoning_sft/data/ignore_rule_data_k64_dt01_completion_001.json)
 
 curve eval reasoning JSONL preprocess:
 
-- [ignore_rule_data_k64_dt01_completion_001_curve_eval.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage2/reasoning_sft/data/ignore_rule_data_k64_dt01_completion_001_curve_eval.json)
+- [ignore_rule_data_k64_dt01_completion_001_curve_eval.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage2/reasoning_sft/data/ignore_rule_data_k64_dt01_completion_001_curve_eval.json)
 
 train:
 
-- [ignore_rule_data_k64_dt01_completion_001_12gb.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.json)
+- [ignore_rule_data_k64_dt01_completion_001_12gb.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.json)
 
 curve eval:
 
-- [ignore_rule_data_k64_dt01_completion_001_curve_eval.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.json)
+- [ignore_rule_data_k64_dt01_completion_001_curve_eval.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.json)
 
 curve sample inference:
 
-- [ignore_rule_data_k64_dt01_completion_001_curve_sample_stage1b_safe.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage2/reasoning_sft/inference/canonical/ignore_rule_data_k64_dt01_completion_001_curve_sample_stage1b_safe.json)
+- [ignore_rule_data_k64_dt01_completion_001_curve_sample_stage1b_safe.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage2/reasoning_sft/inference/canonical/ignore_rule_data_k64_dt01_completion_001_curve_sample_stage1b_safe.json)
 
 補足:
 
@@ -150,81 +150,94 @@ curve sample inference:
 
 ## Runbook
 
-runner script:
+runner entrypoints:
 
-- [run_stage1_stage2_ignore_rule_completion_001.sh](/home/masa/minipamayo/minipamayo-qwen-3-5/scripts/run_stage1_stage2_ignore_rule_completion_001.sh)
+- [ignore_rule_run.py](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/ops/ignore_rule_run.py)
+- [ignore_rule_paths.py](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/ops/ignore_rule_paths.py)
+- [ignore-rule-run-entrypoints.md](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/docs/experiments/ignore-rule-run-entrypoints.md)
 
 runner の責務:
 
-- `Stage2 train preprocess -> Stage2 curve eval preprocess -> Stage1A train retry loop -> Stage1A curve eval -> Stage1B train retry loop -> Stage1B curve eval -> Stage2 train retry loop -> Stage2 curve eval -> Stage2 curve sample inference` を自動で連鎖する
-- `Stage2` の train 用 / curve eval 用 preprocess 出力、attempt-scoped `save_dir`、eval / inference 出力を開始前に退避する
+- `uv run python -m minipamayo_qwen35.ops.ignore_rule_run full` は `Stage2 train preprocess -> Stage1A train retry loop -> Stage1A curve eval -> Stage1B train retry loop -> Stage1B curve eval -> Stage2 train retry loop -> Stage2 curve eval -> Stage2 curve sample inference` を自動で連鎖する
+- `full` subcommand は eval command を直書きせず、curve eval が必要なタイミングで同じ module の `eval` subcommand を subprocess で呼ぶ
+- `uv run python -m minipamayo_qwen35.ops.ignore_rule_run eval` は `Stage1A curve eval`, `Stage1B curve eval`, `Stage2 curve eval preprocess`, `Stage2 curve eval`, `Stage2 curve sample inference` の正本 entrypoint とする
+- `Stage2` の train 用 preprocess 出力と attempt-scoped `save_dir` は `full` subcommand が開始前に退避する
+- eval / inference 出力と `Stage2` curve eval preprocess 出力は `eval` subcommand が開始前に退避する
 - `Stage2 train preprocess` の出力 line count を `6423 / 4676 / 6167` で検証し、一致しなければ failed で止める
-- `Stage2 curve eval preprocess` の出力 line count を `569` で検証し、一致しなければ failed で止める
 - 各 stage の stdout / stderr を個別 log に保存しつつ、master log にも集約する
 - 各 stage の exit code を `state/<stage>.exitcode` に保存する
 - run 全体の状態を `run.status.json` と `run.exitcode` に保存し、`run.status.json` の `current_stage` を stage 開始ごとに更新する
 - `Stage1A` は hard gate。`MAX_STAGE1A_ATTEMPTS=0` のとき無制限 retry、正数のときその回数まで retry する
 - `Stage1B` は hard gate。`MAX_STAGE1B_ATTEMPTS=0` のとき無制限 retry、正数のときその回数まで retry する
 - `Stage2 train` も hard gate。`MAX_STAGE2_ATTEMPTS=0` のとき無制限 retry、正数のときその回数まで retry する
-- `START_STAGE=stage1b` を指定した場合、`Stage1A` の既存 `best.pt` / `final.pt` / `summary.json` を前提に、`Stage1B -> Stage2` だけ fresh rerun する
-- `START_STAGE=stage1b` では、`Stage1B train` の前に `Stage1A curve eval` を 1 回流してから進める
-- `START_STAGE=stage2` を指定した場合、`Stage1A` / `Stage1B` の既存 artifact を前提に、eval を含めて `Stage2` 以降だけ fresh rerun する
+- `--start-stage stage1b` を指定した場合、`Stage1A` の既存 `best.pt` / `final.pt` / `summary.json` を前提に、`Stage1B -> Stage2` だけ fresh rerun する
+- `--start-stage stage1b` では、`Stage1B train` の前に `eval --target-stage stage1a` を 1 回流してから進める
+- `--start-stage stage2` を指定した場合、`Stage1A` / `Stage1B` の既存 artifact を前提に、eval を含めて `Stage2` 以降だけ fresh rerun する
 
 固定 path:
 
 - log root:
-  `/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001`
+  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001`
 - master log:
-  `/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/master.log`
+  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/master.log`
 - run status:
-  `/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/run.status.json`
+  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/run.status.json`
 - run exit code:
-  `/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/run.exitcode`
+  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/run.exitcode`
 - per-stage exit codes:
-  `/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/state/*.exitcode`
+  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/state/*.exitcode`
 
 推奨起動方法:
 
 ```bash
-cd /home/masa/minipamayo/minipamayo-qwen-3-5
+cd /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5
 tmux new-session -d -s ignore-rule-completion-001 \
-  'MAX_STAGE1A_ATTEMPTS=0 STAGE1A_RETRY_SLEEP_S=30 MAX_STAGE1B_ATTEMPTS=0 STAGE1B_RETRY_SLEEP_S=30 MAX_STAGE2_ATTEMPTS=0 STAGE2_RETRY_SLEEP_S=30 bash scripts/run_stage1_stage2_ignore_rule_completion_001.sh'
+  'uv run python -m minipamayo_qwen35.ops.ignore_rule_run full \
+    --max-stage1a-attempts 0 --stage1a-retry-sleep-s 30 \
+    --max-stage1b-attempts 0 --stage1b-retry-sleep-s 30 \
+    --max-stage2-attempts 0 --stage2-retry-sleep-s 30'
 ```
 
 `Stage1A` がすでに成功済みで、`Stage1B` から切り直す場合:
 
 ```bash
-cd /home/masa/minipamayo/minipamayo-qwen-3-5
+cd /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5
 tmux new-session -d -s ignore-rule-completion-stage1b-001 \
-  'ATTEMPT_NAME=completion_ignore_rule_stage1b_restart_001 SESSION_NAME=ignore-rule-completion-stage1b-001 START_STAGE=stage1b MAX_STAGE1B_ATTEMPTS=0 STAGE1B_RETRY_SLEEP_S=30 MAX_STAGE2_ATTEMPTS=0 STAGE2_RETRY_SLEEP_S=30 bash scripts/run_stage1_stage2_ignore_rule_completion_001.sh'
+  'uv run python -m minipamayo_qwen35.ops.ignore_rule_run full \
+    --attempt-name completion_ignore_rule_stage1b_restart_001 \
+    --session-name ignore-rule-completion-stage1b-001 \
+    --start-stage stage1b \
+    --max-stage1b-attempts 0 --stage1b-retry-sleep-s 30 \
+    --max-stage2-attempts 0 --stage2-retry-sleep-s 30'
 ```
 
 fallback:
 
 ```bash
-cd /home/masa/minipamayo/minipamayo-qwen-3-5
-nohup env MAX_STAGE1A_ATTEMPTS=0 STAGE1A_RETRY_SLEEP_S=30 \
-  MAX_STAGE1B_ATTEMPTS=0 STAGE1B_RETRY_SLEEP_S=30 \
-  MAX_STAGE2_ATTEMPTS=0 STAGE2_RETRY_SLEEP_S=30 \
-  bash scripts/run_stage1_stage2_ignore_rule_completion_001.sh >/dev/null 2>&1 &
+cd /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5
+nohup uv run python -m minipamayo_qwen35.ops.ignore_rule_run full \
+  --max-stage1a-attempts 0 --stage1a-retry-sleep-s 30 \
+  --max-stage1b-attempts 0 --stage1b-retry-sleep-s 30 \
+  --max-stage2-attempts 0 --stage2-retry-sleep-s 30 >/dev/null 2>&1 &
 echo $!
 ```
 
 監視コマンド:
 
 ```bash
-tail -f /home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/master.log
+tail -f /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/master.log
 ```
 
 ```bash
-cat /home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/run.status.json
-cat /home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/run.exitcode
+cat /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/run.status.json
+cat /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/run.exitcode
 ```
 
 補足:
 
 - train stage は blocking。`Stage2` の 2 種類の preprocess は失敗時に chain を止め、`Stage1A train`, `Stage1B train`, `Stage2 train` は成功するか retry 上限に達するまで rerun する
 - curve eval と curve sample inference は non-blocking。失敗しても後続 train は止めず、log と exit code に残す
+- `watch` には `uv run python -m minipamayo_qwen35.ops.ignore_rule_run watch --attempt-name ...` を使う
 - `Stage1A` 成功前は `partial progress` にしない
 - `Stage1B` retry は transient failure を想定した安全策であり、failure signature は結果 markdown に残す
 
@@ -240,7 +253,7 @@ cat /home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_igno
 コマンド:
 
 ```bash
-cd /home/masa/minipamayo/minipamayo-qwen-3-5
+cd /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5
 uv run python -m minipamayo_qwen35.stage2.reasoning_sft.preprocess \
   --config-json configs/stage2/reasoning_sft/data/ignore_rule_data_k64_dt01_completion_001.json
 ```
@@ -266,7 +279,7 @@ skip 条件:
 コマンド:
 
 ```bash
-cd /home/masa/minipamayo/minipamayo-qwen-3-5
+cd /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5
 uv run python -m minipamayo_qwen35.stage2.reasoning_sft.preprocess \
   --config-json configs/stage2/reasoning_sft/data/ignore_rule_data_k64_dt01_completion_001_curve_eval.json
 ```
@@ -287,7 +300,7 @@ skip 条件:
 コマンド:
 
 ```bash
-cd /home/masa/minipamayo/minipamayo-qwen-3-5
+cd /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5
 uv run python -m minipamayo_qwen35.stage1.vlm_ce.train \
   --config-json configs/stage1/vlm_ce/train/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.json
 ```
@@ -311,7 +324,7 @@ retry ルール:
 コマンド:
 
 ```bash
-cd /home/masa/minipamayo/minipamayo-qwen-3-5
+cd /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5
 uv run python -m minipamayo_qwen35.stage1.vlm_ce.eval \
   --config-json configs/stage1/vlm_ce/eval/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.json
 ```
@@ -333,7 +346,7 @@ uv run python -m minipamayo_qwen35.stage1.vlm_ce.eval \
 コマンド:
 
 ```bash
-cd /home/masa/minipamayo/minipamayo-qwen-3-5
+cd /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5
 uv run python -m minipamayo_qwen35.stage1.expert_cfm.train \
   --config-json configs/stage1/expert_cfm/train/canonical/ignore_rule_data_k64_dt01_completion_001_12gb_safe.json
 ```
@@ -357,7 +370,7 @@ retry ルール:
 コマンド:
 
 ```bash
-cd /home/masa/minipamayo/minipamayo-qwen-3-5
+cd /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5
 uv run python -m minipamayo_qwen35.stage1.expert_cfm.eval \
   --config-json configs/stage1/expert_cfm/eval/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.json
 ```
@@ -380,7 +393,7 @@ uv run python -m minipamayo_qwen35.stage1.expert_cfm.eval \
 コマンド:
 
 ```bash
-cd /home/masa/minipamayo/minipamayo-qwen-3-5
+cd /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5
 uv run python -m minipamayo_qwen35.stage2.reasoning_sft.train \
   --config-json configs/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.json
 ```
@@ -408,7 +421,7 @@ retry ルール:
 コマンド:
 
 ```bash
-cd /home/masa/minipamayo/minipamayo-qwen-3-5
+cd /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5
 uv run python -m minipamayo_qwen35.stage2.reasoning_sft.eval \
   --config-json configs/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.json
 ```
@@ -429,7 +442,7 @@ uv run python -m minipamayo_qwen35.stage2.reasoning_sft.eval \
 コマンド:
 
 ```bash
-cd /home/masa/minipamayo/minipamayo-qwen-3-5
+cd /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5
 uv run python -m minipamayo_qwen35.stage2.reasoning_sft.inference \
   --config-json configs/stage2/reasoning_sft/inference/canonical/ignore_rule_data_k64_dt01_completion_001_curve_sample_stage1b_safe.json
 ```
@@ -511,7 +524,7 @@ rerun した場合:
 
 今回の結果記録先:
 
-- [stage1-stage2-ignore-rule-completion-run-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/experiments/stage1-stage2-ignore-rule-completion-run-results.md)
+- [stage1-stage2-ignore-rule-completion-run-results.md](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/docs/experiments/stage1-stage2-ignore-rule-completion-run-results.md)
 
 最低限残す項目:
 
