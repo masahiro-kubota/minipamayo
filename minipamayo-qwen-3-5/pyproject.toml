@@ -26,6 +26,11 @@ dependencies = [
     "flash-linear-attention>=0.4.2",
 ]
 
+[project.optional-dependencies]
+inspector = [
+    "streamlit>=1.44.0",
+]
+
 [build-system]
 requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
