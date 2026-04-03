@@ -1,1 +1,0 @@
-"""MiniPamayo model components."""
