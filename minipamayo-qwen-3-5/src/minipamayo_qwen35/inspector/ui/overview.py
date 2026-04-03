@@ -110,6 +110,18 @@ def _render_plot_gallery(run: NormalizedRun) -> None:
                 st.json(json.loads(Path(path).read_text(encoding="utf-8")))
 
 
+def _render_block_table(run: NormalizedRun) -> None:
+    st.subheader("Blocks")
+    if run.browser_unavailable_reason:
+        st.info(run.browser_unavailable_reason)
+        return
+    if not run.groups:
+        st.info("No blocks available for this artifact.")
+        return
+    block_rows = [group.to_row() for group in run.groups]
+    st.dataframe(pd.DataFrame(block_rows), use_container_width=True, hide_index=True)
+
+
 def render_overview(run: NormalizedRun, filtered_rows: pd.DataFrame) -> None:
     st.subheader("Overview")
     st.write(f"`{run.run_name}`")
@@ -119,7 +131,8 @@ def render_overview(run: NormalizedRun, filtered_rows: pd.DataFrame) -> None:
         st.link_button("Open W&B Run", run.manifest.wandb_run_url)
     _render_summary_cards(run)
     _render_plot_gallery(run)
-    st.subheader("Filtered Samples")
+    _render_block_table(run)
+    st.subheader("Filtered Frames")
     if filtered_rows.empty:
         st.info("No samples matched the current filters.")
         return

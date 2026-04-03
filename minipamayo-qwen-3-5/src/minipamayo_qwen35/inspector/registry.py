@@ -40,6 +40,16 @@ def sample_lookup(run: NormalizedRun | None) -> dict[str, Any]:
     return {sample.sample_id: sample for sample in run.samples}
 
 
+def group_lookup(run: NormalizedRun | None) -> dict[str, Any]:
+    if run is None:
+        return {}
+    return {group.group_id: group for group in run.groups}
+
+
+def select_matching_sample(run: NormalizedRun | None, sample_id: str) -> Any:
+    return sample_lookup(run).get(sample_id)
+
+
 def discover_manifest_paths(artifact_root: str | Path) -> list[Path]:
     root = Path(artifact_root).resolve()
     if not root.exists():
@@ -47,14 +57,33 @@ def discover_manifest_paths(artifact_root: str | Path) -> list[Path]:
     return sorted(path for path in root.rglob("*.manifest.json") if path.is_file())
 
 
+def _sort_stage_manifests(manifests: tuple[ArtifactManifest, ...]) -> tuple[ArtifactManifest, ...]:
+    return tuple(
+        sorted(
+            manifests,
+            key=lambda manifest: (
+                manifest.per_sample_jsonl is None,
+                manifest.run_name,
+                manifest.summary_json,
+            ),
+        )
+    )
+
+
 def load_manifest_registry(artifact_root: str | Path) -> ManifestRegistry:
     root = Path(artifact_root).resolve()
     manifests = tuple(load_manifest(path) for path in discover_manifest_paths(root))
-    stage1a_manifests = tuple(manifest for manifest in manifests if manifest.stage == "stage1a_eval")
-    stage1b_manifests = tuple(manifest for manifest in manifests if manifest.stage == "stage1b_eval")
-    stage2_eval_manifests = tuple(manifest for manifest in manifests if manifest.stage == "stage2_eval")
-    stage2_inference_manifests = tuple(
-        manifest for manifest in manifests if manifest.stage == "stage2_inference"
+    stage1a_manifests = _sort_stage_manifests(
+        tuple(manifest for manifest in manifests if manifest.stage == "stage1a_eval")
+    )
+    stage1b_manifests = _sort_stage_manifests(
+        tuple(manifest for manifest in manifests if manifest.stage == "stage1b_eval")
+    )
+    stage2_eval_manifests = _sort_stage_manifests(
+        tuple(manifest for manifest in manifests if manifest.stage == "stage2_eval")
+    )
+    stage2_inference_manifests = _sort_stage_manifests(
+        tuple(manifest for manifest in manifests if manifest.stage == "stage2_inference")
     )
 
     stage2_eval_map = {manifest.run_name: manifest for manifest in stage2_eval_manifests}
@@ -110,10 +139,10 @@ def compare_runs_by_sample_id(
         rows.append(
             {
                 "sample_id": sample_id,
-                "stage1a": stage1a_lookup.get(sample_id),
-                "stage1b": stage1b_lookup.get(sample_id),
-                "stage2_eval": stage2_eval_lookup.get(sample_id),
-                "stage2_inference": stage2_inference_lookup.get(sample_id),
+                "stage1a": select_matching_sample(stage1a_run, sample_id),
+                "stage1b": select_matching_sample(stage1b_run, sample_id),
+                "stage2_eval": select_matching_sample(stage2_eval_run, sample_id),
+                "stage2_inference": select_matching_sample(stage2_inference_run, sample_id),
             }
         )
     return rows

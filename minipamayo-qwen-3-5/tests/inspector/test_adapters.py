@@ -69,6 +69,11 @@ class AdapterTests(unittest.TestCase):
             run = load_stage1a_run(manifest)
             self.assertEqual(run.samples[0].sample_id, "sample-001")
             self.assertAlmostEqual(run.samples[0].token_accuracy or 0.0, 0.75)
+            self.assertEqual(run.samples[0].source_frame_id, "")
+            self.assertEqual(run.samples[0].group_id, "derived:0-0")
+            self.assertEqual(run.samples[0].group_frame_index, 0)
+            self.assertEqual(run.samples[0].group_length, 1)
+            self.assertEqual(len(run.groups), 1)
             self.assertIsNone(run.invalid_reason)
 
     def test_stage1b_adapter_normalizes_pid_override(self) -> None:
@@ -107,6 +112,7 @@ class AdapterTests(unittest.TestCase):
             run = load_stage1b_run(manifest)
             self.assertEqual(run.samples[0].sample_id, "sample-001")
             self.assertEqual(run.samples[0].pid_pred_waypoints, [[0.0, 0.0], [1.1, 1.0]])
+            self.assertEqual(run.samples[0].group_id, "derived:0-0")
 
     def test_stage2_eval_adapter_normalizes_reasoning_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -137,6 +143,7 @@ class AdapterTests(unittest.TestCase):
             run = load_stage2_eval_run(manifest)
             self.assertEqual(run.samples[0].reasoning_text_gt, "ground truth reasoning")
             self.assertAlmostEqual(run.samples[0].token_accuracy or 0.0, 0.6)
+            self.assertEqual(run.samples[0].group_id, "derived:0-0")
 
     def test_stage2_inference_adapter_normalizes_predictions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -173,6 +180,7 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(run.samples[0].reasoning_text_pred, "pred reasoning")
             self.assertEqual(run.samples[0].reasoning_text_gt, "gt reasoning")
             self.assertAlmostEqual(run.samples[0].fde_m or 0.0, 1.1)
+            self.assertEqual(run.samples[0].group_id, "derived:0-0")
 
     def test_stage2_inference_adapter_backfills_from_source_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -217,6 +225,7 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(run.samples[0].command, "right")
             self.assertEqual(run.samples[0].reasoning_text_gt, "gt reasoning from source")
             self.assertEqual(run.samples[0].gt_waypoints, [[0.0, 0.0], [1.0, 1.0]])
+            self.assertEqual(run.samples[0].group_id, "derived:0-0")
 
     def test_duplicate_sample_ids_mark_run_invalid(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

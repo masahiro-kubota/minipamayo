@@ -74,6 +74,10 @@ class NormalizedSample:
     sample_id: str
     sample_index: int
     image_path: str
+    source_frame_id: str = ""
+    group_id: str = ""
+    group_frame_index: int = 0
+    group_length: int = 1
     command: str = ""
     gt_waypoints: list[list[float]] = field(default_factory=list)
     pred_waypoints: list[list[float]] = field(default_factory=list)
@@ -94,6 +98,10 @@ class NormalizedSample:
             "sample_id": self.sample_id,
             "sample_index": int(self.sample_index),
             "image_path": self.image_path,
+            "source_frame_id": self.source_frame_id,
+            "group_id": self.group_id,
+            "group_frame_index": int(self.group_frame_index),
+            "group_length": int(self.group_length),
             "command": self.command,
             "ade_m": self.ade_m,
             "fde_m": self.fde_m,
@@ -108,10 +116,43 @@ class NormalizedSample:
 
 
 @dataclass(frozen=True)
+class NormalizedGroup:
+    group_id: str
+    run_name: str
+    stage: str
+    samples: tuple[NormalizedSample, ...]
+    start_sample_index: int
+    end_sample_index: int
+    metrics_summary: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def length(self) -> int:
+        return len(self.samples)
+
+    def to_row(self) -> dict[str, Any]:
+        return {
+            "group_id": self.group_id,
+            "stage": self.stage,
+            "run_name": self.run_name,
+            "length": int(self.length),
+            "start_sample_index": int(self.start_sample_index),
+            "end_sample_index": int(self.end_sample_index),
+            "commands": ", ".join(self.metrics_summary.get("commands", [])),
+            "mean_ade_m": self.metrics_summary.get("mean_ade_m"),
+            "max_ade_m": self.metrics_summary.get("max_ade_m"),
+            "mean_fde_m": self.metrics_summary.get("mean_fde_m"),
+            "max_fde_m": self.metrics_summary.get("max_fde_m"),
+            "mean_action_mae_kappa": self.metrics_summary.get("mean_action_mae_kappa"),
+            "mean_token_accuracy": self.metrics_summary.get("mean_token_accuracy"),
+        }
+
+
+@dataclass(frozen=True)
 class NormalizedRun:
     manifest: ArtifactManifest
     summary: dict[str, Any]
     samples: list[NormalizedSample]
+    groups: list[NormalizedGroup] = field(default_factory=list)
     invalid_reason: str | None = None
 
     @property
@@ -121,6 +162,14 @@ class NormalizedRun:
     @property
     def run_name(self) -> str:
         return self.manifest.run_name
+
+    @property
+    def browser_unavailable_reason(self) -> str | None:
+        if self.manifest.per_sample_jsonl is None:
+            return "Sample/Block view unavailable for summary-only artifact."
+        if not self.samples:
+            return "No sample payload available for this artifact."
+        return None
 
 
 @dataclass(frozen=True)

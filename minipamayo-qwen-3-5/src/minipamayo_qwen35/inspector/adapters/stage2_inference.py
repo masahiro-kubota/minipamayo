@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ..cache import read_json, read_jsonl
+from ..grouping import derive_groups
 from ..models import ArtifactManifest, NormalizedRun, NormalizedSample
 
 
@@ -68,12 +69,14 @@ def _normalize_row(manifest: ArtifactManifest, row: dict) -> NormalizedSample:
         ground_truth["reasoning_text"] = source_row["reasoning_text"]
     if "gt_waypoints" in source_row and "waypoints" not in ground_truth:
         ground_truth["waypoints"] = source_row["gt_waypoints"]
+    sample_index = row.get("record_sample_index", source_row.get("sample_index", row["sample_index"]))
     return NormalizedSample(
         stage=manifest.stage,
         run_name=manifest.run_name,
         sample_id=str(row["sample_id"]),
-        sample_index=int(row["sample_index"]),
+        sample_index=int(sample_index),
         image_path=_coalesce_image_path(row, source_row),
+        source_frame_id=str(row.get("source_frame_id", source_row.get("source_frame_id", ""))),
         command=str(command),
         gt_waypoints=[[float(x), float(y)] for x, y in ground_truth.get("waypoints", [])],
         pred_waypoints=[[float(x), float(y)] for x, y in prediction.get("waypoints", [])],
@@ -95,9 +98,11 @@ def load_stage2_inference_run(manifest: ArtifactManifest) -> NormalizedRun:
         if "sample_index" not in summary_row:
             summary_row["sample_index"] = 0
         samples = [_normalize_row(manifest, summary_row)]
+    samples, groups = derive_groups(samples)
     return NormalizedRun(
         manifest=manifest,
         summary=summary,
         samples=samples,
+        groups=groups,
         invalid_reason=_duplicate_sample_reason(samples),
     )

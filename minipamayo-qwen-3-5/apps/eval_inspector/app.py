@@ -16,6 +16,7 @@ from minipamayo_qwen35.inspector.registry import (
     load_normalized_run,
 )
 from minipamayo_qwen35.inspector.ui import (
+    render_block_browser,
     render_compare,
     render_filter_controls,
     render_overview,
@@ -63,22 +64,10 @@ def _sort_samples(
     samples: list[NormalizedSample],
     *,
     metric_name: str | None,
-    worst_first: bool,
 ) -> list[NormalizedSample]:
     if metric_name is None:
-        return list(samples)
-    if "accuracy" in metric_name:
-        reverse = not worst_first
-    else:
-        reverse = worst_first
-
-    def sort_key(sample: NormalizedSample) -> tuple[int, float]:
-        value = _sample_metric_value(sample, metric_name)
-        if value is None:
-            return (1, 0.0)
-        return (0, value)
-
-    return sorted(samples, key=sort_key, reverse=reverse)
+        return sorted(samples, key=lambda sample: int(sample.sample_index))
+    return sorted(samples, key=lambda sample: int(sample.sample_index))
 
 
 def _filter_samples(
@@ -106,7 +95,6 @@ def _filter_samples(
     return _sort_samples(
         filtered,
         metric_name=metric_name,
-        worst_first=bool(filters.get("worst_first", True)),
     )
 
 
@@ -159,16 +147,25 @@ def main() -> None:
     if counterpart_run is not None and counterpart_run.invalid_reason:
         counterpart_run = None
 
-    overview_tab, browser_tab, compare_tab, raw_tab = st.tabs(
-        ["Overview", "Sample Browser", "Cross-Stage Compare", "Raw JSON"]
+    overview_tab, block_tab, browser_tab, compare_tab, raw_tab = st.tabs(
+        ["Overview", "Curve Block Browser", "Sample Browser", "Cross-Stage Compare", "Raw JSON"]
     )
+    selected_block_sample_id = str(filters.get("sample_id_jump", ""))
     with overview_tab:
         render_overview(active_run, filtered_rows)
+    with block_tab:
+        selected_block_sample = render_block_browser(
+            active_run=active_run,
+            filtered_samples=filtered_samples,
+            filters=filters,
+        )
+        if selected_block_sample is not None:
+            selected_block_sample_id = selected_block_sample.sample_id
     with browser_tab:
         render_sample_browser(
             active_run=active_run,
             filtered_samples=filtered_samples,
-            sample_id_hint=str(filters.get("sample_id_jump", "")),
+            sample_id_hint=selected_block_sample_id,
             counterpart_run=counterpart_run,
         )
     with compare_tab:
@@ -177,13 +174,13 @@ def main() -> None:
             stage1b_run=selected_runs.get("stage1b_eval"),
             stage2_eval_run=selected_runs.get("stage2_eval"),
             stage2_inference_run=selected_runs.get("stage2_inference"),
-            sample_id_hint=str(filters.get("sample_id_jump", "")),
+            sample_id_hint=selected_block_sample_id,
         )
     with raw_tab:
         render_raw_json(
             active_run=active_run,
             filtered_samples=filtered_samples,
-            sample_id_hint=str(filters.get("sample_id_jump", "")),
+            sample_id_hint=selected_block_sample_id,
             counterpart_run=counterpart_run,
         )
 

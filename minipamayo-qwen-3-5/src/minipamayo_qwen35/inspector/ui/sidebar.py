@@ -23,6 +23,13 @@ FOCUS_STAGE_LABELS = {
     "stage2_inference": "Stage2 Inference",
 }
 
+BLOCK_SORT_LABELS = {
+    "dataset_order": "Dataset Order",
+    "worst_metric": "Worst Metric",
+    "mean_metric": "Mean Metric",
+    "length_desc": "Length",
+}
+
 FILTERABLE_METRICS = [
     ("fde_m", "FDE"),
     ("ade_m", "ADE"),
@@ -34,7 +41,8 @@ FILTERABLE_METRICS = [
 
 def _manifest_label(manifest: ArtifactManifest) -> str:
     summary_name = Path(manifest.summary_json).name
-    return f"{manifest.run_name} [{summary_name}]"
+    suffix = "summary-only" if manifest.per_sample_jsonl is None else "per-sample"
+    return f"{manifest.run_name} [{summary_name} | {suffix}]"
 
 
 def _select_manifest(
@@ -141,12 +149,20 @@ def render_filter_controls(active_run: NormalizedRun | None) -> dict[str, Any]:
     with st.sidebar:
         st.header("Filters")
         sample_id_jump = st.text_input("Sample ID Jump", value="")
-        worst_first = st.checkbox("Worst-First Sort", value=True)
-        if active_run is None or not active_run.samples:
-            st.caption("No active samples.")
+        if active_run is None:
+            st.caption("No active run.")
             return {
                 "sample_id_jump": sample_id_jump,
-                "worst_first": worst_first,
+                "block_sort": "dataset_order",
+                "command_filter": [],
+                "metric_name": None,
+                "metric_range": None,
+            }
+        if active_run.browser_unavailable_reason:
+            st.caption(active_run.browser_unavailable_reason)
+            return {
+                "sample_id_jump": sample_id_jump,
+                "block_sort": "dataset_order",
                 "command_filter": [],
                 "metric_name": None,
                 "metric_range": None,
@@ -176,7 +192,7 @@ def render_filter_controls(active_run: NormalizedRun | None) -> dict[str, Any]:
         if not metric_options:
             return {
                 "sample_id_jump": sample_id_jump,
-                "worst_first": worst_first,
+                "block_sort": "dataset_order",
                 "command_filter": command_filter,
                 "metric_name": None,
                 "metric_range": None,
@@ -199,9 +215,15 @@ def render_filter_controls(active_run: NormalizedRun | None) -> dict[str, Any]:
                 max_value=max_value,
                 value=(min_value, max_value),
             )
+        block_sort = st.selectbox(
+            "Block Sort",
+            options=list(BLOCK_SORT_LABELS),
+            format_func=lambda key: BLOCK_SORT_LABELS[key],
+            index=0,
+        )
     return {
         "sample_id_jump": sample_id_jump,
-        "worst_first": worst_first,
+        "block_sort": block_sort,
         "command_filter": command_filter,
         "metric_name": metric_name,
         "metric_range": metric_range,

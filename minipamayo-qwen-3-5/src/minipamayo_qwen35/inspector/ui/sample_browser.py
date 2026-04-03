@@ -35,28 +35,36 @@ def _select_sample(
 ) -> NormalizedSample | None:
     if not samples:
         return None
-    if state_key not in st.session_state:
-        st.session_state[state_key] = _initial_index(samples, sample_id_hint)
-    state_index = int(st.session_state[state_key])
+    hint_key = f"{state_key}_hint"
+    widget_key = f"{state_key}_select"
+    desired_index = _initial_index(samples, sample_id_hint)
+    if widget_key not in st.session_state:
+        st.session_state[widget_key] = desired_index
+        st.session_state[hint_key] = sample_id_hint
+    elif sample_id_hint and st.session_state.get(hint_key) != sample_id_hint:
+        st.session_state[widget_key] = desired_index
+        st.session_state[hint_key] = sample_id_hint
+    state_index = int(st.session_state[widget_key])
+    state_index = max(0, min(state_index, len(samples) - 1))
+    st.session_state[widget_key] = state_index
     prev_col, main_col, next_col = st.columns([1, 5, 1])
     if prev_col.button("Prev", key=f"{state_key}_prev", disabled=state_index <= 0):
-        state_index -= 1
+        st.session_state[widget_key] = max(0, int(st.session_state[widget_key]) - 1)
     if next_col.button("Next", key=f"{state_key}_next", disabled=state_index >= len(samples) - 1):
-        state_index += 1
+        st.session_state[widget_key] = min(len(samples) - 1, int(st.session_state[widget_key]) + 1)
     selected_index = main_col.selectbox(
         "Sample",
         options=list(range(len(samples))),
-        index=state_index,
+        index=int(st.session_state[widget_key]),
         format_func=lambda idx: _sample_label(samples[idx]),
-        key=f"{state_key}_select",
+        key=widget_key,
     )
-    st.session_state[state_key] = int(selected_index)
     return samples[int(selected_index)]
 
 
 def _render_sample_panel(sample: NormalizedSample, *, title: str) -> None:
     st.markdown(f"**{title}**")
-    top_left, top_right = st.columns([1, 1])
+    top_left, top_right = st.columns([1.3, 0.7])
     if sample.image_path and Path(sample.image_path).exists():
         top_left.image(sample.image_path, caption=sample.sample_id, use_container_width=True)
     else:
@@ -65,7 +73,7 @@ def _render_sample_panel(sample: NormalizedSample, *, title: str) -> None:
     if sample.gt_waypoints or sample.pred_waypoints or sample.pid_pred_waypoints:
         figure = build_trajectory_overlay_figure(sample)
         try:
-            top_right.pyplot(figure, clear_figure=True, use_container_width=True)
+            top_right.pyplot(figure, clear_figure=True, use_container_width=False)
         finally:
             figure.clear()
     else:
@@ -105,6 +113,9 @@ def render_sample_browser(
     counterpart_run: NormalizedRun | None = None,
 ) -> None:
     st.subheader("Sample Browser")
+    if active_run.browser_unavailable_reason:
+        st.info(active_run.browser_unavailable_reason)
+        return
     if not filtered_samples:
         st.info("No samples matched the current filters.")
         return

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 
 from ..cache import read_json, read_jsonl
+from ..grouping import derive_groups
 from ..models import ArtifactManifest, NormalizedRun, NormalizedSample
 
 
@@ -33,8 +34,9 @@ def load_stage1b_run(manifest: ArtifactManifest) -> NormalizedRun:
                     stage=manifest.stage,
                     run_name=manifest.run_name,
                     sample_id=str(row["sample_id"]),
-                    sample_index=int(row["sample_index"]),
+                    sample_index=int(row.get("record_sample_index", row["sample_index"])),
                     image_path=str(row["image_path"]),
+                    source_frame_id=str(row.get("source_frame_id", "")),
                     command=str(row.get("command", "")),
                     gt_waypoints=[[float(x), float(y)] for x, y in row.get("gt_waypoints", [])],
                     pred_waypoints=[[float(x), float(y)] for x, y in row.get("pred_waypoints", [])],
@@ -50,9 +52,11 @@ def load_stage1b_run(manifest: ArtifactManifest) -> NormalizedRun:
                     raw=dict(row),
                 )
             )
+    samples, groups = derive_groups(samples)
     return NormalizedRun(
         manifest=manifest,
         summary=summary,
         samples=samples,
+        groups=groups,
         invalid_reason=_duplicate_sample_reason(samples),
     )

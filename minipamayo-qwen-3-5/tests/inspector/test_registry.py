@@ -13,7 +13,11 @@ if str(SRC_ROOT) not in sys.path:
 
 from minipamayo_qwen35.inspector.manifests import write_manifest
 from minipamayo_qwen35.inspector.models import ArtifactManifest
-from minipamayo_qwen35.inspector.registry import compare_runs_by_sample_id, load_manifest_registry, load_normalized_run
+from minipamayo_qwen35.inspector.registry import (
+    compare_runs_by_sample_id,
+    load_manifest_registry,
+    load_normalized_run,
+)
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -30,6 +34,57 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
 
 
 class RegistryTests(unittest.TestCase):
+    def test_registry_sorts_per_sample_manifests_ahead_of_summary_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            artifact_root = Path(tmp_dir) / "artifacts"
+
+            summary_only_path = artifact_root / "eval/stage1/vlm_ce/canonical/a_summary_only.json"
+            _write_json(summary_only_path, {"num_samples": 0})
+            write_manifest(
+                ArtifactManifest(
+                    artifact_kind="eval",
+                    stage="stage1a_eval",
+                    run_name="summary-only",
+                    summary_json=str(summary_only_path),
+                )
+            )
+
+            rich_summary_path = artifact_root / "eval/stage1/vlm_ce/canonical/b_curve_eval.json"
+            rich_samples_path = rich_summary_path.with_name("b_curve_eval.per_sample.jsonl")
+            _write_json(rich_summary_path, {"num_samples": 1})
+            _write_jsonl(
+                rich_samples_path,
+                [
+                    {
+                        "sample_id": "sample-001",
+                        "sample_index": 0,
+                        "image_path": "/tmp/001.jpeg",
+                        "gt_waypoints": [[0.0, 0.0], [1.0, 1.0]],
+                        "pred_waypoints": [[0.0, 0.0], [1.1, 1.1]],
+                        "metrics": {"autoregressive_token_accuracy": 0.7, "action_mae_kappa": 0.02},
+                    }
+                ],
+            )
+            write_manifest(
+                ArtifactManifest(
+                    artifact_kind="eval",
+                    stage="stage1a_eval",
+                    run_name="curve-eval",
+                    summary_json=str(rich_summary_path),
+                    per_sample_jsonl=str(rich_samples_path),
+                )
+            )
+
+            registry = load_manifest_registry(artifact_root)
+            self.assertEqual(registry.stage1a_manifests[0].run_name, "curve-eval")
+            rich_run = load_normalized_run(registry.stage1a_manifests[0])
+            summary_only_run = load_normalized_run(registry.stage1a_manifests[1])
+            self.assertIsNone(rich_run.browser_unavailable_reason)
+            self.assertEqual(
+                summary_only_run.browser_unavailable_reason,
+                "Sample/Block view unavailable for summary-only artifact.",
+            )
+
     def test_registry_discovers_and_compares_manifests(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             artifact_root = Path(tmp_dir) / "artifacts"
@@ -120,6 +175,7 @@ class RegistryTests(unittest.TestCase):
             stage1a_run = load_normalized_run(registry.stage1a_manifests[0])
             stage2_eval_run = load_normalized_run(registry.stage2_eval_manifests[0])
             stage2_inference_run = load_normalized_run(registry.stage2_inference_manifests[0])
+            self.assertEqual(len(stage1a_run.groups), 1)
             rows = compare_runs_by_sample_id(
                 stage1a_run=stage1a_run,
                 stage2_eval_run=stage2_eval_run,

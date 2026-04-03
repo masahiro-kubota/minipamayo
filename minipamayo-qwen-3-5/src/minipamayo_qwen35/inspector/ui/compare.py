@@ -23,7 +23,7 @@ def _render_stage_sample(column, *, title: str, sample: NormalizedSample | None)
         if sample.gt_waypoints or sample.pred_waypoints or sample.pid_pred_waypoints:
             figure = build_trajectory_overlay_figure(sample)
             try:
-                st.pyplot(figure, clear_figure=True, use_container_width=True)
+                st.pyplot(figure, clear_figure=True, use_container_width=False)
             finally:
                 figure.clear()
         metrics = {
@@ -91,12 +91,20 @@ def render_compare(
     )
     st.dataframe(overlap_df, use_container_width=True, hide_index=True)
     sample_ids = [row["sample_id"] for row in rows]
+    state_key = "compare_sample_id"
+    hint_key = "compare_sample_id_hint"
     default_index = sample_ids.index(sample_id_hint) if sample_id_hint in sample_ids else 0
+    if state_key not in st.session_state:
+        st.session_state[state_key] = sample_ids[default_index]
+        st.session_state[hint_key] = sample_id_hint
+    elif sample_id_hint and st.session_state.get(hint_key) != sample_id_hint and sample_id_hint in sample_ids:
+        st.session_state[state_key] = sample_id_hint
+        st.session_state[hint_key] = sample_id_hint
     selected_sample_id = st.selectbox(
         "Compare Sample ID",
         options=sample_ids,
-        index=default_index,
-        key="compare_sample_id",
+        index=sample_ids.index(st.session_state[state_key]) if st.session_state[state_key] in sample_ids else default_index,
+        key=state_key,
     )
     selected_row = next(row for row in rows if row["sample_id"] == selected_sample_id)
     stage1a_col, stage1b_col, stage2_col = st.columns(3)
