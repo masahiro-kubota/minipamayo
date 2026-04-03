@@ -9,6 +9,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 
+from ...inspector.manifests import upsert_manifest
 from ...utils.eval_reporting import (
     EvalReporter,
     add_eval_reporting_args,
@@ -121,6 +122,7 @@ def main() -> None:
             "pid_override_enabled": bool(args.include_pid_override),
         },
     )
+    wandb_run_url = str(getattr(reporter.wandb_run, "url", ""))
 
     total_loss = 0.0
     total_batches = 0
@@ -353,6 +355,17 @@ def main() -> None:
                 "action_mae_kappa": pid_total_action_mae_kappa / max(1, total_action_steps),
             }
         reporter.emit_summary("stage1b_eval_summary", summary)
+        upsert_manifest(
+            artifact_kind="eval",
+            stage="stage1b_eval",
+            run_name=Path(args.output_json).resolve().stem,
+            summary_json=args.output_json,
+            checkpoint=args.checkpoint,
+            dataset_path=",".join(args.eval_jsonl),
+            progress_json=str(args.progress_json),
+            per_sample_jsonl=str(args.per_sample_jsonl),
+            wandb_run_url=wandb_run_url,
+        )
     except Exception as exc:
         reporter.emit_failure("stage1b_eval_failure", exc)
         raise

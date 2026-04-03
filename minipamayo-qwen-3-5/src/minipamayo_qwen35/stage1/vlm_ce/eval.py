@@ -18,6 +18,7 @@ import torch
 from torch.utils.data import DataLoader
 from PIL import Image
 
+from ...inspector.manifests import upsert_manifest
 from ...utils.image_budget import (
     validate_canonical_image_budget,
 )
@@ -27,7 +28,7 @@ from ...utils.eval_reporting import (
     reporting_path_keys,
     validate_eval_reporting_args,
 )
-from ...utils.preflight import enforce_runtime_prerequisites
+from ...utils.preflight import require_cuda_device
 from ...utils.run_metadata import (
     collect_dataset_view_fingerprint,
     collect_git_metadata,
@@ -119,12 +120,11 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
         required_summary_keys=["completed_epochs", "best_epoch", "stop_reason"],
         allowed_stop_reasons={"max_epochs", "early_stopping"},
     )
-    device = torch.device(
-        args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
+    device = require_cuda_device(
+        device_name=args.device,
+        git_cwd=Path(__file__).resolve().parent,
+        error_message="Stage 1 evaluation currently expects CUDA.",
     )
-    if device.type != "cuda":
-        raise RuntimeError("Stage 1 evaluation currently expects CUDA.")
-    enforce_runtime_prerequisites(git_cwd=Path(__file__).resolve().parent)
     git_metadata = collect_git_metadata(Path(__file__).resolve().parent)
     gpu_info = collect_gpu_info(device)
 
@@ -228,6 +228,7 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
             "rollout_accel_source": stage1_metadata["rollout_accel_source"],
         },
     )
+    wandb_run_url = str(getattr(reporter.wandb_run, "url", ""))
 
     tf_loss_total = 0.0
     tf_batches = 0
@@ -621,6 +622,18 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                     frame_count=len(pred_actions_list),
                 )
             reporter.emit_summary("stage1_eval_summary", summary)
+            upsert_manifest(
+                artifact_kind="eval",
+                stage="stage1a_eval",
+                run_name=Path(args.output_json).resolve().stem,
+                summary_json=args.output_json,
+                checkpoint=args.checkpoint,
+                dataset_path=test_jsonl,
+                progress_json=str(args.progress_json),
+                per_sample_jsonl=str(args.per_sample_jsonl),
+                plots_dir=None,
+                wandb_run_url=wandb_run_url,
+            )
         except Exception as exc:
             reporter.emit_failure("stage1_eval_failure", exc)
             raise

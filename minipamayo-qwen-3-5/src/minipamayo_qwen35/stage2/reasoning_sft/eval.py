@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import torch
 
@@ -14,6 +15,7 @@ from ...utils.eval_reporting import (
     reporting_path_keys,
     validate_eval_reporting_args,
 )
+from ...inspector.manifests import upsert_manifest
 from ...utils.image_budget import (
     validate_canonical_image_budget,
 )
@@ -21,7 +23,7 @@ from ...utils.run_metadata import collect_dataset_view_fingerprint, collect_proc
 from .cli import parse_stage2_json_only_args, require_stage2_cuda_device
 
 CONFIG_PATH_KEYS = {"checkpoint", "eval_jsonl", "output_json"} | reporting_path_keys(
-    include_per_sample_jsonl=False
+    include_per_sample_jsonl=True
 )
 
 
@@ -37,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--image-min-pixels", type=int, default=0)
     parser.add_argument("--image-max-pixels", type=int, default=0)
-    add_eval_reporting_args(parser, include_per_sample_jsonl=False)
+    add_eval_reporting_args(parser, include_per_sample_jsonl=True)
     return parser
 
 
@@ -53,8 +55,45 @@ def parse_args() -> argparse.Namespace:
     if not args.eval_jsonl:
         raise RuntimeError("`eval_jsonl` must be defined in the config JSON.")
     validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
-    validate_eval_reporting_args(args)
+    validate_eval_reporting_args(args, require_per_sample_jsonl=True)
     return args
+
+
+def _emit_stage2_eval_samples(
+    *,
+    reporter: EvalReporter,
+    batch_start_index: int,
+    batch: dict[str, Any],
+    result: dict[str, Any],
+) -> None:
+    per_sample_loss = result["per_sample_loss"]
+    per_sample_correct = result["per_sample_correct"]
+    per_sample_total = result["per_sample_total"]
+    batch_size = len(batch["sample_id"])
+    for row_idx in range(batch_size):
+        token_total = int(per_sample_total[row_idx].item())
+        token_correct = int(per_sample_correct[row_idx].item())
+        payload = {
+            "event": "sample",
+            "sample_index": batch_start_index + row_idx,
+            "sample_id": str(batch["sample_id"][row_idx]),
+            "image_path": str(batch["image_path"][row_idx]),
+            "command": str(batch.get("command", [""] * batch_size)[row_idx]),
+            "planner_state": str(batch.get("planner_state", [""] * batch_size)[row_idx]),
+            "decision_longitudinal": str(
+                batch.get("decision_longitudinal", [""] * batch_size)[row_idx]
+            ),
+            "decision_lateral": str(batch.get("decision_lateral", [""] * batch_size)[row_idx]),
+            "reasoning_text": str(batch["reasoning_text"][row_idx]),
+            "teacher_forced_loss": float(per_sample_loss[row_idx].item()),
+            "metrics": {
+                "teacher_forced_loss": float(per_sample_loss[row_idx].item()),
+                "teacher_forced_correct_tokens": token_correct,
+                "teacher_forced_total_tokens": token_total,
+                "teacher_forced_token_accuracy": token_correct / max(token_total, 1),
+            },
+        }
+        reporter.emit_sample(payload, print_to_stdout=(batch_start_index + row_idx) < 5)
 
 
 def main() -> None:
@@ -119,6 +158,7 @@ def main() -> None:
             "image_max_pixels": args.image_max_pixels,
         },
     )
+    wandb_run_url = str(getattr(reporter.wandb_run, "url", ""))
 
     try:
         metrics = evaluate_stage2(
@@ -134,6 +174,12 @@ def main() -> None:
                 processed_samples=processed,
                 running_metrics=running_metrics,
             ),
+            sample_callback=lambda batch_start_index, batch, result: _emit_stage2_eval_samples(
+                reporter=reporter,
+                batch_start_index=batch_start_index,
+                batch=batch,
+                result=result,
+            ),
         )
 
         summary = {
@@ -144,6 +190,7 @@ def main() -> None:
             "checkpoint": args.checkpoint,
             "base_stage1_checkpoint": str(checkpoint_args["stage1a_checkpoint"]),
             "eval_jsonl": args.eval_jsonl,
+            "num_samples": len(eval_dataset),
             "eval_size": len(eval_dataset),
             "metrics": metrics,
             "dataset_fingerprint": collect_dataset_view_fingerprint(eval_dataset),
@@ -156,6 +203,17 @@ def main() -> None:
             "stage2_metadata": checkpoint.get("stage2_metadata"),
         }
         reporter.emit_summary("stage2_eval_summary", summary)
+        upsert_manifest(
+            artifact_kind="eval",
+            stage="stage2_eval",
+            run_name=Path(args.output_json).resolve().stem,
+            summary_json=args.output_json,
+            checkpoint=args.checkpoint,
+            dataset_path=str(args.eval_jsonl),
+            progress_json=str(args.progress_json),
+            per_sample_jsonl=str(args.per_sample_jsonl),
+            wandb_run_url=wandb_run_url,
+        )
     except Exception as exc:
         reporter.emit_failure("stage2_eval_failure", exc)
         raise

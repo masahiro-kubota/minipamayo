@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
 
+from ...inspector.manifests import update_manifest_plots
 from ...utils.preflight import init_required_online_wandb
 from ..eval_viz_common import (
     cdf,
@@ -448,6 +449,12 @@ def main() -> None:
             },
         }
         write_json(plot_paths["manifest"], manifest)
+        update_manifest_plots(
+            summary_json=summary_path,
+            plots_dir=output_dir,
+            plots={key: str(path) for key, path in plot_paths.items() if key != "manifest"},
+            wandb_run_url=getattr(run, "url", ""),
+        )
         run.summary["manifest_path"] = str(plot_paths["manifest"])
         run.summary["output_dir"] = str(output_dir)
     finally:

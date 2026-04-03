@@ -5,6 +5,7 @@
     "eval_jsonl": "datasets/processed/stage2/reasoning_sft/ignore_rule_data_k64_dt01_completion_001_curve_eval/perimeter_cw_holdout_v1/samples_reasoning_sft.jsonl",
     "output_json": "artifacts/eval/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.json",
     "progress_json": "artifacts/eval/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.progress.json",
+    "per_sample_jsonl": "artifacts/eval/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.per_sample.jsonl",
     "device": "cuda",
     "batch_size": 1,
     "num_workers": 0,

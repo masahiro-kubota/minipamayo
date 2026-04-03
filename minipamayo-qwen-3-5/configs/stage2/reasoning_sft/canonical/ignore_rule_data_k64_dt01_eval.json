@@ -4,6 +4,7 @@
     "checkpoint": "checkpoints/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_12gb/best.pt",
     "eval_jsonl": "datasets/processed/stage1/ignore_rule_data_k64_dt01/20260327_231917_town01_perimeter_cw_expert_eval_0025824a9fa8/samples_reasoning_sft.jsonl",
     "output_json": "artifacts/eval/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_12gb.json",
+    "per_sample_jsonl": "artifacts/eval/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_12gb.per_sample.jsonl",
     "device": "cuda",
     "batch_size": 1,
     "num_workers": 0,

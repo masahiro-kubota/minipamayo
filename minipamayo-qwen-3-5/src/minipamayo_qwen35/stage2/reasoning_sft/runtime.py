@@ -200,12 +200,43 @@ def compute_weighted_loss(
     return weighted_loss.sum() / denominator
 
 
+def compute_weighted_loss_per_sample(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    loss_weights: torch.Tensor,
+) -> torch.Tensor:
+    shifted_logits = logits[:, :-1, :].contiguous()
+    shifted_labels = labels[:, 1:].contiguous()
+    shifted_weights = loss_weights[:, 1:].contiguous()
+    vocab_size = shifted_logits.shape[-1]
+
+    token_loss = F.cross_entropy(
+        shifted_logits.view(-1, vocab_size),
+        shifted_labels.view(-1),
+        reduction="none",
+        ignore_index=-100,
+    ).view_as(shifted_labels)
+    valid_mask = shifted_labels != -100
+    weighted_loss = token_loss * shifted_weights * valid_mask.to(dtype=token_loss.dtype)
+    denominator = (shifted_weights * valid_mask.to(dtype=shifted_weights.dtype)).sum(dim=1).clamp_min(1.0)
+    return weighted_loss.sum(dim=1) / denominator
+
+
 def compute_token_metrics(logits: torch.Tensor, labels: torch.Tensor) -> dict[str, int]:
     shifted_preds = logits[:, :-1, :].argmax(dim=-1)
     shifted_labels = labels[:, 1:]
     valid_mask = shifted_labels != -100
     total = int(valid_mask.sum().item())
     correct = int(((shifted_preds == shifted_labels) & valid_mask).sum().item())
+    return {"correct": correct, "total": total}
+
+
+def compute_token_metrics_per_sample(logits: torch.Tensor, labels: torch.Tensor) -> dict[str, torch.Tensor]:
+    shifted_preds = logits[:, :-1, :].argmax(dim=-1)
+    shifted_labels = labels[:, 1:]
+    valid_mask = shifted_labels != -100
+    correct = ((shifted_preds == shifted_labels) & valid_mask).sum(dim=1)
+    total = valid_mask.sum(dim=1)
     return {"correct": correct, "total": total}
 
 
@@ -233,6 +264,8 @@ def run_stage2_teacher_forced_batch(
         outputs = model(**model_forward_inputs(full_inputs))
         loss = compute_weighted_loss(outputs.logits, labels, loss_weights)
     metrics = compute_token_metrics(outputs.logits.detach(), labels)
+    per_sample_loss = compute_weighted_loss_per_sample(outputs.logits.detach(), labels, loss_weights)
+    per_sample_metrics = compute_token_metrics_per_sample(outputs.logits.detach(), labels)
     return {
         "outputs": outputs,
         "loss": loss,
@@ -240,6 +273,9 @@ def run_stage2_teacher_forced_batch(
         "loss_weights": loss_weights,
         "correct": metrics["correct"],
         "total": metrics["total"],
+        "per_sample_loss": per_sample_loss.detach().cpu(),
+        "per_sample_correct": per_sample_metrics["correct"].detach().cpu(),
+        "per_sample_total": per_sample_metrics["total"].detach().cpu(),
     }
 
 
@@ -255,6 +291,7 @@ def evaluate_stage2(
     model_dtype: torch.dtype,
     handoff_loss_weight: float,
     progress_callback: Callable[[int, dict[str, float]], None] | None = None,
+    sample_callback: Callable[[int, dict[str, Any], dict[str, Any]], None] | None = None,
 ) -> dict:
     model.eval()
     total_loss = 0.0
@@ -264,6 +301,7 @@ def evaluate_stage2(
     total_samples = 0
 
     for batch in dataloader:
+        batch_start_index = total_samples
         result = run_stage2_teacher_forced_batch(
             model=model,
             batch=batch,
@@ -274,6 +312,8 @@ def evaluate_stage2(
             model_dtype=model_dtype,
             handoff_loss_weight=handoff_loss_weight,
         )
+        if sample_callback is not None:
+            sample_callback(batch_start_index, batch, result)
         total_loss += float(result["loss"].detach().cpu())
         total_batches += 1
         total_correct += result["correct"]
