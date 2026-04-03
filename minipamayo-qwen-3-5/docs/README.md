@@ -22,4 +22,5 @@
 - `notes/`
   - `alpamayo-inference-alignment-audit.md`
   - `alpamayo-stage1-training-notes.md`
+  - `stage1-curve-eval-interpretation.md`
   - `stage1-stage2-inference-latency-notes.md`
