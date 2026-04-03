@@ -32,7 +32,7 @@ from .runtime import (
 )
 
 CONFIG_PATH_KEYS = COMMON_CONFIG_PATH_KEYS | {"eval_jsonl"} | reporting_path_keys(
-    include_per_sample_jsonl=False
+    include_per_sample_jsonl=True
 )
 MULTI_VALUE_CONFIG_KEYS = {"eval_jsonl"}
 
@@ -43,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--eval-jsonl", type=str, default="")
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=2)
-    add_eval_reporting_args(parser, include_per_sample_jsonl=False)
+    add_eval_reporting_args(parser, include_per_sample_jsonl=True)
     return parser
 
 
@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
     )
     args.eval_jsonl = normalize_required_string_list(args.eval_jsonl, key_name="eval_jsonl")
     validate_stage1b_runtime_args(args)
-    validate_eval_reporting_args(args)
+    validate_eval_reporting_args(args, require_per_sample_jsonl=True)
     return args
 
 
@@ -175,8 +175,98 @@ def main() -> None:
                     )
                 else:
                     pid_action = None
+                    pid_waypoints = None
 
                 batch_size = gt_action.shape[0]
+                action_horizon = int(gt_action_seq.shape[1])
+                batch_loss_value = float(loss.detach().cpu())
+                for row_idx in range(batch_size):
+                    sample_index = total_samples + row_idx
+                    sample_gt_action = gt_action_seq[row_idx].detach().cpu()
+                    sample_pred_action = pred_action[row_idx].detach().cpu()
+                    sample_gt_waypoints = gt_waypoints[row_idx].detach().cpu()
+                    sample_pred_waypoints = pred_waypoints[row_idx].detach().cpu()
+                    sample_action_mae_accel = float(
+                        (sample_pred_action[:, 0] - sample_gt_action[:, 0]).abs().mean().item()
+                    )
+                    sample_action_mae_kappa = float(
+                        (sample_pred_action[:, 1] - sample_gt_action[:, 1]).abs().mean().item()
+                    )
+                    sample_ade = float(canonical_metrics.ade_per_sample[row_idx].item())
+                    sample_fde = float(canonical_metrics.fde_per_sample[row_idx].item())
+                    sample_max_lateral = float(canonical_metrics.max_lateral_per_sample[row_idx].item())
+                    sample_payload = {
+                        "event": "sample",
+                        "sample_index": sample_index,
+                        "sample_id": batch["sample_id"][row_idx],
+                        "image_path": str(batch["image_path"][row_idx]),
+                        "command": batch["command"][row_idx],
+                        "flow_steps": int(args.flow_steps),
+                        "cfm_loss": batch_loss_value,
+                        "gt_action": [[float(x) for x in step] for step in sample_gt_action.tolist()],
+                        "pred_action": [[float(x) for x in step] for step in sample_pred_action.tolist()],
+                        "gt_waypoints": [
+                            [float(point[0]), float(point[1])]
+                            for point in sample_gt_waypoints.tolist()
+                        ],
+                        "pred_waypoints": [
+                            [float(point[0]), float(point[1])]
+                            for point in sample_pred_waypoints.tolist()
+                        ],
+                        "ade_m": sample_ade,
+                        "fde_m": sample_fde,
+                        "max_lateral_error_m": sample_max_lateral,
+                        "metrics": {
+                            "cfm_loss": batch_loss_value,
+                            "action_mae_accel": sample_action_mae_accel,
+                            "action_mae_kappa": sample_action_mae_kappa,
+                            "ade_m": sample_ade,
+                            "fde_m": sample_fde,
+                            "max_lateral_error_m": sample_max_lateral,
+                            "action_horizon": action_horizon,
+                        },
+                    }
+                    if pid_action is not None and pid_waypoints is not None:
+                        sample_pid_action = pid_action[row_idx].detach().cpu()
+                        sample_pid_waypoints = pid_waypoints[row_idx].detach().cpu()
+                        sample_pid_action_mae_accel = float(
+                            (sample_pid_action[:, 0] - sample_gt_action[:, 0]).abs().mean().item()
+                        )
+                        sample_pid_action_mae_kappa = float(
+                            (sample_pid_action[:, 1] - sample_gt_action[:, 1]).abs().mean().item()
+                        )
+                        sample_payload["pid_override"] = {
+                            "target_speed_kmh": float(args.pid_target_speed_kmh),
+                            "pid_gains": {
+                                "kp": float(args.pid_kp),
+                                "ki": float(args.pid_ki),
+                                "kd": float(args.pid_kd),
+                            },
+                            "pred_action": [
+                                [float(x) for x in step] for step in sample_pid_action.tolist()
+                            ],
+                            "pred_waypoints": [
+                                [float(point[0]), float(point[1])]
+                                for point in sample_pid_waypoints.tolist()
+                            ],
+                            "ade_m": float(pid_metrics.ade_per_sample[row_idx].item()),
+                            "fde_m": float(pid_metrics.fde_per_sample[row_idx].item()),
+                            "max_lateral_error_m": float(
+                                pid_metrics.max_lateral_per_sample[row_idx].item()
+                            ),
+                            "metrics": {
+                                "action_mae_accel": sample_pid_action_mae_accel,
+                                "action_mae_kappa": sample_pid_action_mae_kappa,
+                                "ade_m": float(pid_metrics.ade_per_sample[row_idx].item()),
+                                "fde_m": float(pid_metrics.fde_per_sample[row_idx].item()),
+                                "max_lateral_error_m": float(
+                                    pid_metrics.max_lateral_per_sample[row_idx].item()
+                                ),
+                                "action_horizon": action_horizon,
+                            },
+                        }
+                    reporter.emit_sample(sample_payload, print_to_stdout=sample_index < 5)
+
                 total_loss += float(loss.detach().cpu())
                 total_batches += 1
                 total_ade += float(canonical_metrics.ade_per_sample.sum().item())

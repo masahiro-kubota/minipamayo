@@ -8,6 +8,7 @@
     ],
     "output_json": "artifacts/eval/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.json",
     "progress_json": "artifacts/eval/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.progress.json",
+    "per_sample_jsonl": "artifacts/eval/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.per_sample.jsonl",
     "batch_size": 1,
     "num_workers": 0,
     "flow_steps": 10,
