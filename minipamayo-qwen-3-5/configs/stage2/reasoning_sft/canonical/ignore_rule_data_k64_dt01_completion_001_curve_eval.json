@@ -1,0 +1,19 @@
+{
+  "path_base": "project_root",
+  "args": {
+    "checkpoint": "checkpoints/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_12gb/best.pt",
+    "eval_jsonl": "datasets/processed/stage2/reasoning_sft/ignore_rule_data_k64_dt01_completion_001_curve_eval/perimeter_cw_holdout_v1/samples_reasoning_sft.jsonl",
+    "output_json": "artifacts/eval/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.json",
+    "progress_json": "artifacts/eval/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.progress.json",
+    "device": "cuda",
+    "batch_size": 1,
+    "num_workers": 0,
+    "max_samples": 0,
+    "image_min_pixels": 163840,
+    "image_max_pixels": 196608,
+    "progress_every_samples": 25,
+    "progress_every_seconds": 60,
+    "wandb_project": "minipamayo-qwen35",
+    "wandb_run_name": "stage2-eval-ignore-rule-k64-dt01-completion-001-curve"
+  }
+}

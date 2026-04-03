@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from collections.abc import Callable
 from typing import Any
 
 import torch
@@ -253,12 +254,14 @@ def evaluate_stage2(
     device: torch.device,
     model_dtype: torch.dtype,
     handoff_loss_weight: float,
+    progress_callback: Callable[[int, dict[str, float]], None] | None = None,
 ) -> dict:
     model.eval()
     total_loss = 0.0
     total_batches = 0
     total_correct = 0
     total_tokens = 0
+    total_samples = 0
 
     for batch in dataloader:
         result = run_stage2_teacher_forced_batch(
@@ -275,6 +278,15 @@ def evaluate_stage2(
         total_batches += 1
         total_correct += result["correct"]
         total_tokens += result["total"]
+        total_samples += len(batch["sample_id"])
+        if progress_callback is not None:
+            progress_callback(
+                total_samples,
+                {
+                    "loss": total_loss / max(total_batches, 1),
+                    "token_accuracy": total_correct / max(total_tokens, 1),
+                },
+            )
 
     model.train()
     return {

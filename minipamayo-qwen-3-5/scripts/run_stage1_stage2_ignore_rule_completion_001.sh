@@ -21,13 +21,14 @@ STAGE2_RETRY_SLEEP_S="${STAGE2_RETRY_SLEEP_S:-30}"
 CURRENT_STAGE="bootstrap"
 
 STAGE1A_TRAIN_CONFIG="configs/stage1/vlm_ce/train/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.json"
-STAGE1A_EVAL_CONFIG="configs/stage1/vlm_ce/eval/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.json"
+STAGE1A_EVAL_CONFIG="configs/stage1/vlm_ce/eval/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.json"
 STAGE1B_TRAIN_CONFIG="configs/stage1/expert_cfm/train/canonical/ignore_rule_data_k64_dt01_completion_001_12gb_safe.json"
-STAGE1B_EVAL_CONFIG="configs/stage1/expert_cfm/eval/canonical/ignore_rule_data_k64_dt01_completion_001_eval_safe.json"
+STAGE1B_EVAL_CONFIG="configs/stage1/expert_cfm/eval/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.json"
 STAGE2_PREPROCESS_CONFIG="configs/stage2/reasoning_sft/data/ignore_rule_data_k64_dt01_completion_001.json"
+STAGE2_CURVE_PREPROCESS_CONFIG="configs/stage2/reasoning_sft/data/ignore_rule_data_k64_dt01_completion_001_curve_eval.json"
 STAGE2_TRAIN_CONFIG="configs/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.json"
-STAGE2_EVAL_CONFIG="configs/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_eval.json"
-STAGE2_INFER_CONFIG="configs/stage2/reasoning_sft/inference/canonical/ignore_rule_data_k64_dt01_completion_001_sample_stage1b_safe.json"
+STAGE2_EVAL_CONFIG="configs/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.json"
+STAGE2_INFER_CONFIG="configs/stage2/reasoning_sft/inference/canonical/ignore_rule_data_k64_dt01_completion_001_curve_sample_stage1b_safe.json"
 
 STAGE1A_SAVE_DIR="${PROJECT_ROOT}/checkpoints/stage1/vlm_ce/canonical/ignore_rule_data_k64_dt01_completion_001_12gb"
 STAGE1B_SAVE_DIR="${PROJECT_ROOT}/checkpoints/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_completion_001_12gb_safe"
@@ -42,18 +43,28 @@ STAGE1B_LAST="${STAGE1B_SAVE_DIR}/last.pt"
 STAGE2_SUMMARY="${STAGE2_SAVE_DIR}/summary.json"
 STAGE2_BEST="${STAGE2_SAVE_DIR}/best.pt"
 
-STAGE1A_EVAL_OUTPUT="${PROJECT_ROOT}/artifacts/eval/stage1/vlm_ce/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.json"
-STAGE1B_EVAL_OUTPUT="${PROJECT_ROOT}/artifacts/eval/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_completion_001_12gb_safe.json"
-STAGE2_EVAL_OUTPUT="${PROJECT_ROOT}/artifacts/eval/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.json"
-STAGE2_INFER_OUTPUT="${PROJECT_ROOT}/artifacts/inference/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_sample_stage1b_safe.json"
+STAGE1A_EVAL_OUTPUT="${PROJECT_ROOT}/artifacts/eval/stage1/vlm_ce/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.json"
+STAGE1A_EVAL_PROGRESS="${PROJECT_ROOT}/artifacts/eval/stage1/vlm_ce/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.progress.json"
+STAGE1B_EVAL_OUTPUT="${PROJECT_ROOT}/artifacts/eval/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.json"
+STAGE1B_EVAL_PROGRESS="${PROJECT_ROOT}/artifacts/eval/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.progress.json"
+STAGE2_EVAL_OUTPUT="${PROJECT_ROOT}/artifacts/eval/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.json"
+STAGE2_EVAL_PROGRESS="${PROJECT_ROOT}/artifacts/eval/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.progress.json"
+STAGE2_INFER_OUTPUT="${PROJECT_ROOT}/artifacts/inference/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_curve_sample_stage1b_safe.json"
+STAGE2_INFER_PROGRESS="${PROJECT_ROOT}/artifacts/inference/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_curve_sample_stage1b_safe.progress.json"
 
-PREPROCESS_OUTPUTS=(
+TRAIN_PREPROCESS_OUTPUTS=(
   "${PROJECT_ROOT}/datasets/processed/stage2/reasoning_sft/ignore_rule_data_k64_dt01_completion_001/20260327_231917_town01_intersection_weave_ccw_expert_eval_0025824a9fa8/samples_reasoning_sft.jsonl"
   "${PROJECT_ROOT}/datasets/processed/stage2/reasoning_sft/ignore_rule_data_k64_dt01_completion_001/20260327_231917_town01_intersection_weave_cw_expert_eval_0025824a9fa8/samples_reasoning_sft.jsonl"
   "${PROJECT_ROOT}/datasets/processed/stage2/reasoning_sft/ignore_rule_data_k64_dt01_completion_001/20260327_231917_town01_perimeter_cw_expert_eval_0025824a9fa8/samples_reasoning_sft.jsonl"
 )
 
-PREPROCESS_EXPECTED_COUNTS=(6423 4676 6167)
+TRAIN_PREPROCESS_EXPECTED_COUNTS=(6423 4676 6167)
+
+CURVE_PREPROCESS_OUTPUTS=(
+  "${PROJECT_ROOT}/datasets/processed/stage2/reasoning_sft/ignore_rule_data_k64_dt01_completion_001_curve_eval/perimeter_cw_holdout_v1/samples_reasoning_sft.jsonl"
+)
+
+CURVE_PREPROCESS_EXPECTED_COUNTS=(569)
 
 if [ -f "${CUDA_ENV_SCRIPT}" ]; then
   # shellcheck disable=SC1090
@@ -186,7 +197,10 @@ prepare_log_root() {
 
 prepare_preprocess_outputs() {
   local output_path
-  for output_path in "${PREPROCESS_OUTPUTS[@]}"; do
+  for output_path in "${TRAIN_PREPROCESS_OUTPUTS[@]}"; do
+    backup_path_if_exists "${output_path}" || true
+  done
+  for output_path in "${CURVE_PREPROCESS_OUTPUTS[@]}"; do
     backup_path_if_exists "${output_path}" || true
   done
 }
@@ -194,11 +208,15 @@ prepare_preprocess_outputs() {
 prepare_attempt_scoped_artifacts() {
   backup_path_if_exists "${STAGE1A_SAVE_DIR}" || true
   backup_path_if_exists "${STAGE1A_EVAL_OUTPUT}" || true
+  backup_path_if_exists "${STAGE1A_EVAL_PROGRESS}" || true
   backup_path_if_exists "${STAGE1B_SAVE_DIR}" || true
   backup_path_if_exists "${STAGE1B_EVAL_OUTPUT}" || true
+  backup_path_if_exists "${STAGE1B_EVAL_PROGRESS}" || true
   backup_path_if_exists "${STAGE2_SAVE_DIR}" || true
   backup_path_if_exists "${STAGE2_EVAL_OUTPUT}" || true
+  backup_path_if_exists "${STAGE2_EVAL_PROGRESS}" || true
   backup_path_if_exists "${STAGE2_INFER_OUTPUT}" || true
+  backup_path_if_exists "${STAGE2_INFER_PROGRESS}" || true
 }
 
 stage1b_retry_loop() {
@@ -299,12 +317,29 @@ main() {
   local output_path
   local expected_count
   local index
-  for index in "${!PREPROCESS_OUTPUTS[@]}"; do
-    output_path="${PREPROCESS_OUTPUTS[$index]}"
-    expected_count="${PREPROCESS_EXPECTED_COUNTS[$index]}"
+  for index in "${!TRAIN_PREPROCESS_OUTPUTS[@]}"; do
+    output_path="${TRAIN_PREPROCESS_OUTPUTS[$index]}"
+    expected_count="${TRAIN_PREPROCESS_EXPECTED_COUNTS[$index]}"
     require_line_count "${output_path}" "${expected_count}" || {
       write_run_status "failed" 11
       return 11
+    }
+  done
+
+  run_stage \
+    "stage2_curve_eval_preprocess" \
+    uv run python -m minipamayo_qwen35.stage2.reasoning_sft.preprocess \
+      --config-json "${STAGE2_CURVE_PREPROCESS_CONFIG}" || {
+    write_run_status "failed" 12
+    return 12
+  }
+
+  for index in "${!CURVE_PREPROCESS_OUTPUTS[@]}"; do
+    output_path="${CURVE_PREPROCESS_OUTPUTS[$index]}"
+    expected_count="${CURVE_PREPROCESS_EXPECTED_COUNTS[$index]}"
+    require_line_count "${output_path}" "${expected_count}" || {
+      write_run_status "failed" 13
+      return 13
     }
   done
 
@@ -314,9 +349,9 @@ main() {
   }
 
   run_stage \
-    "stage1a_smoke_eval" \
+    "stage1a_curve_eval" \
     uv run python -m minipamayo_qwen35.stage1.vlm_ce.eval \
-      --config-json "${STAGE1A_EVAL_CONFIG}" || log_line "non_blocking_failure stage=stage1a_smoke_eval"
+      --config-json "${STAGE1A_EVAL_CONFIG}" || log_line "non_blocking_failure stage=stage1a_curve_eval"
 
   stage1b_retry_loop || {
     write_run_status "failed" 30
@@ -324,9 +359,9 @@ main() {
   }
 
   run_stage \
-    "stage1b_smoke_eval" \
+    "stage1b_curve_eval" \
     uv run python -m minipamayo_qwen35.stage1.expert_cfm.eval \
-      --config-json "${STAGE1B_EVAL_CONFIG}" || log_line "non_blocking_failure stage=stage1b_smoke_eval"
+      --config-json "${STAGE1B_EVAL_CONFIG}" || log_line "non_blocking_failure stage=stage1b_curve_eval"
 
   stage2_retry_loop || {
     write_run_status "failed" 40
@@ -334,14 +369,14 @@ main() {
   }
 
   run_stage \
-    "stage2_smoke_eval" \
+    "stage2_curve_eval" \
     uv run python -m minipamayo_qwen35.stage2.reasoning_sft.eval \
-      --config-json "${STAGE2_EVAL_CONFIG}" || log_line "non_blocking_failure stage=stage2_smoke_eval"
+      --config-json "${STAGE2_EVAL_CONFIG}" || log_line "non_blocking_failure stage=stage2_curve_eval"
 
   run_stage \
-    "stage2_sample_inference" \
+    "stage2_curve_sample_inference" \
     uv run python -m minipamayo_qwen35.stage2.reasoning_sft.inference \
-      --config-json "${STAGE2_INFER_CONFIG}" || log_line "non_blocking_failure stage=stage2_sample_inference"
+      --config-json "${STAGE2_INFER_CONFIG}" || log_line "non_blocking_failure stage=stage2_curve_sample_inference"
 
   write_run_status "completed" 0
   log_line "run_completed exit_code=0"

@@ -9,6 +9,12 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 
+from ...utils.eval_reporting import (
+    EvalReporter,
+    add_eval_reporting_args,
+    reporting_path_keys,
+    validate_eval_reporting_args,
+)
 from ..checkpoint_completion import require_completed_training_run
 from ..dataset import Stage1JsonlDataset, stage1_collate
 from .cli import (
@@ -25,7 +31,9 @@ from .runtime import (
     run_stage1b_inference_batch,
 )
 
-CONFIG_PATH_KEYS = COMMON_CONFIG_PATH_KEYS | {"eval_jsonl"}
+CONFIG_PATH_KEYS = COMMON_CONFIG_PATH_KEYS | {"eval_jsonl"} | reporting_path_keys(
+    include_per_sample_jsonl=False
+)
 MULTI_VALUE_CONFIG_KEYS = {"eval_jsonl"}
 
 
@@ -35,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--eval-jsonl", type=str, default="")
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=2)
+    add_eval_reporting_args(parser, include_per_sample_jsonl=False)
     return parser
 
 
@@ -48,6 +57,7 @@ def parse_args() -> argparse.Namespace:
     )
     args.eval_jsonl = normalize_required_string_list(args.eval_jsonl, key_name="eval_jsonl")
     validate_stage1b_runtime_args(args)
+    validate_eval_reporting_args(args)
     return args
 
 
@@ -85,6 +95,32 @@ def main() -> None:
         device=device,
     )
     stage1b_metadata = runtime.stage1b_metadata
+    reporter = EvalReporter.from_args(
+        args=args,
+        stage="stage1b_eval",
+        total_samples=len(dataset),
+        checkpoint=args.checkpoint,
+        dataset_path=",".join(args.eval_jsonl),
+        extra_wandb_config={
+            "entrypoint": "stage1.expert_cfm.eval",
+            "flow_steps": int(args.flow_steps),
+            "include_pid_override": bool(args.include_pid_override),
+            "batch_size": int(args.batch_size),
+        },
+    )
+    reporter.emit_setup(
+        "stage1b_eval_setup",
+        {
+            "checkpoint": str(Path(args.checkpoint).resolve()),
+            "stage1_checkpoint": str(Path(args.stage1_checkpoint).resolve()),
+            "eval_jsonl": args.eval_jsonl,
+            "num_samples": len(dataset),
+            "batch_size": args.batch_size,
+            "flow_steps": args.flow_steps,
+            "condition_source": stage1b_metadata["condition_source"],
+            "pid_override_enabled": bool(args.include_pid_override),
+        },
+    )
 
     total_loss = 0.0
     total_batches = 0
@@ -103,110 +139,135 @@ def main() -> None:
     canonical_total_action_mae_accel = 0.0
     canonical_total_action_mae_kappa = 0.0
 
-    with torch.no_grad():
-        for batch in dataloader:
-            outputs = run_stage1b_inference_batch(
-                runtime=runtime,
-                batch=batch,
-                include_pid_override=args.include_pid_override,
-                pid_target_speed_kmh=args.pid_target_speed_kmh,
-                pid_kp=args.pid_kp,
-                pid_ki=args.pid_ki,
-                pid_kd=args.pid_kd,
-                compute_loss=True,
-            )
-            if outputs.loss is None or outputs.gt_action is None or outputs.gt_action_seq is None:
-                raise RuntimeError("Stage 1B eval expected shared runtime outputs with loss and labels.")
-            loss = outputs.loss
-            gt_action = outputs.gt_action
-            gt_action_seq = outputs.gt_action_seq
-            pred_action = outputs.pred_action
-            if outputs.gt_waypoints is None:
-                raise RuntimeError("Stage 1B eval expected ground-truth waypoints in the batch.")
-            gt_waypoints = outputs.gt_waypoints
-            pred_waypoints = outputs.pred_waypoints
-            canonical_metrics = compute_stage1b_waypoint_metrics(
-                pred_waypoints=pred_waypoints,
-                gt_waypoints=gt_waypoints,
-            )
-            if outputs.pid_action is not None and outputs.pid_waypoints is not None:
-                pid_action = outputs.pid_action
-                pid_waypoints = outputs.pid_waypoints
-                pid_metrics = compute_stage1b_waypoint_metrics(
-                    pred_waypoints=pid_waypoints,
+    try:
+        with torch.no_grad():
+            for batch in dataloader:
+                outputs = run_stage1b_inference_batch(
+                    runtime=runtime,
+                    batch=batch,
+                    include_pid_override=args.include_pid_override,
+                    pid_target_speed_kmh=args.pid_target_speed_kmh,
+                    pid_kp=args.pid_kp,
+                    pid_ki=args.pid_ki,
+                    pid_kd=args.pid_kd,
+                    compute_loss=True,
+                )
+                if outputs.loss is None or outputs.gt_action is None or outputs.gt_action_seq is None:
+                    raise RuntimeError("Stage 1B eval expected shared runtime outputs with loss and labels.")
+                loss = outputs.loss
+                gt_action = outputs.gt_action
+                gt_action_seq = outputs.gt_action_seq
+                pred_action = outputs.pred_action
+                if outputs.gt_waypoints is None:
+                    raise RuntimeError("Stage 1B eval expected ground-truth waypoints in the batch.")
+                gt_waypoints = outputs.gt_waypoints
+                pred_waypoints = outputs.pred_waypoints
+                canonical_metrics = compute_stage1b_waypoint_metrics(
+                    pred_waypoints=pred_waypoints,
                     gt_waypoints=gt_waypoints,
                 )
-            else:
-                pid_action = None
+                if outputs.pid_action is not None and outputs.pid_waypoints is not None:
+                    pid_action = outputs.pid_action
+                    pid_waypoints = outputs.pid_waypoints
+                    pid_metrics = compute_stage1b_waypoint_metrics(
+                        pred_waypoints=pid_waypoints,
+                        gt_waypoints=gt_waypoints,
+                    )
+                else:
+                    pid_action = None
 
-            batch_size = gt_action.shape[0]
-            total_loss += float(loss.detach().cpu())
-            total_batches += 1
-            total_ade += float(canonical_metrics.ade_per_sample.sum().item())
-            total_fde += float(canonical_metrics.fde_per_sample.sum().item())
-            total_samples += batch_size
-            total_action_steps += batch_size * int(gt_action_seq.shape[1])
-            canonical_total_mean_max_lateral += float(
-                canonical_metrics.max_lateral_per_sample.sum().item()
-            )
-            canonical_global_max_lateral = max(
-                canonical_global_max_lateral, float(canonical_metrics.lateral_error.max().item())
-            )
-            accel_mae, kappa_mae = compute_stage1b_action_mae_sums(
-                pred_action=pred_action,
-                gt_action_seq=gt_action_seq,
-            )
-            canonical_total_action_mae_accel += accel_mae
-            canonical_total_action_mae_kappa += kappa_mae
-            if pid_action is not None:
-                pid_total_ade += float(pid_metrics.ade_per_sample.sum().item())
-                pid_total_fde += float(pid_metrics.fde_per_sample.sum().item())
-                pid_total_mean_max_lateral += float(pid_metrics.max_lateral_per_sample.sum().item())
-                pid_global_max_lateral = max(
-                    pid_global_max_lateral, float(pid_metrics.lateral_error.max().item())
+                batch_size = gt_action.shape[0]
+                total_loss += float(loss.detach().cpu())
+                total_batches += 1
+                total_ade += float(canonical_metrics.ade_per_sample.sum().item())
+                total_fde += float(canonical_metrics.fde_per_sample.sum().item())
+                total_samples += batch_size
+                total_action_steps += batch_size * int(gt_action_seq.shape[1])
+                canonical_total_mean_max_lateral += float(
+                    canonical_metrics.max_lateral_per_sample.sum().item()
                 )
-                pid_accel_mae, pid_kappa_mae = compute_stage1b_action_mae_sums(
-                    pred_action=pid_action,
+                canonical_global_max_lateral = max(
+                    canonical_global_max_lateral, float(canonical_metrics.lateral_error.max().item())
+                )
+                accel_mae, kappa_mae = compute_stage1b_action_mae_sums(
+                    pred_action=pred_action,
                     gt_action_seq=gt_action_seq,
                 )
-                pid_total_action_mae_accel += pid_accel_mae
-                pid_total_action_mae_kappa += pid_kappa_mae
+                canonical_total_action_mae_accel += accel_mae
+                canonical_total_action_mae_kappa += kappa_mae
+                if pid_action is not None:
+                    pid_total_ade += float(pid_metrics.ade_per_sample.sum().item())
+                    pid_total_fde += float(pid_metrics.fde_per_sample.sum().item())
+                    pid_total_mean_max_lateral += float(pid_metrics.max_lateral_per_sample.sum().item())
+                    pid_global_max_lateral = max(
+                        pid_global_max_lateral, float(pid_metrics.lateral_error.max().item())
+                    )
+                    pid_accel_mae, pid_kappa_mae = compute_stage1b_action_mae_sums(
+                        pred_action=pid_action,
+                        gt_action_seq=gt_action_seq,
+                    )
+                    pid_total_action_mae_accel += pid_accel_mae
+                    pid_total_action_mae_kappa += pid_kappa_mae
 
-    summary = {
-        "checkpoint": str(Path(args.checkpoint).resolve()),
-        "stage1_checkpoint": str(Path(args.stage1_checkpoint).resolve()),
-        "num_samples": total_samples,
-        "cfm_loss": total_loss / max(1, total_batches),
-        "ade_m": total_ade / max(1, total_samples),
-        "fde_m": total_fde / max(1, total_samples),
-        "mean_max_lateral_error_m": canonical_total_mean_max_lateral / max(1, total_samples),
-        "global_max_lateral_error_m": canonical_global_max_lateral,
-        "flow_steps": args.flow_steps,
-        "condition_source": stage1b_metadata["condition_source"],
-        "pid_override_enabled": bool(args.include_pid_override),
-        "action_mae_accel": canonical_total_action_mae_accel / max(1, total_action_steps),
-        "action_mae_kappa": canonical_total_action_mae_kappa / max(1, total_action_steps),
-    }
-    if args.include_pid_override:
-        summary["pid_override"] = {
-            "target_speed_kmh": float(args.pid_target_speed_kmh),
-            "pid_gains": {
-                "kp": float(args.pid_kp),
-                "ki": float(args.pid_ki),
-                "kd": float(args.pid_kd),
-            },
-            "ade_m": pid_total_ade / max(1, total_samples),
-            "fde_m": pid_total_fde / max(1, total_samples),
-            "mean_max_lateral_error_m": pid_total_mean_max_lateral / max(1, total_samples),
-            "global_max_lateral_error_m": pid_global_max_lateral,
-            "action_mae_accel": pid_total_action_mae_accel / max(1, total_action_steps),
-            "action_mae_kappa": pid_total_action_mae_kappa / max(1, total_action_steps),
+                running_metrics = {
+                    "cfm_loss": total_loss / max(1, total_batches),
+                    "ade_m": total_ade / max(1, total_samples),
+                    "fde_m": total_fde / max(1, total_samples),
+                    "mean_max_lateral_error_m": canonical_total_mean_max_lateral / max(1, total_samples),
+                    "global_max_lateral_error_m": canonical_global_max_lateral,
+                    "action_mae_accel": canonical_total_action_mae_accel / max(1, total_action_steps),
+                    "action_mae_kappa": canonical_total_action_mae_kappa / max(1, total_action_steps),
+                }
+                if args.include_pid_override:
+                    running_metrics["pid_override"] = {
+                        "ade_m": pid_total_ade / max(1, total_samples),
+                        "fde_m": pid_total_fde / max(1, total_samples),
+                        "mean_max_lateral_error_m": pid_total_mean_max_lateral / max(1, total_samples),
+                        "global_max_lateral_error_m": pid_global_max_lateral,
+                        "action_mae_accel": pid_total_action_mae_accel / max(1, total_action_steps),
+                        "action_mae_kappa": pid_total_action_mae_kappa / max(1, total_action_steps),
+                    }
+                reporter.emit_progress(
+                    processed_samples=total_samples,
+                    running_metrics=running_metrics,
+                )
+
+        summary = {
+            "checkpoint": str(Path(args.checkpoint).resolve()),
+            "stage1_checkpoint": str(Path(args.stage1_checkpoint).resolve()),
+            "num_samples": total_samples,
+            "cfm_loss": total_loss / max(1, total_batches),
+            "ade_m": total_ade / max(1, total_samples),
+            "fde_m": total_fde / max(1, total_samples),
+            "mean_max_lateral_error_m": canonical_total_mean_max_lateral / max(1, total_samples),
+            "global_max_lateral_error_m": canonical_global_max_lateral,
+            "flow_steps": args.flow_steps,
+            "condition_source": stage1b_metadata["condition_source"],
+            "pid_override_enabled": bool(args.include_pid_override),
+            "action_mae_accel": canonical_total_action_mae_accel / max(1, total_action_steps),
+            "action_mae_kappa": canonical_total_action_mae_kappa / max(1, total_action_steps),
         }
-    if args.output_json:
-        output_path = Path(args.output_json).resolve()
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
+        if args.include_pid_override:
+            summary["pid_override"] = {
+                "target_speed_kmh": float(args.pid_target_speed_kmh),
+                "pid_gains": {
+                    "kp": float(args.pid_kp),
+                    "ki": float(args.pid_ki),
+                    "kd": float(args.pid_kd),
+                },
+                "ade_m": pid_total_ade / max(1, total_samples),
+                "fde_m": pid_total_fde / max(1, total_samples),
+                "mean_max_lateral_error_m": pid_total_mean_max_lateral / max(1, total_samples),
+                "global_max_lateral_error_m": pid_global_max_lateral,
+                "action_mae_accel": pid_total_action_mae_accel / max(1, total_action_steps),
+                "action_mae_kappa": pid_total_action_mae_kappa / max(1, total_action_steps),
+            }
+        reporter.emit_summary("stage1b_eval_summary", summary)
+    except Exception as exc:
+        reporter.emit_failure("stage1b_eval_failure", exc)
+        raise
+    finally:
+        reporter.close()
 
 
 if __name__ == "__main__":

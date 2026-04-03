@@ -1,0 +1,24 @@
+{
+  "path_base": "project_root",
+  "args": {
+    "checkpoint": "checkpoints/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_completion_001_12gb_safe/best.pt",
+    "stage1_checkpoint": "checkpoints/stage1/vlm_ce/canonical/ignore_rule_data_k64_dt01_completion_001_12gb/best.pt",
+    "eval_jsonl": [
+      "artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/curve_holdout.jsonl"
+    ],
+    "output_json": "artifacts/eval/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.json",
+    "progress_json": "artifacts/eval/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.progress.json",
+    "batch_size": 1,
+    "num_workers": 0,
+    "flow_steps": 10,
+    "include_pid_override": true,
+    "pid_target_speed_kmh": 24.0,
+    "pid_kp": 1.0,
+    "pid_ki": 0.05,
+    "pid_kd": 0.0,
+    "progress_every_samples": 25,
+    "progress_every_seconds": 60,
+    "wandb_project": "minipamayo-qwen35",
+    "wandb_run_name": "stage1b-eval-ignore-rule-k64-dt01-completion-001-curve"
+  }
+}

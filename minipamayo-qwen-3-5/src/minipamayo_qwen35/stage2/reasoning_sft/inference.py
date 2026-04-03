@@ -12,6 +12,12 @@ import numpy as np
 import torch
 from PIL import Image
 
+from ...utils.eval_reporting import (
+    EvalReporter,
+    add_eval_reporting_args,
+    reporting_path_keys,
+    validate_eval_reporting_args,
+)
 from ...utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
@@ -25,7 +31,7 @@ CONFIG_PATH_KEYS = {
     "stage1b_checkpoint",
     "sample_jsonl",
     "output_json",
-}
+} | reporting_path_keys(include_per_sample_jsonl=False)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,6 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--temperature", type=float, default=0.6)
     parser.add_argument("--top-p", type=float, default=0.98)
     parser.add_argument("--top-k", type=int, default=0)
+    add_eval_reporting_args(parser, include_per_sample_jsonl=False)
     return parser
 
 
@@ -73,6 +80,7 @@ def parse_args() -> argparse.Namespace:
     if args.top_k < 0:
         raise RuntimeError("`top_k` must be >= 0.")
     validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
+    validate_eval_reporting_args(args)
     return args
 
 
@@ -142,87 +150,123 @@ def main() -> None:
     history_quantizer = bundle["history_quantizer"]
     wrapper = bundle["wrapper"]
     sample = load_reasoning_sample(args.sample_jsonl, args.sample_index)
-    wrapper_inputs = build_wrapper_inputs_for_sample(
-        processor=processor,
-        sample=sample,
-        history_token_count=int(history_quantizer.token_count),
-        device=device,
+    reporter = EvalReporter.from_args(
+        args=args,
+        stage="stage2_inference",
+        total_samples=1,
+        checkpoint=args.checkpoint,
+        dataset_path=args.sample_jsonl,
+        extra_wandb_config={
+            "entrypoint": "stage2.reasoning_sft.inference",
+            "sample_index": int(args.sample_index),
+            "flow_steps": int(args.flow_steps),
+            "max_reasoning_tokens": int(args.max_reasoning_tokens),
+        },
     )
-    amp_context = (
-        torch.autocast("cuda", dtype=torch.bfloat16) if device.type == "cuda" else nullcontext()
-    )
-    with amp_context:
-        pred_xyz, pred_rot, extra = wrapper.sample_trajectories_from_data_with_vlm_rollout(
-            wrapper_inputs,
-            top_p=args.top_p,
-            top_k=None if args.top_k <= 0 else int(args.top_k),
-            temperature=args.temperature,
-            num_traj_samples=1,
-            num_traj_sets=1,
-            return_extra=True,
-            max_generation_length=args.max_reasoning_tokens,
-        )
-    stop_token_id = int(processor.tokenizer.convert_tokens_to_ids(TRAJ_FUTURE_START_TOKEN))
-    if stop_token_id < 0:
-        raise RuntimeError("Tokenizer is missing canonical `<|traj_future_start|>`.")
-    reasoning_text = str(extra["cot"][0, 0, 0])
-
-    history_xyz, history_rot = canonicalize_history_batch_for_action_space(
-        sample["ego_history_xyz"].unsqueeze(0).to(device=device, dtype=torch.float32),
-        sample["ego_history_rot"].unsqueeze(0).to(device=device, dtype=torch.float32),
-    )
-    pred_action = wrapper.action_space.traj_to_action(
-        traj_history_xyz=history_xyz,
-        traj_history_rot=history_rot,
-        traj_future_xyz=pred_xyz[:, 0, 0],
-        traj_future_rot=pred_rot[:, 0, 0],
-    )
-    pred_waypoints = pred_xyz[0, 0, 0, :, :2].detach().cpu()
-    gt_waypoints = sample["gt_waypoints"].to(dtype=torch.float32)
-    errors = torch.norm(pred_waypoints - gt_waypoints, dim=1)
-
-    payload = {
-        "checkpoint": str(Path(args.checkpoint).resolve()),
-        "stage1a_checkpoint": str(Path(checkpoint_args["stage1a_checkpoint"]).resolve()),
-        "stage1b_checkpoint": str(Path(args.stage1b_checkpoint).resolve()),
-        "sample_jsonl": str(Path(args.sample_jsonl).resolve()),
-        "sample_index": int(args.sample_index),
-        "sample_id": sample["sample_id"],
-        "prompt_style": "alpamayo_r1_wrapper",
-        "reasoning": {
-            "text": reasoning_text,
-            "token_ids": None,
-            "stop_token_id": stop_token_id,
+    reporter.emit_setup(
+        "stage2_inference_setup",
+        {
+            "checkpoint": args.checkpoint,
+            "stage1b_checkpoint": args.stage1b_checkpoint,
+            "sample_jsonl": args.sample_jsonl,
+            "sample_index": args.sample_index,
+            "sample_id": sample["sample_id"],
+            "flow_steps": args.flow_steps,
+            "max_reasoning_tokens": args.max_reasoning_tokens,
             "temperature": args.temperature,
             "top_p": args.top_p,
             "top_k": args.top_k,
         },
-        "prediction": {
-            "action": pred_action[0].reshape(-1).detach().cpu().tolist(),
-            "waypoints": pred_waypoints.tolist(),
-            "traj_xyz": pred_xyz[0, 0, 0].detach().cpu().tolist(),
-            "traj_rot": pred_rot[0, 0, 0].detach().cpu().tolist(),
-        },
-        "ground_truth": {
-            "waypoints": gt_waypoints.tolist(),
-            "reasoning_text": sample["reasoning_text"],
-        },
-        "metrics": {
-            "ade_m": float(errors.mean().item()),
-            "fde_m": float(errors[-1].item()),
-        },
-        "processor_settings": collect_processor_settings(
-            processor,
-            requested_min_pixels=args.image_min_pixels,
-            requested_max_pixels=args.image_max_pixels,
-        ),
-    }
+    )
+    try:
+        wrapper_inputs = build_wrapper_inputs_for_sample(
+            processor=processor,
+            sample=sample,
+            history_token_count=int(history_quantizer.token_count),
+            device=device,
+        )
+        amp_context = (
+            torch.autocast("cuda", dtype=torch.bfloat16) if device.type == "cuda" else nullcontext()
+        )
+        with amp_context:
+            pred_xyz, pred_rot, extra = wrapper.sample_trajectories_from_data_with_vlm_rollout(
+                wrapper_inputs,
+                top_p=args.top_p,
+                top_k=None if args.top_k <= 0 else int(args.top_k),
+                temperature=args.temperature,
+                num_traj_samples=1,
+                num_traj_sets=1,
+                return_extra=True,
+                max_generation_length=args.max_reasoning_tokens,
+            )
+        stop_token_id = int(processor.tokenizer.convert_tokens_to_ids(TRAJ_FUTURE_START_TOKEN))
+        if stop_token_id < 0:
+            raise RuntimeError("Tokenizer is missing canonical `<|traj_future_start|>`.")
+        reasoning_text = str(extra["cot"][0, 0, 0])
 
-    if args.output_json:
-        output_path = Path(args.output_json).resolve()
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+        history_xyz, history_rot = canonicalize_history_batch_for_action_space(
+            sample["ego_history_xyz"].unsqueeze(0).to(device=device, dtype=torch.float32),
+            sample["ego_history_rot"].unsqueeze(0).to(device=device, dtype=torch.float32),
+        )
+        pred_action = wrapper.action_space.traj_to_action(
+            traj_history_xyz=history_xyz,
+            traj_history_rot=history_rot,
+            traj_future_xyz=pred_xyz[:, 0, 0],
+            traj_future_rot=pred_rot[:, 0, 0],
+        )
+        pred_waypoints = pred_xyz[0, 0, 0, :, :2].detach().cpu()
+        gt_waypoints = sample["gt_waypoints"].to(dtype=torch.float32)
+        errors = torch.norm(pred_waypoints - gt_waypoints, dim=1)
+
+        payload = {
+            "checkpoint": str(Path(args.checkpoint).resolve()),
+            "stage1a_checkpoint": str(Path(checkpoint_args["stage1a_checkpoint"]).resolve()),
+            "stage1b_checkpoint": str(Path(args.stage1b_checkpoint).resolve()),
+            "sample_jsonl": str(Path(args.sample_jsonl).resolve()),
+            "sample_index": int(args.sample_index),
+            "sample_id": sample["sample_id"],
+            "prompt_style": "alpamayo_r1_wrapper",
+            "reasoning": {
+                "text": reasoning_text,
+                "token_ids": None,
+                "stop_token_id": stop_token_id,
+                "temperature": args.temperature,
+                "top_p": args.top_p,
+                "top_k": args.top_k,
+            },
+            "prediction": {
+                "action": pred_action[0].reshape(-1).detach().cpu().tolist(),
+                "waypoints": pred_waypoints.tolist(),
+                "traj_xyz": pred_xyz[0, 0, 0].detach().cpu().tolist(),
+                "traj_rot": pred_rot[0, 0, 0].detach().cpu().tolist(),
+            },
+            "ground_truth": {
+                "waypoints": gt_waypoints.tolist(),
+                "reasoning_text": sample["reasoning_text"],
+            },
+            "metrics": {
+                "ade_m": float(errors.mean().item()),
+                "fde_m": float(errors[-1].item()),
+            },
+            "processor_settings": collect_processor_settings(
+                processor,
+                requested_min_pixels=args.image_min_pixels,
+                requested_max_pixels=args.image_max_pixels,
+            ),
+        }
+
+        reporter.emit_progress(
+            processed_samples=1,
+            running_metrics=payload["metrics"],
+            extra_payload={"phase": "reasoning_handoff_complete"},
+            force=True,
+        )
+        reporter.emit_summary("stage2_inference_summary", payload)
+    except Exception as exc:
+        reporter.emit_failure("stage2_inference_failure", exc)
+        raise
+    finally:
+        reporter.close()
 
 
 if __name__ == "__main__":

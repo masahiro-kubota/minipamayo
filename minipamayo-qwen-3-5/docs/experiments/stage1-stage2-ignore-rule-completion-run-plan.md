@@ -2,6 +2,12 @@
 
 この計画書は、`ignore_rule_data` の 3 run を使って、`Stage1A -> Stage1B -> Stage2` を完了するまで進める completion run の実行方針を固定する。今回の run では `Stage1A`, `Stage1B`, `Stage2 train` を hard gate とし、各 train が成功するまで fresh rerun を継続する。
 
+2026-04-03 更新:
+
+- 学習が不十分な checkpoint は基本的に直進してしまい、`perimeter_cw` 全体の eval だと見かけ上ごまかせる
+- そのため、decision-bearing な eval は `perimeter_cw` の `curve_holdout` に統一する
+- 既存の perimeter-wide smoke eval artifact があっても参考情報にとどめ、正式な記録は curve-only eval で置き換える
+
 結果の記録先:
 
 - [stage1-stage2-ignore-rule-completion-run-results.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/experiments/stage1-stage2-ignore-rule-completion-run-results.md)
@@ -12,8 +18,8 @@
 
 1. `Stage1A` canonical VLM CE を full 3-run データで完走させる
 2. `Stage1B` expert CFM safe profile を、上の `Stage1A best.pt` から確実に通す
-3. `Stage2` reasoning SFT の data preprocess と train を完了させる
-4. `Stage1A` / `Stage1B` / `Stage2` の smoke eval と `Stage2` sample inference を最後まで残す
+3. `Stage2` reasoning SFT の train 用 preprocess と train を完了させる
+4. `Stage1A` / `Stage1B` / `Stage2` の curve-only eval と `Stage2` curve sample inference を最後まで残す
 
 目標は full completion であり、timebox は置かない。
 
@@ -46,8 +52,18 @@ Stage1 full train sample 数:
 
 - `17266`
 
-Stage2 は上の `samples.jsonl` から attempt-scoped の `samples_reasoning_sft.jsonl` を生成して使う。
-preprocess が成功した場合、record 数は元の `samples.jsonl` と同数の `6423 / 4676 / 6167` になる想定で進める。
+curve-focused eval holdout:
+
+- [split_manifest.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/split_manifest.json)
+- [curve_holdout.jsonl](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/curve_holdout.jsonl)
+  - `569 samples`
+
+Stage2 は 2 系統の JSONL を使う。
+
+- train 用:
+  上の full 3-run `samples.jsonl` から attempt-scoped の `samples_reasoning_sft.jsonl` を 3 run 分生成して学習する
+- curve eval 用:
+  `curve_holdout.jsonl` から attempt-scoped の `samples_reasoning_sft.jsonl` を 1 本生成し、`Stage2 eval` と `Stage2 sample inference` に使う
 
 ## 固定する config
 
@@ -57,9 +73,14 @@ train:
 
 - [ignore_rule_data_k64_dt01_completion_001_12gb.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/vlm_ce/train/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.json)
 
-smoke eval:
+curve eval:
 
-- [ignore_rule_data_k64_dt01_completion_001_12gb.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/vlm_ce/eval/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.json)
+- [ignore_rule_data_k64_dt01_completion_001_curve_eval.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/vlm_ce/eval/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.json)
+
+補足:
+
+- `Stage1A curve eval` は `best.pt` を使う
+- eval 対象は `perimeter_cw` 全体ではなく `curve_holdout.jsonl`
 
 ### Stage1B
 
@@ -67,9 +88,9 @@ train:
 
 - [ignore_rule_data_k64_dt01_completion_001_12gb_safe.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/expert_cfm/train/canonical/ignore_rule_data_k64_dt01_completion_001_12gb_safe.json)
 
-smoke eval:
+curve eval:
 
-- [ignore_rule_data_k64_dt01_completion_001_eval_safe.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/expert_cfm/eval/canonical/ignore_rule_data_k64_dt01_completion_001_eval_safe.json)
+- [ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/expert_cfm/eval/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.json)
 
 sample inference:
 
@@ -82,37 +103,49 @@ safe profile の意図:
 - `save_dir` と artifact 出力先を `completion_001` 専用 path に分けて、古い run と混ざらないようにする
 - 今回の completion run では fast profile より安全性を優先し、この safe profile を正本として使う
 
+curve eval の補足:
+
+- eval 対象は `curve_holdout.jsonl`
+- `include_pid_override=true` を有効にして、速度制御の崩れに引きずられず lateral の改善を見やすくする
+
 ### Stage2
 
-reasoning JSONL preprocess:
+train reasoning JSONL preprocess:
 
 - [ignore_rule_data_k64_dt01_completion_001.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage2/reasoning_sft/data/ignore_rule_data_k64_dt01_completion_001.json)
+
+curve eval reasoning JSONL preprocess:
+
+- [ignore_rule_data_k64_dt01_completion_001_curve_eval.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage2/reasoning_sft/data/ignore_rule_data_k64_dt01_completion_001_curve_eval.json)
 
 train:
 
 - [ignore_rule_data_k64_dt01_completion_001_12gb.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.json)
 
-smoke eval:
+curve eval:
 
-- [ignore_rule_data_k64_dt01_completion_001_eval.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_eval.json)
+- [ignore_rule_data_k64_dt01_completion_001_curve_eval.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.json)
 
-sample inference:
+curve sample inference:
 
-- [ignore_rule_data_k64_dt01_completion_001_sample_stage1b_safe.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage2/reasoning_sft/inference/canonical/ignore_rule_data_k64_dt01_completion_001_sample_stage1b_safe.json)
+- [ignore_rule_data_k64_dt01_completion_001_curve_sample_stage1b_safe.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage2/reasoning_sft/inference/canonical/ignore_rule_data_k64_dt01_completion_001_curve_sample_stage1b_safe.json)
 
 補足:
 
 - `Stage2 train` は `Stage1A best.pt` を使う
-- `Stage2 sample inference` は `Stage2 best.pt` に加えて `Stage1B safe best.pt` も使う
+- `Stage2 curve eval` は `curve_holdout.jsonl` 由来の reasoning JSONL を使う
+- `Stage2 curve sample inference` は `Stage2 best.pt` に加えて `Stage1B safe best.pt` も使う
 - `Stage2 train` 自体は `Stage1A` 依存だが、今回の bookkeeping では `Stage1A` と `Stage1B` の成功を hard gate として `Stage1A -> Stage1B -> Stage2` に固定する
 
 ## Artifact Hygiene
 
-- train / eval / inference の checkpoint と出力 artifact は、すべて `completion_001` 専用 config を使い、共有 canonical save dir には書かない。
-- `Stage2 preprocess` は毎回 fresh に再生成する。出力先は `datasets/processed/stage2/reasoning_sft/ignore_rule_data_k64_dt01_completion_001/<run>/samples_reasoning_sft.jsonl` に固定し、既存 artifact は provenance check で流用しない。
-- fresh run を始める前に、対象 `save_dir` がすでに存在する場合は削除ではなく退避する。推奨は `<save_dir>_bak_<YYYYMMDD_HHMMSS>` へ rename。
-- `Stage1A`, `Stage1B`, `Stage2 train` は retry 時にも同じ config を使い、毎回 partial save dir を退避してから rerun する。
-- この plan は fresh-only。in-place resume は定義しない。再実行は退避後の fresh rerun として扱う。
+- train / eval / inference の checkpoint と出力 artifact は、すべて `completion_001` 専用 config を使い、共有 canonical save dir には書かない
+- `Stage2 train preprocess` は毎回 fresh に再生成する。出力先は `datasets/processed/stage2/reasoning_sft/ignore_rule_data_k64_dt01_completion_001/<run>/samples_reasoning_sft.jsonl`
+- `Stage2 curve eval preprocess` も毎回 fresh に再生成する。出力先は `datasets/processed/stage2/reasoning_sft/ignore_rule_data_k64_dt01_completion_001_curve_eval/perimeter_cw_holdout_v1/samples_reasoning_sft.jsonl`
+- fresh run を始める前に、対象 `save_dir` と eval / inference の `output_json`, `progress_json` がすでに存在する場合は削除ではなく退避する。推奨は `<path>_bak_<YYYYMMDD_HHMMSS>` へ rename
+- curve eval / curve inference は `output_json` に加えて `progress_json` を出し、W&B online logging を必須にする。W&B init 失敗は command failure と同じ扱いにする
+- `Stage1A`, `Stage1B`, `Stage2 train` は retry 時にも同じ config を使い、毎回 partial save dir を退避してから rerun する
+- この plan は fresh-only。in-place resume は定義しない。再実行は退避後の fresh rerun として扱う
 
 ## Runbook
 
@@ -122,9 +155,10 @@ runner script:
 
 runner の責務:
 
-- `Stage2 preprocess -> Stage1A train retry loop -> Stage1A smoke eval -> Stage1B train retry loop -> Stage1B smoke eval -> Stage2 train retry loop -> Stage2 smoke eval -> Stage2 sample inference` を自動で連鎖する
-- `Stage2 preprocess` 出力、attempt-scoped `save_dir`、eval / inference 出力を開始前に退避する
-- `Stage2 preprocess` の出力 line count を `6423 / 4676 / 6167` で検証し、一致しなければ failed で止める
+- `Stage2 train preprocess -> Stage2 curve eval preprocess -> Stage1A train retry loop -> Stage1A curve eval -> Stage1B train retry loop -> Stage1B curve eval -> Stage2 train retry loop -> Stage2 curve eval -> Stage2 curve sample inference` を自動で連鎖する
+- `Stage2` の train 用 / curve eval 用 preprocess 出力、attempt-scoped `save_dir`、eval / inference 出力を開始前に退避する
+- `Stage2 train preprocess` の出力 line count を `6423 / 4676 / 6167` で検証し、一致しなければ failed で止める
+- `Stage2 curve eval preprocess` の出力 line count を `569` で検証し、一致しなければ failed で止める
 - 各 stage の stdout / stderr を個別 log に保存しつつ、master log にも集約する
 - 各 stage の exit code を `state/<stage>.exitcode` に保存する
 - run 全体の状態を `run.status.json` と `run.exitcode` に保存し、`run.status.json` の `current_stage` を stage 開始ごとに更新する
@@ -177,18 +211,18 @@ cat /home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_igno
 
 補足:
 
-- train stage は blocking。`Stage2 preprocess` は失敗時に chain を止め、`Stage1A train`, `Stage1B train`, `Stage2 train` は成功するか retry 上限に達するまで rerun する
-- smoke eval と sample inference は non-blocking。失敗しても後続 train は止めず、log と exit code に残す
+- train stage は blocking。`Stage2` の 2 種類の preprocess は失敗時に chain を止め、`Stage1A train`, `Stage1B train`, `Stage2 train` は成功するか retry 上限に達するまで rerun する
+- curve eval と curve sample inference は non-blocking。失敗しても後続 train は止めず、log と exit code に残す
 - `Stage1A` 成功前は `partial progress` にしない
 - `Stage1B` retry は transient failure を想定した安全策であり、failure signature は結果 markdown に残す
 
 ## 実行順
 
-### 手順0. Stage2 reasoning JSONL を先に生成する
+### 手順0. Stage2 train 用 reasoning JSONL を生成する
 
 理由:
 
-- `Stage2` だけ dataset 契約が違う
+- `Stage2 train` だけ dataset 契約が違う
 - 前処理は短く終わるので、長い train を始める前に fail-fast できる
 
 コマンド:
@@ -204,6 +238,32 @@ uv run python -m minipamayo_qwen35.stage2.reasoning_sft.preprocess \
 - `datasets/processed/stage2/reasoning_sft/ignore_rule_data_k64_dt01_completion_001/<run>/samples_reasoning_sft.jsonl`
   が 3 run 分そろうこと
 - line count が `weave_ccw=6423`, `weave_cw=4676`, `perimeter_cw=6167` で一致すること
+
+skip 条件:
+
+- なし
+- 既存 `samples_reasoning_sft.jsonl` があっても fresh に再生成する
+
+### 手順0b. Stage2 curve eval 用 reasoning JSONL を生成する
+
+理由:
+
+- `Stage2 eval` と `Stage2 sample inference` は full run ではなく curve-only holdout を見る
+- `Stage1A/B` と `Stage2` の eval slice をそろえる
+
+コマンド:
+
+```bash
+cd /home/masa/minipamayo/minipamayo-qwen-3-5
+uv run python -m minipamayo_qwen35.stage2.reasoning_sft.preprocess \
+  --config-json configs/stage2/reasoning_sft/data/ignore_rule_data_k64_dt01_completion_001_curve_eval.json
+```
+
+期待する出力:
+
+- `datasets/processed/stage2/reasoning_sft/ignore_rule_data_k64_dt01_completion_001_curve_eval/perimeter_cw_holdout_v1/samples_reasoning_sft.jsonl`
+  が 1 本生成されること
+- line count が `569` で一致すること
 
 skip 条件:
 
@@ -234,21 +294,21 @@ retry ルール:
 - 成功した `Stage1A` run が 1 本できるまで retry を継続する
 - retry ごとに failure signature と退避した save dir 名を結果 markdown に残す
 
-### 手順2. Stage1A smoke eval を 1 本だけ回す
+### 手順2. Stage1A curve eval を回す
 
 コマンド:
 
 ```bash
 cd /home/masa/minipamayo/minipamayo-qwen-3-5
 uv run python -m minipamayo_qwen35.stage1.vlm_ce.eval \
-  --config-json configs/stage1/vlm_ce/eval/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.json
+  --config-json configs/stage1/vlm_ce/eval/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.json
 ```
 
 位置づけ:
 
-- full 3-run external eval ではない
-- checkpoint load と metric emission の smoke
-- runner では non-blocking
+- `curve_holdout` に対する decision-bearing eval
+- 学習不十分でも直進で見かけ上ごまかせない slice を見る
+- runner では non-blocking だが、正式な記録はこの curve eval を使う
 
 ### 手順3. Stage1B を同じ 3 run で学習する
 
@@ -256,7 +316,7 @@ uv run python -m minipamayo_qwen35.stage1.vlm_ce.eval \
 
 - `Stage1A best.pt` が存在すること
 - `checkpoints/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_completion_001_12gb_safe`
-  が fresh であること。既存 dir があれば退避してから始めること。
+  が fresh であること。既存 dir があれば退避してから始めること
 
 コマンド:
 
@@ -280,26 +340,28 @@ retry ルール:
 - 成功した `Stage1B` run が 1 本できるまで retry を継続する
 - retry ごとに failure signature と退避した save dir 名を結果 markdown に残す
 
-### 手順4. Stage1B smoke eval を回す
+### 手順4. Stage1B curve eval を回す
 
 コマンド:
 
 ```bash
 cd /home/masa/minipamayo/minipamayo-qwen-3-5
 uv run python -m minipamayo_qwen35.stage1.expert_cfm.eval \
-  --config-json configs/stage1/expert_cfm/eval/canonical/ignore_rule_data_k64_dt01_completion_001_eval_safe.json
+  --config-json configs/stage1/expert_cfm/eval/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.json
 ```
 
 位置づけ:
 
-- `Stage1B` checkpoint load と perimeter smoke の sanity check
+- `curve_holdout` に対する decision-bearing eval
+- `include_pid_override=true` の指標も含めて lateral の改善を見る
 - runner では non-blocking
 
 ### 手順5. Stage2 を学習する
 
 前提:
 
-- 手順0の `samples_reasoning_sft.jsonl` が 3 run 分そろっていること
+- 手順0の train 用 `samples_reasoning_sft.jsonl` が 3 run 分そろっていること
+- 手順0bの curve eval 用 `samples_reasoning_sft.jsonl` が生成済みであること
 - `Stage1A best.pt` が存在すること
 - `Stage1B safe best.pt` が存在すること
 
@@ -329,23 +391,23 @@ retry ルール:
 - 成功した `Stage2 train` run が 1 本できるまで retry を継続する
 - retry ごとに failure signature と退避した save dir 名を結果 markdown に残す
 
-### 手順6. Stage2 smoke eval を回す
+### 手順6. Stage2 curve eval を回す
 
 コマンド:
 
 ```bash
 cd /home/masa/minipamayo/minipamayo-qwen-3-5
 uv run python -m minipamayo_qwen35.stage2.reasoning_sft.eval \
-  --config-json configs/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_eval.json
+  --config-json configs/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.json
 ```
 
 位置づけ:
 
-- `perimeter_cw` の `samples_reasoning_sft.jsonl` に対する smoke eval
-- `Stage2` full 3-run external eval の主張には使わない
+- `curve_holdout` 由来の `samples_reasoning_sft.jsonl` に対する eval
+- `Stage2` full 3-run external eval の代替ではなく、curve slice の意思決定確認に使う
 - runner では non-blocking
 
-### 手順7. Stage2 sample inference を 1 本だけ回す
+### 手順7. Stage2 curve sample inference を 1 本だけ回す
 
 前提:
 
@@ -357,13 +419,13 @@ uv run python -m minipamayo_qwen35.stage2.reasoning_sft.eval \
 ```bash
 cd /home/masa/minipamayo/minipamayo-qwen-3-5
 uv run python -m minipamayo_qwen35.stage2.reasoning_sft.inference \
-  --config-json configs/stage2/reasoning_sft/inference/canonical/ignore_rule_data_k64_dt01_completion_001_sample_stage1b_safe.json
+  --config-json configs/stage2/reasoning_sft/inference/canonical/ignore_rule_data_k64_dt01_completion_001_curve_sample_stage1b_safe.json
 ```
 
 位置づけ:
 
 - `reasoning_text` が出るか
-- handoff 後の sample trajectory が最低限生成できるか
+- curve holdout sample で handoff 後の trajectory が最低限生成できるか
 - runner では non-blocking
 
 ## 成功判定
@@ -372,9 +434,11 @@ full success:
 
 - `Stage1A train` 完了
 - `Stage1B train` 完了
-- `Stage2 preprocess` 完了
+- `Stage2 train preprocess` 完了
+- `Stage2 curve eval preprocess` 完了
 - `Stage2 train` 完了
-- `Stage2 smoke eval` と `Stage2 sample inference` も出力完了
+- `Stage1A` / `Stage1B` / `Stage2` の curve eval 出力完了
+- `Stage2 curve sample inference` 出力完了
 
 partial progress:
 
@@ -382,12 +446,12 @@ partial progress:
 - `Stage1A train` と `Stage1B train` が成功済みであることを前提に、その先が全部終わらなくてもよい
 - 特に次の状態は `partial progress` とみなす
   - `Stage1B` 完了、`Stage2` 未着手
-  - `Stage2 preprocess` 完了、`Stage2 train` 進行中
+  - `Stage2` の 2 種類の preprocess 完了、`Stage2 train` 進行中
   - `Stage2 train` が途中まで進み、最後に確認できた epoch / step が分かる
 
 failed:
 
-- `Stage2 preprocess` が契約違反で止まり、そのまま解消できない
+- `Stage2 train preprocess` または `Stage2 curve eval preprocess` が契約違反で止まり、そのまま解消できない
 - `Stage1A` が学習開始できない
 - 実行を止めた時点で `Stage1A` 成功 run が 1 本もない
 - 実行を止めた時点で `Stage1B` 成功 run が 1 本もない
@@ -395,7 +459,7 @@ failed:
 
 ## 失敗時の扱い
 
-`Stage2 preprocess` が落ちた場合:
+`Stage2 train preprocess` または `Stage2 curve eval preprocess` が落ちた場合:
 
 - `Stage1A` 以降は始めない
 - dataset contract の失敗箇所を結果 markdown に残す
@@ -441,9 +505,9 @@ rerun した場合:
 
 - 開始日時 / 終了日時
 - 実際に使った config
-- `Stage2 preprocess` の出力有無と record 数
+- `Stage2 train preprocess` と `Stage2 curve eval preprocess` の出力有無と record 数
 - `Stage1A` / `Stage1B` / `Stage2` の `summary.json` 主要数値
 - `Stage1B` の retry 回数、各 retry の失敗理由、退避した save dir
-- smoke eval の主要数値
-- sample inference の有無と代表 sample の結果
+- curve eval の主要数値
+- curve sample inference の有無と代表 sample の結果
 - 途中停止したなら、その時点の最後の状態
