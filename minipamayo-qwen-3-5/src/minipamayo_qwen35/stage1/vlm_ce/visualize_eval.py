@@ -13,6 +13,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.lines import Line2D
 
 from ...utils.preflight import init_required_online_wandb
 from .cli import parse_config_json_only_args
@@ -293,8 +294,8 @@ def _save_trajectory_grid(
     for ax in axes_array.flat[len(samples) :]:
         ax.axis("off")
     handles = [
-        plt.Line2D([0], [0], color="#111111", linewidth=2.2, label="GT"),
-        plt.Line2D([0], [0], color="#d62728", linewidth=2.0, linestyle="--", label="Pred"),
+        Line2D([0], [0], color="#111111", linewidth=2.2, label="GT"),
+        Line2D([0], [0], color="#d62728", linewidth=2.0, linestyle="--", label="Pred"),
     ]
     fig.legend(handles=handles, loc="upper center", ncol=2, frameon=False)
     fig.suptitle(title, fontsize=16, y=0.995)
