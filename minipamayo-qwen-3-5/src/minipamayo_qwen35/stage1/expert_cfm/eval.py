@@ -13,6 +13,7 @@ from ...inspector.manifests import upsert_manifest
 from ...utils.eval_reporting import (
     EvalReporter,
     add_eval_reporting_args,
+    apply_eval_reporting_artifact_policy,
     reporting_path_keys,
     validate_eval_reporting_args,
 )
@@ -21,6 +22,7 @@ from ..dataset import Stage1JsonlDataset, stage1_collate
 from .cli import (
     COMMON_CONFIG_PATH_KEYS,
     add_stage1b_common_args,
+    artifact_scope_for_config,
     parse_stage1b_json_only_args,
     require_stage1b_cuda_device,
     validate_stage1b_runtime_args,
@@ -58,6 +60,11 @@ def parse_args() -> argparse.Namespace:
     )
     args.eval_jsonl = normalize_required_string_list(args.eval_jsonl, key_name="eval_jsonl")
     validate_stage1b_runtime_args(args)
+    apply_eval_reporting_artifact_policy(
+        args,
+        scope=artifact_scope_for_config(args.config_json, kind="eval"),
+        include_per_sample_jsonl=True,
+    )
     validate_eval_reporting_args(args, require_per_sample_jsonl=True)
     return args
 

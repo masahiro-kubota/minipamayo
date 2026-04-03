@@ -221,17 +221,17 @@ holdout の切り方は random split ではなく、時系列 block 単位にす
    - コマンド:
      `uv run python -m minipamayo_qwen35.stage1.preprocess.curve_thresholds --config-json /home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/data/ignore_rule_data_k64_dt01.json --block-kappa-threshold 0.08 --block-yaw-threshold 0.5 --block-pre-seconds 1.0 --block-post-seconds 2.0`
    - 出力先:
-     [ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_thresholds/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2.json)
+     [ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/preprocess/stage1/curve_thresholds/canonical/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2.json)
 
 2. block 抽出結果を地図上に重ねて確認する
    - コマンド:
-     `uv run python -m minipamayo_qwen35.stage1.preprocess.plot_curve_blocks --curve-json /home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_thresholds/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2.json`
+     `uv run python -m minipamayo_qwen35.stage1.preprocess.plot_curve_blocks --curve-json /home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/preprocess/stage1/curve_thresholds/canonical/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2.json`
    - overview:
-     [overview.png](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_block_plots/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2/overview.png)
+     [overview.png](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/preprocess/stage1/curve_block_plots/canonical/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2/overview.png)
    - run 別 plot:
-     [weave_ccw](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_block_plots/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2/20260327_231917_town01_intersection_weave_ccw_expert_eval_0025824a9fa8.png)
-     [weave_cw](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_block_plots/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2/20260327_231917_town01_intersection_weave_cw_expert_eval_0025824a9fa8.png)
-     [perimeter_cw](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_block_plots/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2/20260327_231917_town01_perimeter_cw_expert_eval_0025824a9fa8.png)
+     [weave_ccw](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/preprocess/stage1/curve_block_plots/canonical/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2/20260327_231917_town01_intersection_weave_ccw_expert_eval_0025824a9fa8.png)
+     [weave_cw](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/preprocess/stage1/curve_block_plots/canonical/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2/20260327_231917_town01_intersection_weave_cw_expert_eval_0025824a9fa8.png)
+     [perimeter_cw](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/preprocess/stage1/curve_block_plots/canonical/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2/20260327_231917_town01_perimeter_cw_expert_eval_0025824a9fa8.png)
 
 3. 生成された `curve_blocks.blocks` を holdout 候補の正本にする
    - 各 block は `start_sample_index`, `end_sample_index`, `start_sample_id`, `end_sample_id` を持つ
@@ -438,9 +438,9 @@ PID 置換で大きく悪化した場合、候補は主に 3 つ。
 
 正本出力:
 - threshold JSON:
-  [ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_thresholds/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2.json)
+  [ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/preprocess/stage1/curve_thresholds/canonical/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2.json)
 - overview plot:
-  [overview.png](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_block_plots/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2/overview.png)
+  [overview.png](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/preprocess/stage1/curve_block_plots/canonical/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2/overview.png)
 
 到達条件:
 - 地図上で見て、侵入前から脱出後までを含む curve block が概ね妥当に抽出されている
@@ -452,7 +452,7 @@ PID 置換で大きく悪化した場合、候補は主に 3 つ。
 
 入力:
 - threshold/block 正本:
-  [ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_thresholds/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2.json)
+  [ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/preprocess/stage1/curve_thresholds/canonical/ignore_rule_data_k64_dt01__mode-or__kappa-0p08__yaw-0p5__pre-1__post-2.json)
 - `perimeter_cw` samples:
   `/media/masa/ssd_data/minipamayo_data/minipamayo-qwen-3-5/datasets/processed/stage1/ignore_rule_data_k64_dt01/20260327_231917_town01_perimeter_cw_expert_eval_0025824a9fa8/samples.jsonl`
 
@@ -469,9 +469,9 @@ PID 置換で大きく悪化した場合、候補は主に 3 つ。
 - `holdout_offset = 0`
 - `subset_sizes = 128,512,2048`
 - 出力先:
-  [perimeter_cw_holdout_v1](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1)
+  [perimeter_cw_holdout_v1](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/preprocess/stage1/curve_splits/canonical/perimeter_cw_holdout_v1)
 - manifest:
-  [split_manifest.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/split_manifest.json)
+  [split_manifest.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/preprocess/stage1/curve_splits/canonical/perimeter_cw_holdout_v1/split_manifest.json)
 
 この step の出力:
 - `curve-only holdout` block manifest

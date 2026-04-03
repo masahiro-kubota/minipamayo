@@ -2,7 +2,7 @@
   "path_base": "project_root",
   "args": {
     "checkpoint": "checkpoints/stage1/vlm_ce/canonical/perimeter_cw_curve512_12gb/best.pt",
-    "test_jsonl": "artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/curve_holdout.jsonl",
+    "test_jsonl": "artifacts/preprocess/stage1/curve_splits/canonical/perimeter_cw_holdout_v1/curve_holdout.jsonl",
     "device": "cuda",
     "batch_size": 1,
     "num_workers": 2,

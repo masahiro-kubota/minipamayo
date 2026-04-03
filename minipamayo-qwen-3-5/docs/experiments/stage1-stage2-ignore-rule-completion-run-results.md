@@ -20,9 +20,9 @@
 - Stage1 extraction config:
   [ignore_rule_data_k64_dt01.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage1/data/ignore_rule_data_k64_dt01.json)
 - Curve split manifest:
-  [split_manifest.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/split_manifest.json)
+  [split_manifest.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/preprocess/stage1/curve_splits/canonical/perimeter_cw_holdout_v1/split_manifest.json)
 - Curve holdout:
-  [curve_holdout.jsonl](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/curve_holdout.jsonl)
+  [curve_holdout.jsonl](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/preprocess/stage1/curve_splits/canonical/perimeter_cw_holdout_v1/curve_holdout.jsonl)
 - Stage2 train preprocess config:
   [ignore_rule_data_k64_dt01_completion_001.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage2/reasoning_sft/data/ignore_rule_data_k64_dt01_completion_001.json)
 - Stage2 curve eval preprocess config:
@@ -305,13 +305,13 @@
 - Session / pid:
   `ignore-rule-completion-001`
 - Log root:
-  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001`
+  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/ignore_rule_completion/completion_ignore_rule_full_001`
 - Master log:
-  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/master.log`
+  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/ignore_rule_completion/completion_ignore_rule_full_001/master.log`
 - Run status json:
-  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/run.status.json`
+  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/ignore_rule_completion/completion_ignore_rule_full_001/run.status.json`
 - Run exit code file:
-  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/run.exitcode`
+  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/ignore_rule_completion/completion_ignore_rule_full_001/run.exitcode`
 - Notes:
   - `Stage1A` success is mandatory before `Stage1B`
   - `Stage1B` success is mandatory before `Stage2`

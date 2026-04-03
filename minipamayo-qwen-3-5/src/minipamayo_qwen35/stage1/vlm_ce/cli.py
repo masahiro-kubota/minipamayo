@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 
+from ...utils.artifact_paths import ArtifactScope, scope_from_config_path
 from ..stage1_json_cli import load_stage1_config_args, parse_stage1_json_only_args
 
 
@@ -32,4 +33,14 @@ def parse_config_json_only_args(
         path_keys=path_keys,
         list_keys=list_keys,
         error_message=error_message,
+    )
+
+
+def artifact_scope_for_config(config_json: str, *, kind: str) -> ArtifactScope:
+    return scope_from_config_path(
+        config_json,
+        kind=kind,
+        stage="stage1",
+        component="vlm_ce",
+        default_track="canonical",
     )

@@ -14,9 +14,9 @@ from .adapters import (
 )
 from .manifests import load_manifest
 from .models import ArtifactManifest, NormalizedRun, Stage2RunBundle
+from ..utils.artifact_paths import default_artifact_root
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_ARTIFACT_ROOT = PROJECT_ROOT / "artifacts"
+DEFAULT_ARTIFACT_ROOT = default_artifact_root()
 
 
 @dataclass(frozen=True)

@@ -8,6 +8,7 @@ from pathlib import Path
 import torch
 
 from ...stage1.stage1_json_cli import load_stage1_config_args, parse_stage1_json_only_args
+from ...utils.artifact_paths import ArtifactScope, scope_from_config_path
 from ...utils.preflight import require_cuda_device, resolve_runtime_device
 
 
@@ -50,4 +51,14 @@ def require_stage2_cuda_device(*, device_name: str, git_cwd: str | Path, error_m
         device_name=device_name,
         git_cwd=Path(git_cwd),
         error_message=error_message,
+    )
+
+
+def artifact_scope_for_config(config_json: str, *, kind: str) -> ArtifactScope:
+    return scope_from_config_path(
+        config_json,
+        kind=kind,
+        stage="stage2",
+        component="reasoning_sft",
+        default_track="canonical",
     )

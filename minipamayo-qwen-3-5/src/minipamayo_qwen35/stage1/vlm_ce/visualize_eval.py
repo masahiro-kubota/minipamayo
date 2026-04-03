@@ -15,6 +15,7 @@ import numpy as np
 from matplotlib.lines import Line2D
 
 from ...inspector.manifests import update_manifest_plots
+from ...utils.artifact_paths import apply_visualization_artifact_policy
 from ...utils.preflight import init_required_online_wandb
 from ..eval_viz_common import (
     cdf,
@@ -25,7 +26,7 @@ from ..eval_viz_common import (
     trajectory_limits,
     write_json,
 )
-from .cli import parse_config_json_only_args
+from .cli import artifact_scope_for_config, parse_config_json_only_args
 
 CONFIG_PATH_KEYS = {
     "summary_json",
@@ -56,7 +57,11 @@ def parse_args() -> argparse.Namespace:
         path_keys=CONFIG_PATH_KEYS,
         error_message="Stage 1A visualization accepts only --config-json. Put all settings in the JSON file.",
     )
-    for key in ["summary_json", "per_sample_jsonl", "output_dir", "wandb_project", "wandb_run_name"]:
+    apply_visualization_artifact_policy(
+        args,
+        scope=artifact_scope_for_config(args.config_json, kind="eval"),
+    )
+    for key in ["summary_json", "per_sample_jsonl", "wandb_project", "wandb_run_name"]:
         if not str(getattr(args, key, "")):
             raise RuntimeError(f"`{key}` must be defined in the config JSON.")
     if int(args.overlay_count) <= 0:

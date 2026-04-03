@@ -25,6 +25,7 @@ from ...utils.image_budget import (
 from ...utils.eval_reporting import (
     EvalReporter,
     add_eval_reporting_args,
+    apply_eval_reporting_artifact_policy,
     reporting_path_keys,
     validate_eval_reporting_args,
 )
@@ -44,7 +45,7 @@ from ..stage1a_runtime import (
 from ..checkpoint_completion import require_completed_training_run
 from ...contract.task_spec import CanonicalStage1Spec, Stage1TaskSpec
 from ..dataset import Stage1JsonlDataset, stage1_collate
-from .cli import parse_config_json_only_args
+from .cli import artifact_scope_for_config, parse_config_json_only_args
 from .eval_artifacts import (
     elapsed_seconds,
     infer_episode_id,
@@ -97,6 +98,12 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`checkpoint` must be defined in the config JSON.")
     if not args.test_jsonl:
         raise RuntimeError("`test_jsonl` must be defined in the config JSON.")
+    apply_eval_reporting_artifact_policy(
+        args,
+        scope=artifact_scope_for_config(args.config_json, kind="eval"),
+        include_per_sample_jsonl=True,
+        include_output_mcap=True,
+    )
     validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
     validate_eval_reporting_args(args, require_per_sample_jsonl=True)
     return args

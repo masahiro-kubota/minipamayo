@@ -179,7 +179,7 @@ def backup_path_if_exists(path: Path, ctx: RunContext | None = None) -> Path | N
 
 
 def prepare_log_root(paths: IgnoreRulePaths) -> RunContext:
-    paths.project_root.joinpath("artifacts", "run_logs").mkdir(parents=True, exist_ok=True)
+    paths.log_root.parent.mkdir(parents=True, exist_ok=True)
     backup_path_if_exists(paths.log_root)
     paths.log_root.mkdir(parents=True, exist_ok=True)
     paths.state_dir.mkdir(parents=True, exist_ok=True)

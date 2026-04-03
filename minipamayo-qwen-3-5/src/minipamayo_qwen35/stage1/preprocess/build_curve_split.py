@@ -7,8 +7,7 @@ import json
 import random
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts" / "stage1" / "preprocess"
+from ...utils.artifact_paths import bundle_dir, resolve_bundle_dir, scope_from_owner_json_path
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -81,10 +80,20 @@ def _materialize_record(record: dict, source_jsonl_path: Path) -> dict:
 
 
 def _default_output_dir(curve_json_path: Path, run_name: str) -> Path:
-    return (
-        ARTIFACTS_ROOT
-        / "curve_splits"
-        / f"{curve_json_path.stem}__run-{_slug(run_name)}"
+    scope = _scope_for_curve_json(curve_json_path, component="curve_splits")
+    return bundle_dir(
+        scope,
+        f"{curve_json_path.stem}__run-{_slug(run_name)}",
+    )
+
+
+def _scope_for_curve_json(curve_json_path: Path, *, component: str):
+    return scope_from_owner_json_path(
+        curve_json_path,
+        kind="preprocess",
+        stage="stage1",
+        component="curve_thresholds",
+        target_component=component,
     )
 
 
@@ -142,7 +151,12 @@ def main() -> None:
     train_pool_records = [_materialize_record(records[idx], source_jsonl_path) for idx in train_indices]
     holdout_records = [_materialize_record(records[idx], source_jsonl_path) for idx in holdout_index_list]
 
-    output_dir = Path(args.output_dir).resolve() if args.output_dir else _default_output_dir(curve_json_path, run_name)
+    default_output_dir = _default_output_dir(curve_json_path, run_name)
+    output_dir = resolve_bundle_dir(
+        args.output_dir,
+        scope=_scope_for_curve_json(curve_json_path, component="curve_splits"),
+        run_name=default_output_dir.name,
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     train_pool_jsonl = output_dir / "train_pool.jsonl"

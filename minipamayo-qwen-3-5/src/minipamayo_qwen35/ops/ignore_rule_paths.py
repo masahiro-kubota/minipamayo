@@ -6,11 +6,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from ..utils.artifact_paths import ArtifactScope, owner_json_path, reporting_paths_for_output, run_logs_root
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CUDA_HOME = Path("/usr/local/cuda-12.8")
 CUDA_BIN = CUDA_HOME / "bin"
 CUDA_LIB64 = CUDA_HOME / "lib64"
+IGNORE_RULE_RUN_LOG_WORKFLOW = "ignore_rule_completion"
 
 
 def timestamp_iso() -> str:
@@ -86,12 +89,48 @@ class IgnoreRulePaths:
         project_root: Path | None = None,
     ) -> "IgnoreRulePaths":
         root = (project_root or REPO_ROOT).resolve()
-        log_root = root / "artifacts" / "run_logs" / attempt_name
+        log_root = run_logs_root(
+            IGNORE_RULE_RUN_LOG_WORKFLOW,
+            attempt_name,
+            project_root=root,
+        )
         state_dir = log_root / "state"
 
         stage1a_save_dir = root / "checkpoints" / "stage1" / "vlm_ce" / "canonical" / "ignore_rule_data_k64_dt01_completion_001_12gb"
         stage1b_save_dir = root / "checkpoints" / "stage1" / "expert_cfm" / "canonical" / "ignore_rule_data_k64_dt01_completion_001_12gb_safe"
         stage2_save_dir = root / "checkpoints" / "stage2" / "reasoning_sft" / "canonical" / "ignore_rule_data_k64_dt01_completion_001_12gb"
+        stage1a_eval_paths = reporting_paths_for_output(
+            owner_json_path(
+                ArtifactScope(kind="eval", stage="stage1", component="vlm_ce", track="canonical"),
+                "ignore_rule_data_k64_dt01_completion_001_curve_eval",
+                project_root=root,
+            ),
+            include_per_sample_jsonl=True,
+        )
+        stage1b_eval_paths = reporting_paths_for_output(
+            owner_json_path(
+                ArtifactScope(kind="eval", stage="stage1", component="expert_cfm", track="canonical"),
+                "ignore_rule_data_k64_dt01_completion_001_curve_eval_safe",
+                project_root=root,
+            ),
+            include_per_sample_jsonl=True,
+        )
+        stage2_eval_paths = reporting_paths_for_output(
+            owner_json_path(
+                ArtifactScope(kind="eval", stage="stage2", component="reasoning_sft", track="canonical"),
+                "ignore_rule_data_k64_dt01_completion_001_curve_eval",
+                project_root=root,
+            ),
+            include_per_sample_jsonl=True,
+        )
+        stage2_infer_paths = reporting_paths_for_output(
+            owner_json_path(
+                ArtifactScope(kind="inference", stage="stage2", component="reasoning_sft", track="canonical"),
+                "ignore_rule_data_k64_dt01_completion_001_curve_sample_stage1b_safe",
+                project_root=root,
+            ),
+            include_per_sample_jsonl=False,
+        )
 
         return cls(
             project_root=root,
@@ -123,15 +162,15 @@ class IgnoreRulePaths:
             stage1b_last=stage1b_save_dir / "last.pt",
             stage2_summary=stage2_save_dir / "summary.json",
             stage2_best=stage2_save_dir / "best.pt",
-            stage1a_eval_output=root / "artifacts" / "eval" / "stage1" / "vlm_ce" / "canonical" / "ignore_rule_data_k64_dt01_completion_001_curve_eval.json",
-            stage1a_eval_progress=root / "artifacts" / "eval" / "stage1" / "vlm_ce" / "canonical" / "ignore_rule_data_k64_dt01_completion_001_curve_eval.progress.json",
-            stage1a_eval_per_sample=root / "artifacts" / "eval" / "stage1" / "vlm_ce" / "canonical" / "ignore_rule_data_k64_dt01_completion_001_curve_eval.per_sample.jsonl",
-            stage1b_eval_output=root / "artifacts" / "eval" / "stage1" / "expert_cfm" / "canonical" / "ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.json",
-            stage1b_eval_progress=root / "artifacts" / "eval" / "stage1" / "expert_cfm" / "canonical" / "ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.progress.json",
-            stage2_eval_output=root / "artifacts" / "eval" / "stage2" / "reasoning_sft" / "canonical" / "ignore_rule_data_k64_dt01_completion_001_curve_eval.json",
-            stage2_eval_progress=root / "artifacts" / "eval" / "stage2" / "reasoning_sft" / "canonical" / "ignore_rule_data_k64_dt01_completion_001_curve_eval.progress.json",
-            stage2_infer_output=root / "artifacts" / "inference" / "stage2" / "reasoning_sft" / "canonical" / "ignore_rule_data_k64_dt01_completion_001_curve_sample_stage1b_safe.json",
-            stage2_infer_progress=root / "artifacts" / "inference" / "stage2" / "reasoning_sft" / "canonical" / "ignore_rule_data_k64_dt01_completion_001_curve_sample_stage1b_safe.progress.json",
+            stage1a_eval_output=stage1a_eval_paths.output_json,
+            stage1a_eval_progress=stage1a_eval_paths.progress_json,
+            stage1a_eval_per_sample=stage1a_eval_paths.per_sample_jsonl,
+            stage1b_eval_output=stage1b_eval_paths.output_json,
+            stage1b_eval_progress=stage1b_eval_paths.progress_json,
+            stage2_eval_output=stage2_eval_paths.output_json,
+            stage2_eval_progress=stage2_eval_paths.progress_json,
+            stage2_infer_output=stage2_infer_paths.output_json,
+            stage2_infer_progress=stage2_infer_paths.progress_json,
             train_preprocess_outputs=(
                 root / "datasets" / "processed" / "stage2" / "reasoning_sft" / "ignore_rule_data_k64_dt01_completion_001" / "20260327_231917_town01_intersection_weave_ccw_expert_eval_0025824a9fa8" / "samples_reasoning_sft.jsonl",
                 root / "datasets" / "processed" / "stage2" / "reasoning_sft" / "ignore_rule_data_k64_dt01_completion_001" / "20260327_231917_town01_intersection_weave_cw_expert_eval_0025824a9fa8" / "samples_reasoning_sft.jsonl",
@@ -152,4 +191,3 @@ class IgnoreRulePaths:
 
     def stage2_required_artifacts(self) -> tuple[Path, ...]:
         return (self.stage2_summary, self.stage2_best)
-

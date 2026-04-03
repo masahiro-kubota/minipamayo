@@ -2,10 +2,10 @@
   "path_base": "project_root",
   "args": {
     "train_jsonl": [
-      "artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/train_128.jsonl"
+      "artifacts/preprocess/stage1/curve_splits/canonical/perimeter_cw_holdout_v1/train_128.jsonl"
     ],
     "val_jsonl": [
-      "artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/curve_holdout.jsonl"
+      "artifacts/preprocess/stage1/curve_splits/canonical/perimeter_cw_holdout_v1/curve_holdout.jsonl"
     ],
     "save_dir": "checkpoints/stage1/vlm_ce/canonical/perimeter_cw_curve128_12gb",
     "batch_size": 1,

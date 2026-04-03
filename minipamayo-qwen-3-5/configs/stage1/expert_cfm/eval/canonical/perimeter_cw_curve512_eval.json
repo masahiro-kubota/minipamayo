@@ -4,7 +4,7 @@
     "checkpoint": "checkpoints/stage1/expert_cfm/canonical/perimeter_cw_curve512_12gb/best.pt",
     "stage1_checkpoint": "checkpoints/stage1/vlm_ce/canonical/perimeter_cw_curve512_12gb/best.pt",
     "eval_jsonl": [
-      "artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/curve_holdout.jsonl"
+      "artifacts/preprocess/stage1/curve_splits/canonical/perimeter_cw_holdout_v1/curve_holdout.jsonl"
     ],
     "output_json": "artifacts/eval/stage1/expert_cfm/canonical/perimeter_cw_curve512_eval.json",
     "batch_size": 1,

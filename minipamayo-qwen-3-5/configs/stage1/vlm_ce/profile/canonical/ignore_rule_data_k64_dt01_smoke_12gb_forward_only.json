@@ -14,6 +14,6 @@
     "dtype": "fp16",
     "gradient_checkpointing": true,
     "forward_only": true,
-    "output_json": "artifacts/stage1/vlm_ce/profile/canonical/ignore_rule_data_k64_dt01_smoke_12gb_forward_only.json"
+    "output_json": "artifacts/profile/stage1/vlm_ce/canonical/ignore_rule_data_k64_dt01_smoke_12gb_forward_only.json"
   }
 }

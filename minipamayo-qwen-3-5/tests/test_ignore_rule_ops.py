@@ -27,7 +27,7 @@ class IgnoreRuleOpsTests(unittest.TestCase):
 
             self.assertEqual(
                 paths.log_root,
-                root / "artifacts" / "run_logs" / "completion_ignore_rule_full_001",
+                root / "artifacts" / "run_logs" / "ignore_rule_completion" / "completion_ignore_rule_full_001",
             )
             self.assertEqual(
                 paths.stage1a_train_config,

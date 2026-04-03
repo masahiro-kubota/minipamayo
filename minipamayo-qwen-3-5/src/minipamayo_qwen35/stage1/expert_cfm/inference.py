@@ -6,10 +6,12 @@ import argparse
 import json
 from pathlib import Path
 
+from ...utils.artifact_paths import resolve_owner_json_path
 from ..dataset import Stage1JsonlDataset, stage1_collate
 from .cli import (
     COMMON_CONFIG_PATH_KEYS,
     add_stage1b_common_args,
+    artifact_scope_for_config,
     parse_stage1b_json_only_args,
     require_stage1b_cuda_device,
     validate_stage1b_runtime_args,
@@ -41,6 +43,13 @@ def parse_args() -> argparse.Namespace:
     validate_stage1b_runtime_args(args)
     if not args.checkpoint or not args.stage1_checkpoint or not args.sample_jsonl:
         raise RuntimeError("`checkpoint`, `stage1_checkpoint`, and `sample_jsonl` must be defined.")
+    if args.output_json:
+        args.output_json = str(
+            resolve_owner_json_path(
+                args.output_json,
+                scope=artifact_scope_for_config(args.config_json, kind="inference"),
+            )
+        )
     if args.sample_index < 0:
         raise RuntimeError("`sample_index` must be >= 0.")
     return args

@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .artifact_paths import ArtifactReportingPaths, ArtifactScope, apply_reporting_artifact_policy
 from .preflight import init_required_online_wandb
 
 DEFAULT_WANDB_PROJECT = ""
@@ -66,6 +67,25 @@ def validate_eval_reporting_args(
         raise RuntimeError("`progress_every_seconds` must be > 0.")
     _require_non_empty_string_arg(args, "wandb_project")
     _require_non_empty_string_arg(args, "wandb_run_name")
+
+
+def apply_eval_reporting_artifact_policy(
+    args: argparse.Namespace,
+    *,
+    scope: ArtifactScope,
+    include_per_sample_jsonl: bool,
+    allow_default_output_json: bool = False,
+    default_run_name: str | None = None,
+    include_output_mcap: bool = False,
+) -> ArtifactReportingPaths:
+    return apply_reporting_artifact_policy(
+        args,
+        scope=scope,
+        include_per_sample_jsonl=include_per_sample_jsonl,
+        allow_default_output_json=allow_default_output_json,
+        default_run_name=default_run_name,
+        include_output_mcap=include_output_mcap,
+    )
 
 
 def _now_iso() -> str:

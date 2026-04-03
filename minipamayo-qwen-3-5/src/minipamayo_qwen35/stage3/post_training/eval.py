@@ -9,6 +9,7 @@ from pathlib import Path
 
 import torch
 
+from ...utils.artifact_paths import resolve_bundle_dir
 from ...utils.checkpoint import load_checkpoint
 from ...utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
@@ -16,7 +17,7 @@ from ...utils.image_budget import (
     validate_canonical_image_budget,
 )
 from ...utils.train_runtime import format_gib, set_seed
-from .cli import parse_stage3_json_only_args, resolve_stage3_device
+from .cli import artifact_scope_for_config, parse_stage3_json_only_args, resolve_stage3_device
 from .common import CANONICAL_STAGE3_POLICY_OUTPUT_CONTRACT
 from .dataset import Stage3PostTrainingDataset, build_stage3_dataloader
 from .bundle import load_stage3_rollout_bundle
@@ -46,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--save-dir",
         type=str,
-        default="minipamayo-qwen-3-5/artifacts/eval/stage3/post_training",
+        default="",
     )
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--num-rollouts", type=int, default=4)
@@ -82,6 +83,13 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`stage1b_checkpoint` must be defined in the config JSON.")
     if not args.eval_jsonl:
         raise RuntimeError("`eval_jsonl` must be defined in the config JSON.")
+    args.save_dir = str(
+        resolve_bundle_dir(
+            args.save_dir,
+            scope=artifact_scope_for_config(args.config_json, kind="eval"),
+            run_name=Path(args.config_json).resolve().stem,
+        )
+    )
     if args.num_rollouts <= 0:
         raise RuntimeError("`num_rollouts` must be > 0.")
     validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)

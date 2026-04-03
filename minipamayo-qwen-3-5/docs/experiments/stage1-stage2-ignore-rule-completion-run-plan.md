@@ -54,8 +54,8 @@ Stage1 full train sample 数:
 
 curve-focused eval holdout:
 
-- [split_manifest.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/split_manifest.json)
-- [curve_holdout.jsonl](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/curve_holdout.jsonl)
+- [split_manifest.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/preprocess/stage1/curve_splits/canonical/perimeter_cw_holdout_v1/split_manifest.json)
+- [curve_holdout.jsonl](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/preprocess/stage1/curve_splits/canonical/perimeter_cw_holdout_v1/curve_holdout.jsonl)
   - `569 samples`
 
 Stage2 は 2 系統の JSONL を使う。
@@ -177,15 +177,15 @@ runner の責務:
 固定 path:
 
 - log root:
-  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001`
+  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/ignore_rule_completion/completion_ignore_rule_full_001`
 - master log:
-  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/master.log`
+  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/ignore_rule_completion/completion_ignore_rule_full_001/master.log`
 - run status:
-  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/run.status.json`
+  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/ignore_rule_completion/completion_ignore_rule_full_001/run.status.json`
 - run exit code:
-  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/run.exitcode`
+  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/ignore_rule_completion/completion_ignore_rule_full_001/run.exitcode`
 - per-stage exit codes:
-  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/state/*.exitcode`
+  `/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/ignore_rule_completion/completion_ignore_rule_full_001/state/*.exitcode`
 
 推奨起動方法:
 
@@ -225,12 +225,12 @@ echo $!
 監視コマンド:
 
 ```bash
-tail -f /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/master.log
+tail -f /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/ignore_rule_completion/completion_ignore_rule_full_001/master.log
 ```
 
 ```bash
-cat /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/run.status.json
-cat /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/completion_ignore_rule_full_001/run.exitcode
+cat /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/ignore_rule_completion/completion_ignore_rule_full_001/run.status.json
+cat /media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/artifacts/run_logs/ignore_rule_completion/completion_ignore_rule_full_001/run.exitcode
 ```
 
 補足:

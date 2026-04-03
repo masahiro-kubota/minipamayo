@@ -16,6 +16,7 @@ from ...inspector.manifests import upsert_manifest
 from ...utils.eval_reporting import (
     EvalReporter,
     add_eval_reporting_args,
+    apply_eval_reporting_artifact_policy,
     reporting_path_keys,
     validate_eval_reporting_args,
 )
@@ -23,7 +24,7 @@ from ...utils.image_budget import (
     validate_canonical_image_budget,
 )
 from ...utils.run_metadata import collect_processor_settings
-from .cli import parse_stage2_json_only_args, require_stage2_cuda_device
+from .cli import artifact_scope_for_config, parse_stage2_json_only_args, require_stage2_cuda_device
 
 CONFIG_PATH_KEYS = {
     "checkpoint",
@@ -78,6 +79,11 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`top_p` must be in (0, 1].")
     if args.top_k < 0:
         raise RuntimeError("`top_k` must be >= 0.")
+    apply_eval_reporting_artifact_policy(
+        args,
+        scope=artifact_scope_for_config(args.config_json, kind="inference"),
+        include_per_sample_jsonl=False,
+    )
     validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
     validate_eval_reporting_args(args)
     return args

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import torch
 
+from ...utils.artifact_paths import ArtifactScope, scope_from_config_path
 from ...utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -77,3 +78,12 @@ def resolve_stage3_device(device_name: str) -> torch.device:
         device_name if device_name != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
     )
 
+
+def artifact_scope_for_config(config_json: str, *, kind: str) -> ArtifactScope:
+    return scope_from_config_path(
+        config_json,
+        kind=kind,
+        stage="stage3",
+        component="post_training",
+        default_track="canonical",
+    )

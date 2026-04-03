@@ -7,11 +7,11 @@ import json
 import math
 from pathlib import Path
 
+from ...utils.artifact_paths import ArtifactScope, owner_json_path, resolve_owner_json_path
 from ...utils.json_config import load_json_payload, resolve_path_base
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 DATASETS_ROOT = PROJECT_ROOT / "datasets"
-ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts" / "stage1" / "preprocess"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,7 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-json",
         type=str,
         default="",
-        help="Optional output JSON path. Defaults under artifacts/stage1/preprocess/curve_thresholds/.",
+        help="Optional output JSON path. Defaults under artifacts/preprocess/stage1/curve_thresholds/canonical/.",
     )
     parser.add_argument("--percentiles", type=str, default="50,75,90,95,99")
     parser.add_argument("--kappa-thresholds", type=str, default="0.05,0.08,0.10,0.12,0.15")
@@ -103,15 +103,23 @@ def _default_output_json(
     block_post_seconds: float,
 ) -> Path:
     config_stem = Path(config_json).resolve().stem
-    filename = (
+    run_name = (
         f"{config_stem}"
         f"__mode-{anchor_mode}"
         f"__kappa-{_slug_float(block_kappa_threshold)}"
         f"__yaw-{_slug_float(block_yaw_threshold)}"
         f"__pre-{_slug_float(block_pre_seconds)}"
-        f"__post-{_slug_float(block_post_seconds)}.json"
+        f"__post-{_slug_float(block_post_seconds)}"
     )
-    return ARTIFACTS_ROOT / "curve_thresholds" / filename
+    return owner_json_path(
+        ArtifactScope(
+            kind="preprocess",
+            stage="stage1",
+            component="curve_thresholds",
+            track="canonical",
+        ),
+        run_name,
+    )
 
 
 def _load_jsonl_paths(config_json: str) -> list[Path]:
@@ -457,17 +465,23 @@ def main() -> None:
         "overall": overall_summary,
     }
 
-    output_path = (
-        Path(args.output_json).resolve()
-        if args.output_json
-        else _default_output_json(
-            config_json=args.config_json,
-            anchor_mode=args.block_anchor_mode,
-            block_kappa_threshold=args.block_kappa_threshold,
-            block_yaw_threshold=args.block_yaw_threshold,
-            block_pre_seconds=args.block_pre_seconds,
-            block_post_seconds=args.block_post_seconds,
-        )
+    default_output_path = _default_output_json(
+        config_json=args.config_json,
+        anchor_mode=args.block_anchor_mode,
+        block_kappa_threshold=args.block_kappa_threshold,
+        block_yaw_threshold=args.block_yaw_threshold,
+        block_pre_seconds=args.block_pre_seconds,
+        block_post_seconds=args.block_post_seconds,
+    )
+    output_path = resolve_owner_json_path(
+        args.output_json,
+        scope=ArtifactScope(
+            kind="preprocess",
+            stage="stage1",
+            component="curve_thresholds",
+            track="canonical",
+        ),
+        run_name=default_output_path.stem,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as f:

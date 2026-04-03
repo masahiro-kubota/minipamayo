@@ -24,15 +24,14 @@ def _write_config(tmp_path: Path, file_name: str, args: dict) -> Path:
 
 def _reporting_args(*, include_per_sample_jsonl: bool) -> dict:
     args = {
-        "output_json": "artifacts/output.json",
-        "progress_json": "artifacts/progress.json",
+        "progress_json": "",
         "progress_every_samples": 1,
         "progress_every_seconds": 1.0,
         "wandb_project": "smoke-project",
         "wandb_run_name": "smoke-run",
     }
     if include_per_sample_jsonl:
-        args["per_sample_jsonl"] = "artifacts/per_sample.jsonl"
+        args["per_sample_jsonl"] = ""
     return args
 
 
@@ -44,15 +43,20 @@ def _reporting_args(*, include_per_sample_jsonl: bool) -> dict:
             {
                 "checkpoint": "checkpoints/stage1.pt",
                 "test_jsonl": "datasets/test.jsonl",
-                "output_json": "artifacts/stage1_infer.json",
+                "output_json": "artifacts/inference/stage1/vlm_ce/canonical/stage1_infer.json",
             },
-            {"checkpoint": "stage1.pt", "test_jsonl": "test.jsonl", "output_json": "stage1_infer.json"},
+            {
+                "checkpoint": "stage1.pt",
+                "test_jsonl": "test.jsonl",
+                "output_json": "artifacts/inference/stage1/vlm_ce/canonical/stage1_infer.json",
+            },
         ),
         (
             "minipamayo_qwen35.stage1.vlm_ce.eval",
             {
                 "checkpoint": "checkpoints/stage1.pt",
                 "test_jsonl": "datasets/test.jsonl",
+                "output_json": "artifacts/eval/stage1/vlm_ce/canonical/output.json",
                 "image_min_pixels": CANONICAL_IMAGE_MIN_PIXELS,
                 "image_max_pixels": CANONICAL_IMAGE_MAX_PIXELS,
                 **_reporting_args(include_per_sample_jsonl=True),
@@ -60,9 +64,9 @@ def _reporting_args(*, include_per_sample_jsonl: bool) -> dict:
             {
                 "checkpoint": "stage1.pt",
                 "test_jsonl": "test.jsonl",
-                "output_json": "output.json",
-                "progress_json": "progress.json",
-                "per_sample_jsonl": "per_sample.jsonl",
+                "output_json": "artifacts/eval/stage1/vlm_ce/canonical/output.json",
+                "progress_json": "artifacts/eval/stage1/vlm_ce/canonical/output.progress.json",
+                "per_sample_jsonl": "artifacts/eval/stage1/vlm_ce/canonical/output.per_sample.jsonl",
             },
         ),
         (
@@ -71,9 +75,15 @@ def _reporting_args(*, include_per_sample_jsonl: bool) -> dict:
                 "checkpoint": "checkpoints/stage1b.pt",
                 "stage1_checkpoint": "checkpoints/stage1.pt",
                 "sample_jsonl": "datasets/sample.jsonl",
+                "output_json": "artifacts/inference/stage1/expert_cfm/canonical/output.json",
                 "flow_steps": 10,
             },
-            {"checkpoint": "stage1b.pt", "stage1_checkpoint": "stage1.pt", "sample_jsonl": "sample.jsonl"},
+            {
+                "checkpoint": "stage1b.pt",
+                "stage1_checkpoint": "stage1.pt",
+                "sample_jsonl": "sample.jsonl",
+                "output_json": "artifacts/inference/stage1/expert_cfm/canonical/output.json",
+            },
         ),
         (
             "minipamayo_qwen35.stage1.expert_cfm.eval",
@@ -81,15 +91,16 @@ def _reporting_args(*, include_per_sample_jsonl: bool) -> dict:
                 "checkpoint": "checkpoints/stage1b.pt",
                 "stage1_checkpoint": "checkpoints/stage1.pt",
                 "eval_jsonl": ["datasets/eval_a.jsonl", "datasets/eval_b.jsonl"],
+                "output_json": "artifacts/eval/stage1/expert_cfm/canonical/output.json",
                 "flow_steps": 10,
                 **_reporting_args(include_per_sample_jsonl=True),
             },
             {
                 "checkpoint": "stage1b.pt",
                 "stage1_checkpoint": "stage1.pt",
-                "output_json": "output.json",
-                "progress_json": "progress.json",
-                "per_sample_jsonl": "per_sample.jsonl",
+                "output_json": "artifacts/eval/stage1/expert_cfm/canonical/output.json",
+                "progress_json": "artifacts/eval/stage1/expert_cfm/canonical/output.progress.json",
+                "per_sample_jsonl": "artifacts/eval/stage1/expert_cfm/canonical/output.per_sample.jsonl",
             },
         ),
         (
@@ -105,6 +116,7 @@ def _reporting_args(*, include_per_sample_jsonl: bool) -> dict:
             {
                 "checkpoint": "checkpoints/stage2.pt",
                 "eval_jsonl": "datasets/eval.jsonl",
+                "output_json": "artifacts/eval/stage2/reasoning_sft/canonical/output.json",
                 "image_min_pixels": CANONICAL_IMAGE_MIN_PIXELS,
                 "image_max_pixels": CANONICAL_IMAGE_MAX_PIXELS,
                 **_reporting_args(include_per_sample_jsonl=True),
@@ -112,9 +124,9 @@ def _reporting_args(*, include_per_sample_jsonl: bool) -> dict:
             {
                 "checkpoint": "stage2.pt",
                 "eval_jsonl": "eval.jsonl",
-                "output_json": "output.json",
-                "progress_json": "progress.json",
-                "per_sample_jsonl": "per_sample.jsonl",
+                "output_json": "artifacts/eval/stage2/reasoning_sft/canonical/output.json",
+                "progress_json": "artifacts/eval/stage2/reasoning_sft/canonical/output.progress.json",
+                "per_sample_jsonl": "artifacts/eval/stage2/reasoning_sft/canonical/output.per_sample.jsonl",
             },
         ),
         (
@@ -124,6 +136,7 @@ def _reporting_args(*, include_per_sample_jsonl: bool) -> dict:
                 "stage1b_checkpoint": "checkpoints/stage1b.pt",
                 "sample_jsonl": "datasets/sample.jsonl",
                 "sample_index": 0,
+                "output_json": "artifacts/inference/stage2/reasoning_sft/canonical/output.json",
                 "image_min_pixels": CANONICAL_IMAGE_MIN_PIXELS,
                 "image_max_pixels": CANONICAL_IMAGE_MAX_PIXELS,
                 "max_reasoning_tokens": 256,
@@ -137,8 +150,8 @@ def _reporting_args(*, include_per_sample_jsonl: bool) -> dict:
                 "checkpoint": "stage2.pt",
                 "stage1b_checkpoint": "stage1b.pt",
                 "sample_jsonl": "sample.jsonl",
-                "output_json": "output.json",
-                "progress_json": "progress.json",
+                "output_json": "artifacts/inference/stage2/reasoning_sft/canonical/output.json",
+                "progress_json": "artifacts/inference/stage2/reasoning_sft/canonical/output.progress.json",
             },
         ),
     ],

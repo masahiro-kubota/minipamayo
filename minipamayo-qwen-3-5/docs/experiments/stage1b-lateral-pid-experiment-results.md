@@ -35,7 +35,7 @@
 - Curve block definition:
   `mode=or`, `max |kappa_gt| >= 0.08` or `|yaw change| >= 0.5`, `pre=1.0s`, `post=2.0s`
 - Curve split manifest:
-  [split_manifest.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/split_manifest.json)
+  [split_manifest.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/preprocess/stage1/curve_splits/canonical/perimeter_cw_holdout_v1/split_manifest.json)
 - Dev holdout interpretation:
   - `curve_holdout` は現時点では exploratory な `dev holdout`
   - `best.pt` model selection と同じ split を見ているため、final test ではない
@@ -195,9 +195,9 @@
 - Date: `2026-03-30`
 - Goal: first real rung for `perimeter_cw` with curve-focused split
 - Train JSONL:
-  [train_128.jsonl](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/train_128.jsonl)
+  [train_128.jsonl](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/preprocess/stage1/curve_splits/canonical/perimeter_cw_holdout_v1/train_128.jsonl)
 - Dev Holdout JSONL:
-  [curve_holdout.jsonl](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/curve_holdout.jsonl)
+  [curve_holdout.jsonl](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/preprocess/stage1/curve_splits/canonical/perimeter_cw_holdout_v1/curve_holdout.jsonl)
 - Stage1A train config:
   [perimeter_cw_curve128_12gb.json](/home/masa/minipamayo/minipamayo-qwen-3-5/configs/stage1/vlm_ce/train/canonical/perimeter_cw_curve128_12gb.json)
 - Stage1A eval config:

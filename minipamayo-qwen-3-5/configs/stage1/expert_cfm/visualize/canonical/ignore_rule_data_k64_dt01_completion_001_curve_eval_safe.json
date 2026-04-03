@@ -3,7 +3,6 @@
   "args": {
     "summary_json": "artifacts/eval/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.json",
     "per_sample_jsonl": "artifacts/eval/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.per_sample.jsonl",
-    "output_dir": "artifacts/eval/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval_safe_plots",
     "wandb_project": "minipamayo-qwen35",
     "wandb_run_name": "stage1b-viz-ignore-rule-k64-dt01-completion-001-curve",
     "overlay_count": 16,

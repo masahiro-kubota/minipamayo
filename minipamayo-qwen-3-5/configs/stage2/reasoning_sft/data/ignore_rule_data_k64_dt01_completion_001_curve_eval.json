@@ -2,7 +2,7 @@
   "path_base": "project_root",
   "jobs": [
     {
-      "input_jsonl": "artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/curve_holdout.jsonl",
+      "input_jsonl": "artifacts/preprocess/stage1/curve_splits/canonical/perimeter_cw_holdout_v1/curve_holdout.jsonl",
       "output_jsonl": "datasets/processed/stage2/reasoning_sft/ignore_rule_data_k64_dt01_completion_001_curve_eval/perimeter_cw_holdout_v1/samples_reasoning_sft.jsonl"
     }
   ]

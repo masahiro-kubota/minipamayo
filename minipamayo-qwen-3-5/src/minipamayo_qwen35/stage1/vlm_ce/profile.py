@@ -12,6 +12,7 @@ from transformers import AutoModelForImageTextToText, AutoProcessor
 
 from ...contract.prompt import DEFAULT_QUESTION
 from ...contract.task_spec import CanonicalStage1Spec
+from ...utils.artifact_paths import resolve_owner_json_path
 from ...utils.json_config import normalize_required_string_list
 from ...utils.preflight import enforce_runtime_prerequisites
 from ..dataset import Stage1JsonlDataset, stage1_collate
@@ -24,11 +25,10 @@ from ..stage1a_components import (
 )
 from ..stage1a_prompting import model_forward_inputs
 from ..stage1a_runtime import Stage1ARuntime, prepare_stage1a_training_batch
-from .cli import parse_config_json_only_args
+from .cli import artifact_scope_for_config, parse_config_json_only_args
 
 CONFIG_PATH_KEYS = {"train_jsonl", "model_path", "output_json"}
 MULTI_VALUE_CONFIG_KEYS = {"train_jsonl"}
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-json",
         type=str,
-        default=str(PROJECT_ROOT / "artifacts/stage1/vlm_ce/profile/trial_summary.json"),
+        default="",
     )
     gc_group = parser.add_mutually_exclusive_group()
     gc_group.add_argument(
@@ -84,6 +84,13 @@ def parse_args() -> argparse.Namespace:
         error_message="Stage 1 profile accepts only --config-json. Put all settings in the JSON file.",
     )
     args.train_jsonl = normalize_required_string_list(args.train_jsonl, key_name="train_jsonl")
+    args.output_json = str(
+        resolve_owner_json_path(
+            args.output_json,
+            scope=artifact_scope_for_config(args.config_json, kind="profile"),
+            run_name=Path(args.config_json).resolve().stem,
+        )
+    )
     return args
 
 

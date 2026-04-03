@@ -12,6 +12,7 @@ import torch
 from ...utils.eval_reporting import (
     EvalReporter,
     add_eval_reporting_args,
+    apply_eval_reporting_artifact_policy,
     reporting_path_keys,
     validate_eval_reporting_args,
 )
@@ -20,7 +21,7 @@ from ...utils.image_budget import (
     validate_canonical_image_budget,
 )
 from ...utils.run_metadata import collect_dataset_view_fingerprint, collect_processor_settings
-from .cli import parse_stage2_json_only_args, require_stage2_cuda_device
+from .cli import artifact_scope_for_config, parse_stage2_json_only_args, require_stage2_cuda_device
 
 CONFIG_PATH_KEYS = {"checkpoint", "eval_jsonl", "output_json"} | reporting_path_keys(
     include_per_sample_jsonl=True
@@ -54,6 +55,11 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`checkpoint` must be defined in the config JSON.")
     if not args.eval_jsonl:
         raise RuntimeError("`eval_jsonl` must be defined in the config JSON.")
+    apply_eval_reporting_artifact_policy(
+        args,
+        scope=artifact_scope_for_config(args.config_json, kind="eval"),
+        include_per_sample_jsonl=True,
+    )
     validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
     validate_eval_reporting_args(args, require_per_sample_jsonl=True)
     return args

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import torch
 
+from ...utils.artifact_paths import ArtifactScope, scope_from_config_path
 from ...utils.preflight import require_cuda_device
 from ..stage1_json_cli import load_stage1_config_args, parse_stage1_json_only_args
 
@@ -79,4 +80,14 @@ def require_stage1b_cuda_device() -> torch.device:
         device_name="cuda",
         git_cwd=Path(__file__).resolve().parent,
         error_message="Canonical Stage 1B entrypoints require CUDA.",
+    )
+
+
+def artifact_scope_for_config(config_json: str, *, kind: str) -> ArtifactScope:
+    return scope_from_config_path(
+        config_json,
+        kind=kind,
+        stage="stage1",
+        component="expert_cfm",
+        default_track="canonical",
     )

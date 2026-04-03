@@ -6,6 +6,8 @@ import argparse
 import json
 from pathlib import Path
 
+from .artifact_paths import validate_artifact_config_values
+
 
 def load_json_payload(config_json: str) -> tuple[Path, object]:
     config_path = Path(config_json).resolve()
@@ -126,4 +128,4 @@ def normalize_arg_config(
                 else:
                     normalized = str(path)
         config_args[key] = normalized
-    return config_args
+    return validate_artifact_config_values(config_args)

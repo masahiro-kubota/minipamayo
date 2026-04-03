@@ -3,7 +3,7 @@
   "args": {
     "checkpoint": "checkpoints/stage1/expert_cfm/canonical/perimeter_cw_curve512_12gb/best.pt",
     "stage1_checkpoint": "checkpoints/stage1/vlm_ce/canonical/perimeter_cw_curve512_12gb/best.pt",
-    "sample_jsonl": "artifacts/stage1/preprocess/curve_splits/perimeter_cw_holdout_v1/curve_holdout.jsonl",
+    "sample_jsonl": "artifacts/preprocess/stage1/curve_splits/canonical/perimeter_cw_holdout_v1/curve_holdout.jsonl",
     "sample_index": 0,
     "output_json": "artifacts/inference/stage1/expert_cfm/canonical/perimeter_cw_curve512_sample.json",
     "flow_steps": 10,

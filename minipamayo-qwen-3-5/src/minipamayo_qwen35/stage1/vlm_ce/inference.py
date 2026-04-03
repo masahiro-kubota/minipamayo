@@ -11,12 +11,13 @@ from ...utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
 )
+from ...utils.artifact_paths import resolve_owner_json_path
 from ...utils.preflight import require_cuda_device
 from ...utils.run_metadata import collect_processor_settings
 from ..checkpoint_completion import require_completed_training_run
 from ..dataset import Stage1JsonlDataset, stage1_collate
 from ..stage1a_runtime import load_stage1a_runtime, run_stage1a_rollout_batch
-from .cli import parse_config_json_only_args
+from .cli import artifact_scope_for_config, parse_config_json_only_args
 from .metrics import infer_vision_tokens, require_record_field
 
 CONFIG_PATH_KEYS = {
@@ -54,6 +55,12 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`test_jsonl` must be defined in the config JSON.")
     if not args.output_json:
         raise RuntimeError("`output_json` must be defined in the config JSON.")
+    args.output_json = str(
+        resolve_owner_json_path(
+            args.output_json,
+            scope=artifact_scope_for_config(args.config_json, kind="inference"),
+        )
+    )
     if args.sample_index < 0:
         raise RuntimeError("`sample_index` must be >= 0.")
     return args
