@@ -43,7 +43,11 @@ def cached_run(manifest_path: str) -> NormalizedRun:
 def _load_selected_run(manifest: ArtifactManifest | None) -> NormalizedRun | None:
     if manifest is None:
         return None
-    return cached_run(str(manifest.manifest_path))
+    try:
+        return cached_run(str(manifest.manifest_path))
+    except Exception as exc:
+        st.error(f"Failed to load `{manifest.run_name}`: {exc}")
+        return None
 
 
 def _sample_metric_value(sample: NormalizedSample, metric_name: str | None) -> float | None:

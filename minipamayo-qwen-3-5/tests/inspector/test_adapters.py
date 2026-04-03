@@ -174,6 +174,50 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(run.samples[0].reasoning_text_gt, "gt reasoning")
             self.assertAlmostEqual(run.samples[0].fde_m or 0.0, 1.1)
 
+    def test_stage2_inference_adapter_backfills_from_source_jsonl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            summary_path = root / "stage2_inference_legacy.json"
+            source_jsonl = root / "samples_reasoning_sft.jsonl"
+            image_path = root / "images" / "000030.jpeg"
+            image_path.parent.mkdir(parents=True, exist_ok=True)
+            image_path.write_bytes(b"jpeg")
+            _write_jsonl(
+                source_jsonl,
+                [
+                    {
+                        "sample_id": "sample-001",
+                        "image_path": "images/000030.jpeg",
+                        "command": "right",
+                        "gt_waypoints": [[0.0, 0.0], [1.0, 1.0]],
+                        "reasoning_text": "gt reasoning from source",
+                    }
+                ],
+            )
+            _write_json(
+                summary_path,
+                {
+                    "sample_id": "sample-001",
+                    "sample_index": 0,
+                    "sample_jsonl": str(source_jsonl),
+                    "prediction": {"waypoints": [[0.0, 0.0], [1.4, 1.2]]},
+                    "ground_truth": {},
+                    "reasoning": {"text": "pred reasoning"},
+                    "metrics": {"ade_m": 0.8, "fde_m": 1.3},
+                },
+            )
+            manifest = ArtifactManifest(
+                artifact_kind="inference",
+                stage="stage2_inference",
+                run_name="stage2_inference_legacy",
+                summary_json=str(summary_path),
+            )
+            run = load_stage2_inference_run(manifest)
+            self.assertEqual(run.samples[0].image_path, str(image_path.resolve()))
+            self.assertEqual(run.samples[0].command, "right")
+            self.assertEqual(run.samples[0].reasoning_text_gt, "gt reasoning from source")
+            self.assertEqual(run.samples[0].gt_waypoints, [[0.0, 0.0], [1.0, 1.0]])
+
     def test_duplicate_sample_ids_mark_run_invalid(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
