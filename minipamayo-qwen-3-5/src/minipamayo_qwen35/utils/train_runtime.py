@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gc
 import json
+import math
 import random
 from pathlib import Path
 
@@ -16,6 +18,12 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+def release_cuda_memory() -> None:
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 def format_gib(num_bytes: int) -> float:
@@ -67,3 +75,26 @@ def maybe_wandb_finish(run) -> None:
         raise RuntimeError("W&B run is unexpectedly unavailable.")
     run.finish()
 
+
+def metric_improved(current: float, best: float, min_delta: float) -> bool:
+    if math.isinf(best):
+        return True
+    return current < (best - min_delta)
+
+
+def best_metric_from_history(metrics_history: list[dict], metric_name: str) -> tuple[float, int]:
+    best_metric = float("inf")
+    best_epoch = 0
+    for metrics in metrics_history:
+        if metric_name not in metrics or "epoch" not in metrics:
+            raise RuntimeError(
+                f"Metrics history is missing canonical fields `{metric_name}` or `epoch`: {metrics!r}"
+            )
+        value = metrics[metric_name]
+        if value is None:
+            raise RuntimeError(f"Metrics history contains null `{metric_name}`: {metrics!r}")
+        value = float(value)
+        if value < best_metric:
+            best_metric = value
+            best_epoch = int(metrics["epoch"])
+    return best_metric, best_epoch
