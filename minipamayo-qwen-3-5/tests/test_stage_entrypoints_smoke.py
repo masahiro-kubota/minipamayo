@@ -112,6 +112,24 @@ def _reporting_args(*, include_per_sample_jsonl: bool) -> dict:
             {"stage1a_checkpoint": "stage1a.pt", "train_jsonl": "train.jsonl"},
         ),
         (
+            "minipamayo_qwen35.stage3.post_training.train",
+            {
+                "stage2_checkpoint": "checkpoints/stage2.pt",
+                "stage1b_checkpoint": "checkpoints/stage1b.pt",
+                "train_jsonl": "datasets/train.jsonl",
+                "image_min_pixels": CANONICAL_IMAGE_MIN_PIXELS,
+                "image_max_pixels": CANONICAL_IMAGE_MAX_PIXELS,
+                "wandb_project": "smoke-project",
+                "wandb_run_name": "stage3-train-smoke",
+            },
+            {
+                "stage2_checkpoint": "stage2.pt",
+                "stage1b_checkpoint": "stage1b.pt",
+                "train_jsonl": "train.jsonl",
+                "save_dir": "checkpoints/stage3/post_training/canonical/config",
+            },
+        ),
+        (
             "minipamayo_qwen35.stage2.reasoning_sft.eval",
             {
                 "checkpoint": "checkpoints/stage2.pt",
@@ -127,6 +145,28 @@ def _reporting_args(*, include_per_sample_jsonl: bool) -> dict:
                 "output_json": "artifacts/eval/stage2/reasoning_sft/canonical/output.json",
                 "progress_json": "artifacts/eval/stage2/reasoning_sft/canonical/output.progress.json",
                 "per_sample_jsonl": "artifacts/eval/stage2/reasoning_sft/canonical/output.per_sample.jsonl",
+            },
+        ),
+        (
+            "minipamayo_qwen35.stage3.post_training.eval",
+            {
+                "checkpoint": "checkpoints/stage3.pt",
+                "stage2_checkpoint": "checkpoints/stage2.pt",
+                "stage1b_checkpoint": "checkpoints/stage1b.pt",
+                "eval_jsonl": "datasets/eval.jsonl",
+                "output_json": "artifacts/eval/stage3/post_training/canonical/output.json",
+                "image_min_pixels": CANONICAL_IMAGE_MIN_PIXELS,
+                "image_max_pixels": CANONICAL_IMAGE_MAX_PIXELS,
+                **_reporting_args(include_per_sample_jsonl=True),
+            },
+            {
+                "checkpoint": "stage3.pt",
+                "stage2_checkpoint": "stage2.pt",
+                "stage1b_checkpoint": "stage1b.pt",
+                "eval_jsonl": "eval.jsonl",
+                "output_json": "artifacts/eval/stage3/post_training/canonical/output.json",
+                "progress_json": "artifacts/eval/stage3/post_training/canonical/output.progress.json",
+                "per_sample_jsonl": "artifacts/eval/stage3/post_training/canonical/output.per_sample.jsonl",
             },
         ),
         (

@@ -167,15 +167,46 @@ class RegistryTests(unittest.TestCase):
                 )
             )
 
+            stage3_eval_summary = artifact_root / "eval/stage3/post_training/canonical/stage3_eval.json"
+            stage3_eval_samples = stage3_eval_summary.with_name("stage3_eval.per_sample.jsonl")
+            _write_json(stage3_eval_summary, {"metrics": {"reward": 0.4, "fde_m": 1.0}})
+            _write_jsonl(
+                stage3_eval_samples,
+                [
+                    {
+                        "sample_id": "sample-001",
+                        "sample_index": 0,
+                        "image_path": "/tmp/001.jpeg",
+                        "reasoning_text": "gt",
+                        "reasoning_text_pred": "pred",
+                        "gt_waypoints": [[0.0, 0.0], [1.0, 1.0]],
+                        "pred_waypoints": [[0.0, 0.0], [1.2, 1.1]],
+                        "metrics": {"ade_m": 0.5, "fde_m": 1.0},
+                    }
+                ],
+            )
+            write_manifest(
+                ArtifactManifest(
+                    artifact_kind="eval",
+                    stage="stage3_eval",
+                    run_name="stage3_eval",
+                    summary_json=str(stage3_eval_summary),
+                    per_sample_jsonl=str(stage3_eval_samples),
+                )
+            )
+
             registry = load_manifest_registry(artifact_root)
             self.assertEqual(len(registry.stage1a_manifests), 1)
             self.assertEqual(len(registry.stage2_eval_manifests), 1)
             self.assertEqual(len(registry.stage2_inference_manifests), 1)
+            self.assertEqual(len(registry.stage3_eval_manifests), 1)
 
             stage1a_run = load_normalized_run(registry.stage1a_manifests[0])
             stage2_eval_run = load_normalized_run(registry.stage2_eval_manifests[0])
             stage2_inference_run = load_normalized_run(registry.stage2_inference_manifests[0])
+            stage3_eval_run = load_normalized_run(registry.stage3_eval_manifests[0])
             self.assertEqual(len(stage1a_run.groups), 1)
+            self.assertEqual(stage3_eval_run.samples[0].reasoning_text_pred, "pred")
             rows = compare_runs_by_sample_id(
                 stage1a_run=stage1a_run,
                 stage2_eval_run=stage2_eval_run,

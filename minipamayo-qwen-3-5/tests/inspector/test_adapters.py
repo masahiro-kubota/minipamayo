@@ -16,6 +16,7 @@ from minipamayo_qwen35.inspector.adapters import (
     load_stage1b_run,
     load_stage2_eval_run,
     load_stage2_inference_run,
+    load_stage3_eval_run,
 )
 from minipamayo_qwen35.inspector.models import ArtifactManifest
 
@@ -180,6 +181,41 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(run.samples[0].reasoning_text_pred, "pred reasoning")
             self.assertEqual(run.samples[0].reasoning_text_gt, "gt reasoning")
             self.assertAlmostEqual(run.samples[0].fde_m or 0.0, 1.1)
+            self.assertEqual(run.samples[0].group_id, "derived:0-0")
+
+    def test_stage3_eval_adapter_normalizes_rollout_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            summary_path = root / "stage3_eval.json"
+            per_sample_path = root / "stage3_eval.per_sample.jsonl"
+            _write_json(summary_path, {"metrics": {"reward": 0.5, "fde_m": 1.0}})
+            _write_jsonl(
+                per_sample_path,
+                [
+                    {
+                        "sample_id": "sample-001",
+                        "sample_index": 0,
+                        "image_path": "/tmp/image.jpeg",
+                        "command": "forward",
+                        "gt_waypoints": [[0.0, 0.0], [1.0, 1.0]],
+                        "pred_waypoints": [[0.0, 0.0], [1.4, 1.2]],
+                        "reasoning_text": "ground truth reasoning",
+                        "reasoning_text_pred": "predicted reasoning",
+                        "metrics": {"ade_m": 0.7, "fde_m": 1.0},
+                    }
+                ],
+            )
+            manifest = ArtifactManifest(
+                artifact_kind="eval",
+                stage="stage3_eval",
+                run_name="stage3_eval",
+                summary_json=str(summary_path),
+                per_sample_jsonl=str(per_sample_path),
+            )
+            run = load_stage3_eval_run(manifest)
+            self.assertEqual(run.samples[0].reasoning_text_gt, "ground truth reasoning")
+            self.assertEqual(run.samples[0].reasoning_text_pred, "predicted reasoning")
+            self.assertAlmostEqual(run.samples[0].fde_m or 0.0, 1.0)
             self.assertEqual(run.samples[0].group_id, "derived:0-0")
 
     def test_stage2_inference_adapter_backfills_from_source_jsonl(self) -> None:

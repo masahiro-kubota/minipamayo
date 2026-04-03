@@ -111,6 +111,41 @@ class ManifestTests(unittest.TestCase):
             self.assertTrue(manifest.per_sample_jsonl)
             self.assertIn("metric_histograms", manifest.plots)
 
+    def test_backfill_infers_stage3_eval_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            artifact_root = Path(tmp_dir) / "artifacts"
+            summary_path = artifact_root / "eval/stage3/post_training/canonical/run.json"
+            progress_path = summary_path.with_name("run.progress.json")
+            per_sample_path = summary_path.with_name("run.per_sample.jsonl")
+            _write_json(
+                summary_path,
+                {
+                    "checkpoint": "/tmp/checkpoints/stage3.pt",
+                    "eval_jsonl": "/tmp/eval.jsonl",
+                    "metrics": {"reward": 0.5, "fde_m": 1.0},
+                },
+            )
+            _write_json(progress_path, {"state": "completed"})
+            _write_jsonl(
+                per_sample_path,
+                [
+                    {
+                        "sample_id": "sample-001",
+                        "sample_index": 0,
+                        "image_path": "/tmp/frame.jpeg",
+                        "reasoning_text": "gt",
+                        "reasoning_text_pred": "pred",
+                    }
+                ],
+            )
+
+            written = backfill_artifact_manifests(artifact_root)
+            self.assertEqual(len(written), 1)
+            manifest = load_manifest(written[0])
+            self.assertEqual(manifest.stage, "stage3_eval")
+            self.assertEqual(manifest.artifact_kind, "eval")
+            self.assertTrue(manifest.per_sample_jsonl)
+
 
 if __name__ == "__main__":
     unittest.main()

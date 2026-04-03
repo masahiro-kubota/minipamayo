@@ -128,7 +128,7 @@ def main() -> None:
 
     selected_runs = {
         stage: _load_selected_run(selected_manifests.get(stage))
-        for stage in ["stage1a_eval", "stage1b_eval", "stage2_eval", "stage2_inference"]
+        for stage in ["stage1a_eval", "stage1b_eval", "stage2_eval", "stage2_inference", "stage3_eval"]
     }
     active_run = selected_runs.get(str(focus_stage))
     filters = render_filter_controls(active_run)

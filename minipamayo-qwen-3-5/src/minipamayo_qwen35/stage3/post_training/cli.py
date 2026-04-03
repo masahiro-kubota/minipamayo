@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 import torch
 
+from ...stage1.stage1_json_cli import load_stage1_config_args, parse_stage1_json_only_args
 from ...utils.artifact_paths import ArtifactScope, scope_from_config_path
-from ...utils.json_config import load_json_payload, normalize_arg_config, resolve_path_base
-
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
+from ...utils.preflight import require_cuda_device, resolve_runtime_device
 
 
 def load_stage3_config_args(
@@ -21,26 +19,12 @@ def load_stage3_config_args(
     path_keys: set[str],
     list_keys: set[str] | None = None,
 ) -> tuple[str, dict, dict]:
-    config_path, payload = load_json_payload(config_json)
-    raw_config = payload.get("args") if isinstance(payload, dict) and "args" in payload else payload
-    if not isinstance(raw_config, dict):
-        raise RuntimeError("Config JSON must be an object or an object with an `args` object.")
-
-    base_dir = resolve_path_base(
-        config_path,
-        payload,
-        default_base="project_root",
-        base_dirs={"project_root": PROJECT_ROOT, "config_dir": config_path.parent},
-    )
-    config_args = normalize_arg_config(
-        raw_config,
+    return load_stage1_config_args(
+        config_json,
         parser,
-        exclude_dests={"help", "config_json"},
         path_keys=path_keys,
-        list_keys=list_keys or set(),
-        base_dir=base_dir,
+        list_keys=list_keys,
     )
-    return str(config_path), payload, config_args
 
 
 def parse_stage3_json_only_args(
@@ -50,32 +34,23 @@ def parse_stage3_json_only_args(
     list_keys: set[str] | None = None,
     json_only_error: str,
 ) -> argparse.Namespace:
-    if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
-        return parser.parse_args()
-
-    pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("--config-json", type=str, required=True)
-    pre_args, remaining = pre_parser.parse_known_args()
-    if remaining:
-        raise RuntimeError(json_only_error)
-
-    config_path, config_payload, config_args = load_stage3_config_args(
-        pre_args.config_json,
-        parser,
+    return parse_stage1_json_only_args(
+        parser=parser,
         path_keys=path_keys,
         list_keys=list_keys,
+        error_message=json_only_error,
     )
-    parser.set_defaults(**config_args, config_json=config_path)
-    args = parser.parse_args()
-    args.config_json = config_path
-    args.config_payload = config_payload
-    args.config_args = config_args
-    return args
 
 
 def resolve_stage3_device(device_name: str) -> torch.device:
-    return torch.device(
-        device_name if device_name != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
+    return resolve_runtime_device(device_name)
+
+
+def require_stage3_cuda_device(*, device_name: str, git_cwd: str | Path, error_message: str) -> torch.device:
+    return require_cuda_device(
+        device_name=device_name,
+        git_cwd=Path(git_cwd),
+        error_message=error_message,
     )
 
 

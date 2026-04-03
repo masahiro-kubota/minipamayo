@@ -16,6 +16,11 @@ from minipamayo_qwen35.utils.artifact_paths import (
     scope_from_owner_json_path,
     validate_generic_artifact_path,
 )
+from minipamayo_qwen35.utils.checkpoint_paths import (
+    CheckpointScope,
+    checkpoint_run_dir,
+    resolve_checkpoint_run_dir,
+)
 from minipamayo_qwen35.utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
@@ -71,6 +76,22 @@ def test_run_logs_root_includes_workflow_segment() -> None:
     )
 
 
+def test_checkpoint_run_dir_uses_canonical_scope() -> None:
+    assert checkpoint_run_dir(
+        CheckpointScope(stage="stage3", component="post_training", track="canonical"),
+        "smoke_run",
+    ) == (PROJECT_ROOT / "checkpoints" / "stage3" / "post_training" / "canonical" / "smoke_run")
+
+
+def test_resolve_checkpoint_run_dir_rejects_noncanonical_path() -> None:
+    with pytest.raises(RuntimeError, match="Checkpoint run directory must match the canonical location"):
+        resolve_checkpoint_run_dir(
+            "artifacts/eval/stage3/post_training/canonical/not_allowed",
+            scope=CheckpointScope(stage="stage3", component="post_training", track="canonical"),
+            run_name="smoke_run",
+        )
+
+
 def test_scope_from_owner_json_path_reuses_track_for_new_component() -> None:
     scope = scope_from_owner_json_path(
         PROJECT_ROOT
@@ -123,6 +144,59 @@ def test_stage1_eval_parse_args_rejects_noncanonical_owner_path(
         module.parse_args()
 
 
+def test_stage3_train_parse_args_rejects_artifact_save_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("minipamayo_qwen35.stage3.post_training.train")
+    config_path = _write_config(
+        tmp_path,
+        "config.json",
+        {
+            "stage2_checkpoint": "checkpoints/stage2.pt",
+            "stage1b_checkpoint": "checkpoints/stage1b.pt",
+            "train_jsonl": "datasets/train.jsonl",
+            "save_dir": "artifacts/eval/stage3/post_training/canonical/not_allowed",
+            "image_min_pixels": CANONICAL_IMAGE_MIN_PIXELS,
+            "image_max_pixels": CANONICAL_IMAGE_MAX_PIXELS,
+            "wandb_project": "smoke-project",
+            "wandb_run_name": "smoke-run",
+        },
+    )
+
+    monkeypatch.setattr(sys, "argv", ["prog", "--config-json", str(config_path)])
+    with pytest.raises(RuntimeError, match="Checkpoint run directory must match the canonical location"):
+        module.parse_args()
+
+
+def test_stage3_eval_parse_args_rejects_checkpoint_owner_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("minipamayo_qwen35.stage3.post_training.eval")
+    config_path = _write_config(
+        tmp_path,
+        "config.json",
+        {
+            "checkpoint": "checkpoints/stage3.pt",
+            "stage2_checkpoint": "checkpoints/stage2.pt",
+            "stage1b_checkpoint": "checkpoints/stage1b.pt",
+            "eval_jsonl": "datasets/eval.jsonl",
+            "output_json": "checkpoints/stage3/post_training/canonical/output.json",
+            "progress_every_samples": 1,
+            "progress_every_seconds": 1.0,
+            "wandb_project": "smoke-project",
+            "wandb_run_name": "smoke-run",
+            "image_min_pixels": CANONICAL_IMAGE_MIN_PIXELS,
+            "image_max_pixels": CANONICAL_IMAGE_MAX_PIXELS,
+        },
+    )
+
+    monkeypatch.setattr(sys, "argv", ["prog", "--config-json", str(config_path)])
+    with pytest.raises(RuntimeError, match="Artifact owner JSON must live directly under the canonical scope directory"):
+        module.parse_args()
+
+
 def test_stage1_visualize_parse_args_derives_plots_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -146,6 +220,39 @@ def test_stage1_visualize_parse_args_derives_plots_dir(
     args = module.parse_args()
 
     assert Path(args.output_dir) == PROJECT_ROOT / "artifacts" / "eval" / "stage1" / "vlm_ce" / "canonical" / "run_plots"
+
+
+def test_stage3_preprocess_defaults_output_jsonl_to_canonical_artifacts() -> None:
+    module = importlib.import_module("minipamayo_qwen35.stage3.post_training.preprocess")
+    output_path = module.resolve_output_jsonl(
+        "",
+        scores_jsonl="datasets/scores/smoke_scores.jsonl",
+        top_fraction=0.3,
+        random_fraction=0.1,
+        seed=7,
+    )
+
+    assert output_path == (
+        PROJECT_ROOT
+        / "artifacts"
+        / "preprocess"
+        / "stage3"
+        / "post_training"
+        / "canonical"
+        / "smoke_scores__top-0p3__rand-0p1__seed-7.jsonl"
+    )
+
+
+def test_stage3_preprocess_rejects_noncanonical_output_jsonl() -> None:
+    module = importlib.import_module("minipamayo_qwen35.stage3.post_training.preprocess")
+    with pytest.raises(RuntimeError, match="Stage 3 preprocess output must live under"):
+        module.resolve_output_jsonl(
+            "checkpoints/stage3/post_training/canonical/output.jsonl",
+            scores_jsonl="datasets/scores/smoke_scores.jsonl",
+            top_fraction=0.3,
+            random_fraction=0.1,
+            seed=7,
+        )
 
 
 def test_config_artifact_paths_follow_generic_layout() -> None:

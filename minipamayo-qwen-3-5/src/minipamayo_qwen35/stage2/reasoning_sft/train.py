@@ -37,6 +37,7 @@ from ...utils.run_metadata import (
     collect_gpu_info,
     collect_processor_settings,
 )
+from ...utils.checkpoint_paths import checkpoint_scope_from_config_path, resolve_checkpoint_run_dir
 from .cli import parse_stage2_json_only_args
 
 CONFIG_PATH_KEYS = {
@@ -55,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stage1a-checkpoint", type=str, default="")
     parser.add_argument("--train-jsonl", type=str, default="")
     parser.add_argument("--val-jsonl", type=str, default="")
-    parser.add_argument("--save-dir", type=str, default="minipamayo-qwen-3-5/checkpoints/stage2")
+    parser.add_argument("--save-dir", type=str, default="")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--grad-accum-steps", type=int, default=1)
@@ -109,6 +110,18 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`early_stopping_patience` must be >= 0.")
     if args.early_stopping_min_delta < 0:
         raise RuntimeError("`early_stopping_min_delta` must be >= 0.")
+    args.save_dir = str(
+        resolve_checkpoint_run_dir(
+            args.save_dir,
+            scope=checkpoint_scope_from_config_path(
+                args.config_json,
+                stage="stage2",
+                component="reasoning_sft",
+                default_track="canonical",
+            ),
+            run_name=Path(args.config_json).resolve().stem,
+        )
+    )
     validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
     return args
 

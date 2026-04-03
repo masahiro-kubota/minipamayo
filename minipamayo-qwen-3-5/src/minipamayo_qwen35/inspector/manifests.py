@@ -138,6 +138,8 @@ def infer_stage_from_summary_path(summary_path: str | Path) -> str | None:
         return "stage1b_eval"
     if artifact_kind == "eval" and major_stage == "stage2" and sub_stage == "reasoning_sft":
         return "stage2_eval"
+    if artifact_kind == "eval" and major_stage == "stage3" and sub_stage == "post_training":
+        return "stage3_eval"
     if artifact_kind == "inference" and major_stage == "stage2" and sub_stage == "reasoning_sft":
         return "stage2_inference"
     if artifact_kind == "inference" and major_stage == "stage1" and sub_stage == "expert_cfm":

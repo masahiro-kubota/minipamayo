@@ -11,6 +11,7 @@ from .adapters import (
     load_stage1b_run,
     load_stage2_eval_run,
     load_stage2_inference_run,
+    load_stage3_eval_run,
 )
 from .manifests import load_manifest
 from .models import ArtifactManifest, NormalizedRun, Stage2RunBundle
@@ -27,6 +28,7 @@ class ManifestRegistry:
     stage1b_manifests: tuple[ArtifactManifest, ...]
     stage2_eval_manifests: tuple[ArtifactManifest, ...]
     stage2_inference_manifests: tuple[ArtifactManifest, ...]
+    stage3_eval_manifests: tuple[ArtifactManifest, ...]
     stage2_bundles: tuple[Stage2RunBundle, ...]
 
 
@@ -85,6 +87,9 @@ def load_manifest_registry(artifact_root: str | Path) -> ManifestRegistry:
     stage2_inference_manifests = _sort_stage_manifests(
         tuple(manifest for manifest in manifests if manifest.stage == "stage2_inference")
     )
+    stage3_eval_manifests = _sort_stage_manifests(
+        tuple(manifest for manifest in manifests if manifest.stage == "stage3_eval")
+    )
 
     stage2_eval_map = {manifest.run_name: manifest for manifest in stage2_eval_manifests}
     stage2_inference_map = {manifest.run_name: manifest for manifest in stage2_inference_manifests}
@@ -104,6 +109,7 @@ def load_manifest_registry(artifact_root: str | Path) -> ManifestRegistry:
         stage1b_manifests=stage1b_manifests,
         stage2_eval_manifests=stage2_eval_manifests,
         stage2_inference_manifests=stage2_inference_manifests,
+        stage3_eval_manifests=stage3_eval_manifests,
         stage2_bundles=stage2_bundles,
     )
 
@@ -117,6 +123,8 @@ def load_normalized_run(manifest: ArtifactManifest) -> NormalizedRun:
         return load_stage2_eval_run(manifest)
     if manifest.stage == "stage2_inference":
         return load_stage2_inference_run(manifest)
+    if manifest.stage == "stage3_eval":
+        return load_stage3_eval_run(manifest)
     raise RuntimeError(f"Unsupported manifest stage for inspector: {manifest.stage}")
 
 

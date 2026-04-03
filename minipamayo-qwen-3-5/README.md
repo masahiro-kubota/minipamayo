@@ -61,7 +61,9 @@ Canonical entrypoints are:
 - `minipamayo_qwen35.stage1.expert_cfm.eval`
 - `minipamayo_qwen35.stage1.expert_cfm.inference`
 - `minipamayo_qwen35.stage2.reasoning_sft.train`
+- `minipamayo_qwen35.stage3.post_training.preprocess`
 - `minipamayo_qwen35.stage3.post_training.train`
+- `minipamayo_qwen35.stage3.post_training.eval`
 
 Stage 1 experiments live under the same stage package:
 
@@ -76,6 +78,8 @@ Recorded-entrypoint examples:
 - `uv run python -m minipamayo_qwen35.stage1.vlm_ce.eval --config-json configs/stage1/vlm_ce/eval/canonical/ignore_rule_data_k64_dt01_12gb.json`
 - `uv run python -m minipamayo_qwen35.stage1.vlm_ce.inference --config-json configs/stage1/vlm_ce/inference/canonical/ignore_rule_data_k64_dt01_sample.json`
 - `uv run python -m minipamayo_qwen35.stage1.expert_cfm.train --config-json configs/stage1/expert_cfm/train/canonical/ignore_rule_data_k64_dt01_smoke_12gb.json`
+- `uv run python -m minipamayo_qwen35.stage3.post_training.preprocess --scores-jsonl datasets/scores/stage3/smoke.jsonl`
+- `uv run python -m minipamayo_qwen35.stage3.post_training.eval --config-json configs/stage3/post_training/eval/canonical/ignore_rule_data_k64_dt01_smoke_eval.json`
 - `uv run python -m minipamayo_qwen35.stage1.vlm_ce.train_steer_only --config-json configs/stage1/vlm_ce/train/experiments/steer_only/ignore_rule_data_k64_dt01_smoke_12gb.json`
 
 The data, train, eval, profile, and inference entrypoints intentionally reject CLI overrides so the JSON files remain the full run record.
@@ -96,6 +100,8 @@ Canonical `Stage2 / reasoning_sft` expects the same observation contract as `Sta
 - required additions over Stage1: `reasoning_text`
 - required observation fields carried over: `ego_history_xyz`, `ego_history_rot`
 - contract note: [stage2-reasoning-sft-dataset-contract.md](/home/masa/minipamayo/minipamayo-qwen-3-5/docs/design/stage2-reasoning-sft-dataset-contract.md)
+
+Canonical `Stage3 / post_training` keeps training checkpoints under `checkpoints/stage3/post_training/<track>/<run_name>` and writes eval / curation outputs under `artifacts/eval/stage3/post_training/<track>/` and `artifacts/preprocess/stage3/post_training/<track>/`.
 
 Stage 1 train outputs record:
 

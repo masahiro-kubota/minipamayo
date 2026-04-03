@@ -37,6 +37,14 @@ SUMMARY_PRIORITY = {
         "metrics/ade_m",
         "metrics/fde_m",
     ],
+    "stage3_eval": [
+        "metrics/reward",
+        "metrics/ade_m",
+        "metrics/fde_m",
+        "metrics/minade_m",
+        "metrics/minfde_m",
+        "metrics/valid_rollout_rate",
+    ],
 }
 
 

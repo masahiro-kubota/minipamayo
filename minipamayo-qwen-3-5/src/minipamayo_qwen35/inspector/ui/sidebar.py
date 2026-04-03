@@ -14,6 +14,7 @@ STAGE_GROUP_LABELS = {
     "stage1a": "Stage1A",
     "stage1b": "Stage1B",
     "stage2": "Stage2",
+    "stage3": "Stage3",
 }
 
 FOCUS_STAGE_LABELS = {
@@ -21,6 +22,7 @@ FOCUS_STAGE_LABELS = {
     "stage1b_eval": "Stage1B Eval",
     "stage2_eval": "Stage2 Eval",
     "stage2_inference": "Stage2 Inference",
+    "stage3_eval": "Stage3 Eval",
 }
 
 BLOCK_SORT_LABELS = {
@@ -117,6 +119,15 @@ def render_run_selectors(
             if "stage2" in enabled_stage_groups
             else None
         )
+        selected_stage3_eval = (
+            _select_manifest(
+                label="Stage3 Eval Run",
+                manifests=registry.stage3_eval_manifests,
+                key="inspector_stage3_eval_manifest",
+            )
+            if "stage3" in enabled_stage_groups
+            else None
+        )
 
         focus_stage_options: list[str] = []
         if selected_stage1a is not None:
@@ -127,6 +138,8 @@ def render_run_selectors(
             focus_stage_options.append("stage2_eval")
         if selected_stage2_inference is not None:
             focus_stage_options.append("stage2_inference")
+        if selected_stage3_eval is not None:
+            focus_stage_options.append("stage3_eval")
 
         focus_stage = None
         if focus_stage_options:
@@ -141,6 +154,7 @@ def render_run_selectors(
         "stage1b_eval": selected_stage1b,
         "stage2_eval": selected_stage2_eval,
         "stage2_inference": selected_stage2_inference,
+        "stage3_eval": selected_stage3_eval,
         "focus_stage": focus_stage,
     }
 
