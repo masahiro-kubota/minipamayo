@@ -6,12 +6,14 @@ from pathlib import Path
 import pytest
 import torch
 
+from minipamayo_qwen35.reasoning import SyntheticReasoningJsonlDataset, build_reasoning_text
 from minipamayo_qwen35.stage1.dataset import Stage1JsonlDataset
 from minipamayo_qwen35.stage1.stage1_train_data import (
     build_jsonl_train_val_dataloaders,
     build_stage1_train_val_dataloaders,
 )
 from minipamayo_qwen35.stage1.dataset import stage1_collate
+from minipamayo_qwen35.stage2.reasoning_sft import preprocess as stage2_preprocess
 from minipamayo_qwen35.stage2.reasoning_sft.dataset import (
     ReasoningSftJsonlDataset,
     build_stage2_train_val_dataloaders,
@@ -33,6 +35,8 @@ def _make_record(
     include_future: bool = True,
     include_command: bool = True,
     include_reasoning: bool = True,
+    command: str = "go_straight",
+    planner_state: str = "nominal",
 ) -> dict:
     gt_waypoints = [
         [1.0, 0.0],
@@ -47,7 +51,7 @@ def _make_record(
         "gt_waypoints": gt_waypoints,
         "ego_history_xyz": [[[-1.0, 0.0, 0.0], [0.0, 0.0, 0.0]]],
         "ego_history_rot": [[_identity_rot(), _identity_rot()]],
-        "planner_state": "nominal",
+        "planner_state": planner_state,
         "decision_longitudinal": "maintain",
         "decision_lateral": "keep_lane",
     }
@@ -61,7 +65,7 @@ def _make_record(
             {"x": 2.0, "y": 1.0, "yaw_deg": 0.0},
         ]
     if include_command:
-        record["command"] = "go_straight"
+        record["command"] = command
     if include_reasoning:
         record["reasoning_text"] = "keep lane and maintain speed"
     return record
@@ -114,6 +118,72 @@ def test_stage_specific_required_keys_are_preserved(tmp_path: Path) -> None:
         Stage1JsonlDataset(stage1_jsonl)[0]
     with pytest.raises(RuntimeError, match="reasoning_text"):
         ReasoningSftJsonlDataset(stage2_jsonl)[0]
+
+
+@pytest.mark.parametrize(
+    ("command", "planner_state", "expected_line"),
+    [
+        (
+            "lanefollow",
+            "nominal_cruise",
+            "The planner state indicates following behavior. The ego vehicle should keep the lane and adapt speed to the lead vehicle.",
+        ),
+        (
+            "straight",
+            "nominal_cruise",
+            "The route command indicates lane following and the planner remains in nominal cruise. The ego vehicle should continue forward while keeping the current lane.",
+        ),
+        (
+            "left",
+            "nominal_cruise",
+            "The route command indicates a left turn while the planner remains in nominal cruise. The ego vehicle should keep moving forward and steer into the left turn.",
+        ),
+        (
+            "right",
+            "nominal_cruise",
+            "The route command indicates a right turn while the planner remains in nominal cruise. The ego vehicle should keep moving forward and steer into the right turn.",
+        ),
+    ],
+)
+def test_build_reasoning_text_uses_explicit_templates(
+    command: str,
+    planner_state: str,
+    expected_line: str,
+) -> None:
+    reasoning_text = build_reasoning_text(command=command, planner_state=planner_state)
+
+    assert "[Driving Decision]" in reasoning_text
+    assert "[Critical Components]" in reasoning_text
+    assert "[CoC Trace]" in reasoning_text
+    assert expected_line in reasoning_text
+
+
+def test_build_reasoning_text_rejects_unknown_combo() -> None:
+    with pytest.raises(RuntimeError, match="command='lane_change_left'.*planner_state='nominal_cruise'.*lateral='lane_change_left'"):
+        build_reasoning_text(command="lane_change_left", planner_state="nominal_cruise")
+
+
+def test_synthetic_reasoning_dataset_rejects_unknown_combo(tmp_path: Path) -> None:
+    jsonl_path = _write_jsonl(
+        tmp_path,
+        "unknown_combo.jsonl",
+        [_make_record("sample-0", include_reasoning=False, command="lane_change_left", planner_state="nominal_cruise")],
+    )
+
+    with pytest.raises(RuntimeError, match="command='lane_change_left'.*planner_state='nominal_cruise'"):
+        SyntheticReasoningJsonlDataset(jsonl_path)[0]
+
+
+def test_stage2_preprocess_rejects_unknown_combo() -> None:
+    record = _make_record(
+        "sample-0",
+        command="lane_change_left",
+        planner_state="nominal_cruise",
+        include_reasoning=False,
+    )
+
+    with pytest.raises(RuntimeError, match="command='lane_change_left'.*planner_state='nominal_cruise'"):
+        stage2_preprocess._build_reasoning_record(record)
 
 
 def test_future_tensor_fallback_matches_explicit_future(tmp_path: Path) -> None:

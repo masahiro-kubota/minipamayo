@@ -17,6 +17,14 @@ TRACE_TEMPLATES: Final[dict[tuple[str, str], str]] = {
         "The route command indicates lane following and the planner remains in nominal cruise. "
         "The ego vehicle should continue forward while keeping the current lane."
     ),
+    ("go_straight", "turn_left"): (
+        "The route command indicates a left turn while the planner remains in nominal cruise. "
+        "The ego vehicle should keep moving forward and steer into the left turn."
+    ),
+    ("go_straight", "turn_right"): (
+        "The route command indicates a right turn while the planner remains in nominal cruise. "
+        "The ego vehicle should keep moving forward and steer into the right turn."
+    ),
     ("stop", "lane_keeping"): (
         "The planner state indicates a stopping behavior. "
         "The ego vehicle should brake to a stop while staying in the current lane."
@@ -72,15 +80,16 @@ def infer_driving_decision(command: str, planner_state: str) -> dict[str, str]:
     }
 
 
-def _default_trace(command: str, planner_state: str, decision: dict[str, str]) -> str:
+def _resolve_trace_template(command: str, planner_state: str, decision: dict[str, str]) -> str:
     longitudinal = decision["longitudinal"]
     lateral = decision["lateral"]
     template = TRACE_TEMPLATES.get((longitudinal, lateral))
     if template is not None:
         return template
-    return (
-        f"The route command is {command} and the planner state is {planner_state}. "
-        f"The ego vehicle should execute {longitudinal} while keeping the lateral intent {lateral}."
+    raise RuntimeError(
+        "Unsupported synthetic reasoning combination: "
+        f"command={command!r}, planner_state={planner_state!r}, "
+        f"longitudinal={longitudinal!r}, lateral={lateral!r}."
     )
 
 
@@ -92,7 +101,7 @@ def build_reasoning_text(
     """Build a deterministic structured reasoning target from planner labels."""
 
     resolved_decision = decision or infer_driving_decision(command, planner_state)
-    trace = _default_trace(command, planner_state, resolved_decision)
+    trace = _resolve_trace_template(command, planner_state, resolved_decision)
     return (
         "[Driving Decision]\n"
         f"longitudinal: {resolved_decision['longitudinal']}\n"
