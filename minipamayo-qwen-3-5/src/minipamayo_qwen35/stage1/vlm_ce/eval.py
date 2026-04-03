@@ -19,8 +19,6 @@ from torch.utils.data import DataLoader
 from PIL import Image
 
 from ...utils.image_budget import (
-    CANONICAL_IMAGE_MAX_PIXELS,
-    CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
 from ...utils.eval_reporting import (
@@ -79,8 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--show-samples", type=int, default=10)
-    parser.add_argument("--image-min-pixels", type=int, default=CANONICAL_IMAGE_MIN_PIXELS)
-    parser.add_argument("--image-max-pixels", type=int, default=CANONICAL_IMAGE_MAX_PIXELS)
+    parser.add_argument("--image-min-pixels", type=int, default=0)
+    parser.add_argument("--image-max-pixels", type=int, default=0)
     parser.add_argument("--output-json", type=str, default="")
     parser.add_argument("--output-mcap", type=str, default="")
     add_eval_reporting_args(parser, include_per_sample_jsonl=True)

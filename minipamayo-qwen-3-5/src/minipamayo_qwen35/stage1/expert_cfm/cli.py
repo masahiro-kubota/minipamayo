@@ -18,12 +18,12 @@ def add_stage1b_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--checkpoint", type=str, default="")
     parser.add_argument("--stage1-checkpoint", type=str, default="")
     parser.add_argument("--output-json", type=str, default="")
-    parser.add_argument("--flow-steps", type=int, default=10)
+    parser.add_argument("--flow-steps", type=int, default=0)
     parser.add_argument("--include-pid-override", action="store_true")
-    parser.add_argument("--pid-target-speed-kmh", type=float, default=24.0)
-    parser.add_argument("--pid-kp", type=float, default=1.0)
-    parser.add_argument("--pid-ki", type=float, default=0.05)
-    parser.add_argument("--pid-kd", type=float, default=0.0)
+    parser.add_argument("--pid-target-speed-kmh", type=float, default=0.0)
+    parser.add_argument("--pid-kp", type=float, default=-1.0)
+    parser.add_argument("--pid-ki", type=float, default=-1.0)
+    parser.add_argument("--pid-kd", type=float, default=-1.0)
 
 
 def load_stage1b_config_args(
@@ -63,8 +63,15 @@ def validate_stage1b_runtime_args(args: argparse.Namespace) -> None:
         raise RuntimeError("`stage1_checkpoint` must be defined in the config JSON.")
     if args.flow_steps <= 0:
         raise RuntimeError("`flow_steps` must be > 0.")
-    if args.pid_target_speed_kmh <= 0.0:
-        raise RuntimeError("`pid_target_speed_kmh` must be > 0.")
+    if bool(getattr(args, "include_pid_override", False)):
+        if args.pid_target_speed_kmh <= 0.0:
+            raise RuntimeError("`pid_target_speed_kmh` must be > 0 when `include_pid_override=true`.")
+        if args.pid_kp < 0.0:
+            raise RuntimeError("`pid_kp` must be >= 0 when `include_pid_override=true`.")
+        if args.pid_ki < 0.0:
+            raise RuntimeError("`pid_ki` must be >= 0 when `include_pid_override=true`.")
+        if args.pid_kd < 0.0:
+            raise RuntimeError("`pid_kd` must be >= 0 when `include_pid_override=true`.")
 
 
 def require_stage1b_cuda_device() -> torch.device:

@@ -15,8 +15,6 @@ from ...utils.eval_reporting import (
     validate_eval_reporting_args,
 )
 from ...utils.image_budget import (
-    CANONICAL_IMAGE_MAX_PIXELS,
-    CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
 from ...utils.run_metadata import collect_dataset_view_fingerprint, collect_processor_settings
@@ -37,8 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--max-samples", type=int, default=0)
-    parser.add_argument("--image-min-pixels", type=int, default=CANONICAL_IMAGE_MIN_PIXELS)
-    parser.add_argument("--image-max-pixels", type=int, default=CANONICAL_IMAGE_MAX_PIXELS)
+    parser.add_argument("--image-min-pixels", type=int, default=0)
+    parser.add_argument("--image-max-pixels", type=int, default=0)
     add_eval_reporting_args(parser, include_per_sample_jsonl=False)
     return parser
 

@@ -13,9 +13,9 @@ from typing import Any
 
 from .preflight import init_required_online_wandb
 
-DEFAULT_WANDB_PROJECT = "minipamayo-qwen35"
-DEFAULT_PROGRESS_EVERY_SAMPLES = 25
-DEFAULT_PROGRESS_EVERY_SECONDS = 30.0
+DEFAULT_WANDB_PROJECT = ""
+DEFAULT_PROGRESS_EVERY_SAMPLES = 0
+DEFAULT_PROGRESS_EVERY_SECONDS = 0.0
 
 
 def add_eval_reporting_args(
@@ -64,8 +64,8 @@ def validate_eval_reporting_args(
         raise RuntimeError("`progress_every_samples` must be > 0.")
     if float(args.progress_every_seconds) <= 0.0:
         raise RuntimeError("`progress_every_seconds` must be > 0.")
-    if not str(args.wandb_project):
-        raise RuntimeError("`wandb_project` must not be empty.")
+    _require_non_empty_string_arg(args, "wandb_project")
+    _require_non_empty_string_arg(args, "wandb_run_name")
 
 
 def _now_iso() -> str:
@@ -88,14 +88,6 @@ def _resolve_per_sample_jsonl_path(per_sample_jsonl: str) -> Path | None:
     if per_sample_jsonl:
         return Path(per_sample_jsonl).resolve()
     return None
-
-
-def _default_wandb_run_name(*, stage: str, checkpoint: str, output_json: str) -> str:
-    if output_json:
-        return f"{stage}-{Path(output_json).stem}"
-    if checkpoint:
-        return f"{stage}-{Path(checkpoint).stem}"
-    return stage
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -163,11 +155,7 @@ class EvalReporter:
         output_json = str(getattr(args, "output_json", ""))
         progress_json = _resolve_progress_json_path(str(getattr(args, "progress_json", "")))
         per_sample_jsonl = _resolve_per_sample_jsonl_path(str(getattr(args, "per_sample_jsonl", "")))
-        run_name = str(getattr(args, "wandb_run_name", "")) or _default_wandb_run_name(
-            stage=stage,
-            checkpoint=checkpoint,
-            output_json=output_json,
-        )
+        run_name = str(getattr(args, "wandb_run_name", ""))
         wandb_config = {
             "stage": stage,
             "config_json": str(getattr(args, "config_json", "")),

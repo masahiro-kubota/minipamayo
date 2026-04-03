@@ -15,6 +15,9 @@
     "progress_every_samples": 1,
     "progress_every_seconds": 60,
     "wandb_project": "minipamayo-qwen35",
-    "wandb_run_name": "stage2-infer-ignore-rule-k64-dt01-completion-001-curve"
+    "wandb_run_name": "stage2-infer-ignore-rule-k64-dt01-completion-001-curve",
+    "temperature": 0.6,
+    "top_p": 0.98,
+    "top_k": 0
   }
 }

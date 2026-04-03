@@ -11,6 +11,10 @@
     "image_max_pixels": 196608,
     "output_json": "artifacts/eval/stage1/vlm_ce/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.json",
     "progress_json": "artifacts/eval/stage1/vlm_ce/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.progress.json",
-    "per_sample_jsonl": "artifacts/eval/stage1/vlm_ce/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.per_sample.jsonl"
+    "per_sample_jsonl": "artifacts/eval/stage1/vlm_ce/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.per_sample.jsonl",
+    "progress_every_samples": 25,
+    "progress_every_seconds": 60,
+    "wandb_project": "minipamayo-qwen35",
+    "wandb_run_name": "stage1a-eval-ignore_rule_data_k64_dt01_completion_001_12gb"
   }
 }

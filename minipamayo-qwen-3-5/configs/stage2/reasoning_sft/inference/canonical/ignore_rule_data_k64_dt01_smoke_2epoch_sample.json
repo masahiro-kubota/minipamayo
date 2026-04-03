@@ -11,6 +11,13 @@
     "image_max_pixels": 196608,
     "max_reasoning_tokens": 256,
     "flow_steps": 10,
-    "progress_json": "artifacts/inference/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_smoke_2epoch_sample.progress.json"
+    "progress_json": "artifacts/inference/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_smoke_2epoch_sample.progress.json",
+    "temperature": 0.6,
+    "top_p": 0.98,
+    "top_k": 0,
+    "progress_every_samples": 1,
+    "progress_every_seconds": 60,
+    "wandb_project": "minipamayo-qwen35",
+    "wandb_run_name": "stage2-infer-ignore_rule_data_k64_dt01_smoke_2epoch_sample"
   }
 }
