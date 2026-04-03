@@ -10,6 +10,7 @@ from ..contract.history_tokens import HistoryTokenRegistry, HistoryTrajectoryQua
 from ..contract.prompt import PROMPT_SPECIAL_TOKENS, add_prompt_special_tokens
 from ..contract.task_spec import CanonicalStage1Spec, KappaOnlyStage1Spec, Stage1TaskSpec
 from ..contract.trajectory_tokens import Stage1TokenRegistry
+from ..utils.checkpoint import load_checkpoint
 
 CHECKPOINT_KIND_FULL = "full"
 CHECKPOINT_KIND_MODEL_ONLY = "model_only"
@@ -82,15 +83,6 @@ def build_model_load_kwargs(model_dtype: torch.dtype) -> dict:
         "trust_remote_code": True,
         "attn_implementation": CANONICAL_ATTN_IMPLEMENTATION,
     }
-
-
-def load_checkpoint(path: Path) -> dict:
-    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
-    if not isinstance(checkpoint, dict):
-        raise RuntimeError(f"Checkpoint must deserialize to a dict: {path}")
-    return checkpoint
-
-
 def build_training_token_contract(dataset, processor, task_spec: Stage1TaskSpec):
     history_quantizer = HistoryTrajectoryQuantizer()
     add_prompt_special_tokens(processor.tokenizer)

@@ -1,4 +1,4 @@
-"""Stage 1 dataset contracts plus JSONL helper compatibility exports."""
+"""Shared reasoning-supervised dataset contracts."""
 
 from __future__ import annotations
 
@@ -15,11 +15,14 @@ from ..contract.record_adapter import (
 from ..utils.jsonl import normalize_jsonl_paths, read_jsonl
 
 
-class Stage1JsonlDataset(Dataset):
-    """Returns metadata and saved canonical labels; image decoding is done at training time."""
+class ReasoningSftJsonlDataset(Dataset):
+    """Stage 1 JSONL records with saved canonical actions plus reasoning supervision."""
 
     def __init__(self, jsonl_path: str | Path | list[str] | list[Path], max_samples: int = 0):
-        self.jsonl_paths = normalize_jsonl_paths(jsonl_path, dataset_name="Stage1JsonlDataset")
+        self.jsonl_paths = normalize_jsonl_paths(
+            jsonl_path,
+            dataset_name="ReasoningSftJsonlDataset",
+        )
         if len(self.jsonl_paths) == 1:
             self.jsonl_path = self.jsonl_paths[0]
 
@@ -48,17 +51,19 @@ class Stage1JsonlDataset(Dataset):
             "image_path",
             "action",
             "v0",
-            "dt",
             "gt_waypoints",
-            "command",
+            "dt",
             "ego_history_xyz",
             "ego_history_rot",
+            "reasoning_text",
         ]
         missing_keys = [key for key in required_keys if key not in record]
         if missing_keys:
             raise RuntimeError(
-                "Stage 1 dataset record is missing canonical fields:\n" + "\n".join(missing_keys)
+                "Reasoning SFT dataset record is missing canonical fields:\n"
+                + "\n".join(missing_keys)
             )
+
         ego_history_xyz, ego_history_rot = canonicalize_history_sample_tensors(
             torch.tensor(record["ego_history_xyz"], dtype=torch.float32),
             torch.tensor(record["ego_history_rot"], dtype=torch.float32),
@@ -70,30 +75,52 @@ class Stage1JsonlDataset(Dataset):
             )
         else:
             ego_future_xyz, ego_future_rot = derive_future_tensors_from_global_poses(record)
-        return {
-            "sample_id": record["sample_id"],
-            "image_path": str(root_dir / record["image_path"]),
+        sample = {
+            "sample_id": str(record["sample_id"]),
+            "image_path": str(root_dir / str(record["image_path"])),
             "action": saved_action_tensor_from_record(record),
             "v0": torch.tensor(record["v0"], dtype=torch.float32),
-            "dt": torch.tensor(record["dt"], dtype=torch.float32),
             "gt_waypoints": torch.tensor(record["gt_waypoints"], dtype=torch.float32),
+            "dt": float(record["dt"]),
             "ego_history_xyz": ego_history_xyz,
             "ego_history_rot": ego_history_rot,
             "ego_future_xyz": ego_future_xyz,
             "ego_future_rot": ego_future_rot,
-            "command": record["command"],
+            "reasoning_text": str(record["reasoning_text"]),
         }
+        if "command" in record:
+            sample["command"] = str(record["command"])
+        if "planner_state" in record:
+            sample["planner_state"] = str(record["planner_state"])
+        if "decision_longitudinal" in record:
+            sample["decision_longitudinal"] = str(record["decision_longitudinal"])
+        if "decision_lateral" in record:
+            sample["decision_lateral"] = str(record["decision_lateral"])
+        return sample
 
 
-def stage1_collate(samples: list[dict]) -> dict:
-    return {
+def reasoning_sft_collate(samples: list[dict]) -> dict:
+    batch = {
         "sample_id": [sample["sample_id"] for sample in samples],
         "image_path": [sample["image_path"] for sample in samples],
         "action": torch.stack([sample["action"] for sample in samples], dim=0),
         "v0": torch.stack([sample["v0"] for sample in samples], dim=0),
-        "dt": torch.stack([sample["dt"] for sample in samples], dim=0),
         "gt_waypoints": torch.stack([sample["gt_waypoints"] for sample in samples], dim=0),
         "ego_history_xyz": torch.stack([sample["ego_history_xyz"] for sample in samples], dim=0),
         "ego_history_rot": torch.stack([sample["ego_history_rot"] for sample in samples], dim=0),
-        "command": [sample["command"] for sample in samples],
+        "ego_future_xyz": torch.stack([sample["ego_future_xyz"] for sample in samples], dim=0),
+        "ego_future_rot": torch.stack([sample["ego_future_rot"] for sample in samples], dim=0),
+        "dt": [sample["dt"] for sample in samples],
+        "reasoning_text": [sample["reasoning_text"] for sample in samples],
     }
+    optional_keys = [
+        "command",
+        "planner_state",
+        "decision_longitudinal",
+        "decision_lateral",
+    ]
+    for key in optional_keys:
+        if any(key in sample for sample in samples):
+            batch[key] = [sample.get(key, "") for sample in samples]
+    return batch
+

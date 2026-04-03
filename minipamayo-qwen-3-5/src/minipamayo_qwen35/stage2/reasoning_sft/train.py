@@ -15,7 +15,7 @@ from pathlib import Path
 import torch
 
 from ...contract.sequence_layout import STAGE2_PROMPT_CONTRACT, STAGE2_TARGET_LAYOUT
-from ...stage1.stage1_train_runtime import (
+from ...utils.train_runtime import (
     format_gib,
     log_gpu_preflight,
     maybe_wandb_finish,

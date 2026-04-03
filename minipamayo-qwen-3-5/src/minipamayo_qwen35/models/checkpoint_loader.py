@@ -12,7 +12,8 @@ import transformers.models.qwen3_5.modeling_qwen3_5 as qwen35_modeling
 from ..config import AlpamayoR1Config
 from ..models.alpamayo_r1 import AlpamayoR1
 from ..models.base_model import SPECIAL_TOKENS, TRAJ_TOKEN
-from ..stage1.stage1a_components import load_checkpoint, load_components
+from ..stage1.stage1a_components import load_components
+from ..utils.checkpoint import load_checkpoint
 
 
 def _resolve_reasoning_vla_dtype(dtype_name: str) -> str:

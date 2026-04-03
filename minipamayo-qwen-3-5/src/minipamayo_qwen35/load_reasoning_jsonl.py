@@ -14,7 +14,7 @@ from .contract.record_adapter import (
     canonicalize_future_sample_tensors,
     derive_future_tensors_from_global_poses,
 )
-from .stage1.dataset import normalize_jsonl_paths, read_jsonl
+from .utils.jsonl import normalize_jsonl_paths, read_jsonl
 
 
 def _read_sample_record(
