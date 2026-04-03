@@ -9,19 +9,20 @@ from pathlib import Path
 
 import torch
 
-from ....utils.image_budget import (
+from ...utils.checkpoint import load_checkpoint
+from ...utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
-from ....utils.checkpoint import load_checkpoint
-from ....utils.train_runtime import format_gib, set_seed
-from ..cli import parse_stage3_json_only_args, resolve_stage3_device
-from ..common import CANONICAL_STAGE3_POLICY_OUTPUT_CONTRACT
-from ..dataset import Stage3PostTrainingDataset, build_stage3_dataloader
-from ..rewards import RewardWeights, build_reasoning_reward_scorer
-from ..rollout import generate_grouped_rollouts, load_stage3_rollout_bundle
-from ..runtime import sample_view_from_batch, score_stage3_rollout, write_json
+from ...utils.train_runtime import format_gib, set_seed
+from .cli import parse_stage3_json_only_args, resolve_stage3_device
+from .common import CANONICAL_STAGE3_POLICY_OUTPUT_CONTRACT
+from .dataset import Stage3PostTrainingDataset, build_stage3_dataloader
+from .bundle import load_stage3_rollout_bundle
+from .rewards import RewardWeights, build_reasoning_reward_scorer
+from .runtime import sample_view_from_batch, score_stage3_rollout, write_json
+from .sampler import generate_grouped_rollouts
 
 CONFIG_PATH_KEYS = {
     "checkpoint",
@@ -225,3 +226,10 @@ def main() -> None:
     write_json(save_dir / "summary.json", summary)
     write_json(save_dir / "samples.json", sample_rows)
     print(json.dumps(summary, ensure_ascii=False))
+
+
+__all__ = ["build_parser", "parse_args", "main"]
+
+
+if __name__ == "__main__":
+    main()

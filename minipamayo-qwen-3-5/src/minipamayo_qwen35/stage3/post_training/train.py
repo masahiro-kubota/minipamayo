@@ -9,18 +9,18 @@ from pathlib import Path
 
 import torch
 
-from ....utils.image_budget import (
+from ...utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
-from ....utils.preflight import enforce_training_prerequisites
-from ....utils.run_metadata import (
+from ...utils.preflight import enforce_training_prerequisites
+from ...utils.run_metadata import (
     collect_dataset_view_fingerprint,
     collect_git_metadata,
     collect_gpu_info,
 )
-from ....utils.train_runtime import (
+from ...utils.train_runtime import (
     format_gib,
     log_gpu_preflight,
     maybe_wandb_finish,
@@ -28,18 +28,19 @@ from ....utils.train_runtime import (
     set_seed,
     write_run_config,
 )
-from ..common import (
+from .cli import parse_stage3_json_only_args, resolve_stage3_device
+from .common import (
     CANONICAL_STAGE3_POLICY_OUTPUT_CONTRACT,
     STAGE3_REWARD_CONTRACT_V0,
     compute_grpo_loss,
     configure_trainable_policy,
     stage3_checkpoint_payload,
 )
-from ..cli import parse_stage3_json_only_args, resolve_stage3_device
-from ..dataset import build_stage3_train_val_dataloaders
-from ..rewards import RewardWeights, build_reasoning_reward_scorer
-from ..rollout import generate_grouped_rollouts, load_stage3_rollout_bundle
-from ..runtime import sample_view_from_batch, score_stage3_rollout, write_json
+from .dataset import build_stage3_train_val_dataloaders
+from .bundle import load_stage3_rollout_bundle
+from .rewards import RewardWeights, build_reasoning_reward_scorer
+from .runtime import sample_view_from_batch, score_stage3_rollout, write_json
+from .sampler import generate_grouped_rollouts
 
 CONFIG_PATH_KEYS = {
     "stage2_checkpoint",
@@ -301,8 +302,8 @@ def main() -> None:
                 )
                 (loss / args.grad_accum_steps).backward()
 
-                should_step = (
-                    batch_idx % args.grad_accum_steps == 0 or batch_idx == len(train_loader)
+                should_step = batch_idx % args.grad_accum_steps == 0 or batch_idx == len(
+                    train_loader
                 )
                 if should_step:
                     torch.nn.utils.clip_grad_norm_(
@@ -451,3 +452,10 @@ def main() -> None:
     finally:
         if wandb_run is not None:
             maybe_wandb_finish(wandb_run)
+
+
+__all__ = ["build_parser", "parse_args", "main"]
+
+
+if __name__ == "__main__":
+    main()

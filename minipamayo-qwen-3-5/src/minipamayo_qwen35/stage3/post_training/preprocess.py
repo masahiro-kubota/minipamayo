@@ -7,7 +7,7 @@ import json
 import random
 from pathlib import Path
 
-from ....utils.jsonl import read_jsonl
+from ...utils.jsonl import read_jsonl
 
 
 def select_curated_records(
@@ -70,6 +70,9 @@ def main() -> None:
                 "disagreement_score": float(record.get("disagreement_score", 0.0)),
             }
             f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+__all__ = ["build_parser", "main", "select_curated_records"]
 
 
 if __name__ == "__main__":

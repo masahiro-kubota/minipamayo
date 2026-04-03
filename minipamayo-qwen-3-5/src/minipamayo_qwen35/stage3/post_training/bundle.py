@@ -9,9 +9,9 @@ from typing import Any
 
 import torch
 
-from ....models.checkpoint_loader import load_stage2_inference_bundle
-from ....utils.checkpoint import load_checkpoint
-from ..common import freeze_model, validate_stage2_policy_contract
+from ...models.checkpoint_loader import load_stage2_inference_bundle
+from ...utils.checkpoint import load_checkpoint
+from .common import freeze_model, validate_stage2_policy_contract
 
 
 @dataclass
@@ -84,3 +84,6 @@ def load_stage3_rollout_bundle(
         model_dtype=_infer_model_dtype(policy_model),
         device=device,
     )
+
+
+__all__ = ["Stage3RolloutBundle", "load_stage3_rollout_bundle"]

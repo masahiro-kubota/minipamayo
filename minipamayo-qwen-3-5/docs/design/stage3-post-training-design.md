@@ -250,7 +250,7 @@ Stage3 の損失は論文 Sec. 5.3.1 に合わせて group-relative で扱いま
 論文どおり、large reasoning model critic を前提にします。
 
 ```text
-rewards/reasoning.py
+rewards.py
 ```
 
 想定 API:
@@ -262,7 +262,7 @@ score_reasoning(sample, predicted_reasoning) -> float
 ### 2. reasoning-action consistency reward
 
 ```text
-rewards/consistency.py
+rewards.py
 ```
 
 想定 API:
@@ -274,7 +274,7 @@ score_consistency(sample, predicted_reasoning, predicted_traj) -> float
 ### 3. trajectory quality reward
 
 ```text
-rewards/trajectory.py
+rewards.py
 ```
 
 想定 API:
@@ -288,7 +288,7 @@ score_trajectory(sample, predicted_traj) -> dict[str, float]
 ### 4. reward aggregation
 
 ```text
-rewards/aggregate.py
+rewards.py
 ```
 
 役割:
@@ -311,8 +311,8 @@ rewards/aggregate.py
 ここは train loop と分けて、
 
 ```text
-curation/disagreement.py
-curation/build_manifest.py
+disagreement.py
+preprocess.py
 ```
 
 のような preprocess path に置きます。
@@ -325,33 +325,18 @@ canonical Stage3 は次のレイアウトで作り直します。
 src/minipamayo_qwen35/stage3/
   post_training/
     __init__.py
+    cli.py
+    bundle.py
+    parser.py
+    sampler.py
+    rewards.py
+    disagreement.py
+    preprocess.py
     dataset.py
     common.py
-    rollout/
-      __init__.py
-      bundle.py
-      sampler.py
-      parser.py
-    rewards/
-      __init__.py
-      reasoning.py
-      consistency.py
-      trajectory.py
-      aggregate.py
-    curation/
-      __init__.py
-      disagreement.py
-      build_manifest.py
-    train/
-      __init__.py
-      __main__.py
-      canonical.py
-      runner.py
-    eval/
-      __init__.py
-      __main__.py
-      canonical.py
-      runner.py
+    runtime.py
+    train.py
+    eval.py
 ```
 
 ## 各ディレクトリの責務
@@ -362,7 +347,7 @@ src/minipamayo_qwen35/stage3/
 - base sample は Stage2 reasoning dataset contract を使う
 - Stage3 固有の dataset split / filter だけを持つ
 
-### `rollout/bundle.py`
+### `bundle.py`
 
 - trainable policy
 - frozen reference policy
@@ -372,14 +357,14 @@ src/minipamayo_qwen35/stage3/
 
 ここで現在 `stage2/reasoning_sft/wrapper.py` にある wrapper assembly を shared 化する。
 
-### `rollout/sampler.py`
+### `sampler.py`
 
 - grouped rollout generation
 - logprob collection
 - reference logprob collection
 - decoded trajectory generation
 
-### `rollout/parser.py`
+### `parser.py`
 
 - generated tokens から `Reason` と `a` を分ける
 - invalid rollout の扱いを canonical にする
@@ -387,21 +372,21 @@ src/minipamayo_qwen35/stage3/
 注意:
 - 既存 `core/rollout_parser.py` は古い sequence contract 前提なので再利用しない
 
-### `rewards/*`
+### `rewards.py`
 
 - reasoning reward
 - consistency reward
 - trajectory reward
 - aggregate
 
-の 4 分割にする。
+の 4 コンポーネントを 1 ファイルにまとめる。
 
-### `curation/*`
+### `disagreement.py` / `preprocess.py`
 
 - disagreement-based data mining
 - RL training manifest 生成
 
-### `train/runner.py`
+### `train.py`
 
 責務は以下に限定する。
 
@@ -411,7 +396,7 @@ src/minipamayo_qwen35/stage3/
 - GRPO loss
 - optimizer / checkpoint / logging
 
-### `eval/runner.py`
+### `eval.py`
 
 最低限これを出す。
 
@@ -426,11 +411,11 @@ src/minipamayo_qwen35/stage3/
 
 以下は再利用しません。
 
-- `stage3/post_training/train/runner.py`
-- `stage3/post_training/eval/runner.py`
 - `stage3/post_training/core/trajectory_decoder.py`
 - `stage3/post_training/core/rollout_parser.py`
-- `stage3/post_training/*/experiments/synthetic_reasoning*`
+- `stage3/post_training/rollout/*`
+- `stage3/post_training/rewards/*`
+- `stage3/post_training/curation/*`
 
 理由:
 - 論文の reward 設計と一致しない
@@ -466,23 +451,21 @@ v1 では safety reward 用に次を追加する。
 ### Phase 1: rollout-only skeleton
 
 - `dataset.py`
-- `rollout/bundle.py`
-- `rollout/sampler.py`
-- `rollout/parser.py`
+- `bundle.py`
+- `sampler.py`
+- `parser.py`
 
 を実装し、reward なしで grouped rollout ができることを確認する。
 
 ### Phase 2: reward v0
 
-- `rewards/consistency.py`
-- `rewards/trajectory.py` の `L2 + jerk`
-- `rewards/aggregate.py`
+- `rewards.py` の consistency / trajectory / aggregate helper
 
 を入れる。
 
 ### Phase 3: reasoning critic
 
-- `rewards/reasoning.py`
+- `rewards.py` の reasoning helper
 - external LRM adapter
 
 を入れる。

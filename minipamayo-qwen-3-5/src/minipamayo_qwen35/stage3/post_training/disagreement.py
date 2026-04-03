@@ -36,3 +36,11 @@ def compute_disagreement_score(
     policy_dist = policy_distribution_from_logprobs(policy_logprob_sums)
     reward_dist = reward_boltzmann_distribution(rewards, reward_beta)
     return float(js_divergence(policy_dist, reward_dist).item())
+
+
+__all__ = [
+    "compute_disagreement_score",
+    "js_divergence",
+    "policy_distribution_from_logprobs",
+    "reward_boltzmann_distribution",
+]

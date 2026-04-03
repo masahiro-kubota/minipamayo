@@ -1,7 +1,0 @@
-"""Run canonical Stage 3 evaluation."""
-
-from .canonical import main
-
-
-if __name__ == "__main__":
-    main()

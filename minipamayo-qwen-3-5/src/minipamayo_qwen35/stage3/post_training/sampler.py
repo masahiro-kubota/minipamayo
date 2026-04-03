@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
-from typing import Any
 
 import torch
 
-from ....contract.prompt import build_reasoning_prompt_text
-from ....models.prompt_inputs import (
+from ...contract.prompt import build_reasoning_prompt_text
+from ...models.prompt_inputs import (
     append_token_to_model_inputs,
     model_forward_inputs,
     prepare_prompt_inputs_with_history,
 )
-from ..common import clone_model_inputs, maybe_autocast
+from .common import clone_model_inputs, maybe_autocast
 from .parser import ParsedStage3Sequence, parse_generated_sequence
 
 
@@ -111,7 +110,11 @@ def prepare_stage3_prompt_inputs(bundle, batch: dict) -> dict:
     )
 
 
-def _decode_motion_rollout(bundle, batch: dict, parsed: ParsedStage3Sequence) -> tuple[torch.Tensor, torch.Tensor]:
+def _decode_motion_rollout(
+    bundle,
+    batch: dict,
+    parsed: ParsedStage3Sequence,
+) -> tuple[torch.Tensor, torch.Tensor]:
     action_token_tensor = torch.tensor(
         [parsed.padded_action_token_ids],
         device=bundle.device,
@@ -186,3 +189,6 @@ def generate_grouped_rollouts(
             )
         )
     return rollouts
+
+
+__all__ = ["Stage3Rollout", "generate_grouped_rollouts", "prepare_stage3_prompt_inputs"]

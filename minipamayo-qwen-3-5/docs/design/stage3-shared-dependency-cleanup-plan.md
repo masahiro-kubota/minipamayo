@@ -4,21 +4,21 @@
 
 現状の主な直接依存は以下。
 
-- [bundle.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/rollout/bundle.py)
+- [bundle.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/bundle.py)
   - `stage1.vlm_ce.train.load_checkpoint`
   - `stage2.reasoning_sft.wrapper.load_stage2_inference_bundle`
-- [sampler.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/rollout/sampler.py)
+- [sampler.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/sampler.py)
   - `stage1.vlm_ce.train.append_token_to_model_inputs`
   - `stage1.vlm_ce.train.model_forward_inputs`
   - `stage1.vlm_ce.train.prepare_prompt_inputs_with_history`
-- [train/runner.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/train/runner.py)
+- [train.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/train.py)
   - `stage1.vlm_ce.train.format_gib`
   - `stage1.vlm_ce.train.log_gpu_preflight`
   - `stage1.vlm_ce.train.maybe_wandb_finish`
   - `stage1.vlm_ce.train.maybe_wandb_log`
   - `stage1.vlm_ce.train.set_seed`
   - `stage1.vlm_ce.train.write_run_config`
-- [eval/runner.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/eval/runner.py)
+- [eval.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/eval.py)
   - `stage1.vlm_ce.train.format_gib`
   - `stage1.vlm_ce.train.load_checkpoint`
   - `stage1.vlm_ce.train.set_seed`
@@ -26,7 +26,7 @@
   - `stage1.dataset.read_jsonl`
   - `stage2.reasoning_sft.dataset.ReasoningSftJsonlDataset`
   - `stage2.reasoning_sft.dataset.reasoning_sft_collate`
-- [build_manifest.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/curation/build_manifest.py)
+- [preprocess.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/preprocess.py)
   - `stage1.dataset.read_jsonl`
 
 `stage3` は今すぐ使う予定がないため、ここではコード変更は行わず、後でまとめて直すための方針だけを固定する。
@@ -57,7 +57,7 @@
 - [stage1/dataset.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/dataset.py)
 - [stage2/reasoning_sft/dataset.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage2/reasoning_sft/dataset.py)
 - [stage3/post_training/dataset.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/dataset.py)
-- [stage3/post_training/curation/build_manifest.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/curation/build_manifest.py)
+- [stage3/post_training/preprocess.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/preprocess.py)
 - [reasoning/synthetic_dataset.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/reasoning/synthetic_dataset.py)
 
 狙い:
@@ -108,8 +108,8 @@
 
 - [stage1/vlm_ce/train/runner.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/vlm_ce/train/runner.py)
 - [stage2/reasoning_sft/wrapper.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage2/reasoning_sft/wrapper.py)
-- [stage3/post_training/rollout/bundle.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/rollout/bundle.py)
-- [stage3/post_training/eval/runner.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/eval/runner.py)
+- [stage3/post_training/bundle.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/bundle.py)
+- [stage3/post_training/eval.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/eval.py)
 
 狙い:
 
@@ -137,8 +137,8 @@
 置き換え先:
 
 - [stage2/reasoning_sft/train/runner.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage2/reasoning_sft/train/runner.py)
-- [stage3/post_training/train/runner.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/train/runner.py)
-- [stage3/post_training/eval/runner.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/eval/runner.py)
+- [stage3/post_training/train.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/train.py)
+- [stage3/post_training/eval.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/eval.py)
 
 狙い:
 
@@ -168,7 +168,7 @@
 
 - [stage1/vlm_ce/train/runner.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/vlm_ce/train/runner.py)
 - [stage1/vlm_ce/eval/runner.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage1/vlm_ce/eval/runner.py)
-- [stage3/post_training/rollout/sampler.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/rollout/sampler.py)
+- [stage3/post_training/sampler.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/sampler.py)
 
 狙い:
 
@@ -192,7 +192,7 @@
 置き換え先:
 
 - [stage2/reasoning_sft/inference/runner.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage2/reasoning_sft/inference/runner.py)
-- [stage3/post_training/rollout/bundle.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/rollout/bundle.py)
+- [stage3/post_training/bundle.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/bundle.py)
 - [test_inference.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/test_inference.py)
 
 狙い:
@@ -210,7 +210,7 @@
 
 現状:
 
-- [stage3/post_training/rollout/sampler.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/rollout/sampler.py)
+- [stage3/post_training/sampler.py](/home/masa/minipamayo/minipamayo-qwen-3-5/src/minipamayo_qwen35/stage3/post_training/sampler.py)
   は `bundle.wrapper.traj_tokenizer.decode(...)` を使っている
 
 問題:

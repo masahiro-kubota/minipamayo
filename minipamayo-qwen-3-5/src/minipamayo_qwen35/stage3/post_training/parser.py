@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ....reasoning.synthetic import normalize_label
+from ...reasoning.synthetic import normalize_label
 
 
 def parse_decision_from_text(text: str) -> dict[str, str] | None:
@@ -116,3 +116,11 @@ def parse_generated_sequence(
         valid=not issues,
         issues=tuple(issues),
     )
+
+
+__all__ = [
+    "ParsedStage3Sequence",
+    "decode_action_token_ids",
+    "parse_decision_from_text",
+    "parse_generated_sequence",
+]

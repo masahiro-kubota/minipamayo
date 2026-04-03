@@ -5,9 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .rewards import RewardWeights, aggregate_rewards
-from .rewards.consistency import score_consistency
-from .rewards.trajectory import score_trajectory
+from .rewards import RewardWeights, aggregate_rewards, score_consistency, score_trajectory
 
 
 def sample_view_from_batch(batch: dict) -> dict:
