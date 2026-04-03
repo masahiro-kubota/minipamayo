@@ -166,6 +166,7 @@ runner の責務:
 - `Stage1B` は hard gate。`MAX_STAGE1B_ATTEMPTS=0` のとき無制限 retry、正数のときその回数まで retry する
 - `Stage2 train` も hard gate。`MAX_STAGE2_ATTEMPTS=0` のとき無制限 retry、正数のときその回数まで retry する
 - `START_STAGE=stage1b` を指定した場合、`Stage1A` の既存 `best.pt` / `final.pt` / `summary.json` を前提に、`Stage1B -> Stage2` だけ fresh rerun する
+- `START_STAGE=stage1b` では、`Stage1B train` の前に `Stage1A curve eval` を 1 回流してから進める
 - `START_STAGE=stage2` を指定した場合、`Stage1A` / `Stage1B` の既存 artifact を前提に、eval を含めて `Stage2` 以降だけ fresh rerun する
 
 固定 path:

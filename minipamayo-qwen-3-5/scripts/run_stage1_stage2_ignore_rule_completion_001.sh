@@ -389,15 +389,15 @@ main() {
         return 21
       }
 
-      stage1b_retry_loop || {
-        write_run_status "failed" 30
-        return 30
-      }
-
       run_stage \
         "stage1a_curve_eval" \
         uv run python -m minipamayo_qwen35.stage1.vlm_ce.eval \
           --config-json "${STAGE1A_EVAL_CONFIG}" || log_line "non_blocking_failure stage=stage1a_curve_eval"
+
+      stage1b_retry_loop || {
+        write_run_status "failed" 30
+        return 30
+      }
 
       run_stage \
         "stage1b_curve_eval" \
