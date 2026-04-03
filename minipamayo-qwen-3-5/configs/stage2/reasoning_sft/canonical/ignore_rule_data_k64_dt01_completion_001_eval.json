@@ -9,6 +9,7 @@
     "num_workers": 0,
     "max_samples": 0,
     "image_min_pixels": 163840,
-    "image_max_pixels": 196608
+    "image_max_pixels": 196608,
+    "progress_json": "artifacts/eval/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_12gb.progress.json"
   }
 }

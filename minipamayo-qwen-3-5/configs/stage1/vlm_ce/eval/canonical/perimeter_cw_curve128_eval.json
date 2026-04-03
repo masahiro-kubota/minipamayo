@@ -9,6 +9,8 @@
     "show_samples": 10,
     "image_min_pixels": 163840,
     "image_max_pixels": 196608,
-    "output_json": "artifacts/eval/stage1/vlm_ce/canonical/perimeter_cw_curve128_eval.json"
+    "output_json": "artifacts/eval/stage1/vlm_ce/canonical/perimeter_cw_curve128_eval.json",
+    "progress_json": "artifacts/eval/stage1/vlm_ce/canonical/perimeter_cw_curve128_eval.progress.json",
+    "per_sample_jsonl": "artifacts/eval/stage1/vlm_ce/canonical/perimeter_cw_curve128_eval.per_sample.jsonl"
   }
 }

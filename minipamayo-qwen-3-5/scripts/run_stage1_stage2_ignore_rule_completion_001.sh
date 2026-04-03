@@ -46,6 +46,7 @@ STAGE2_BEST="${STAGE2_SAVE_DIR}/best.pt"
 
 STAGE1A_EVAL_OUTPUT="${PROJECT_ROOT}/artifacts/eval/stage1/vlm_ce/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.json"
 STAGE1A_EVAL_PROGRESS="${PROJECT_ROOT}/artifacts/eval/stage1/vlm_ce/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.progress.json"
+STAGE1A_EVAL_PER_SAMPLE="${PROJECT_ROOT}/artifacts/eval/stage1/vlm_ce/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.per_sample.jsonl"
 STAGE1B_EVAL_OUTPUT="${PROJECT_ROOT}/artifacts/eval/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.json"
 STAGE1B_EVAL_PROGRESS="${PROJECT_ROOT}/artifacts/eval/stage1/expert_cfm/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval_safe.progress.json"
 STAGE2_EVAL_OUTPUT="${PROJECT_ROOT}/artifacts/eval/stage2/reasoning_sft/canonical/ignore_rule_data_k64_dt01_completion_001_curve_eval.json"
@@ -224,6 +225,7 @@ prepare_attempt_scoped_artifacts() {
   fi
   backup_path_if_exists "${STAGE1A_EVAL_OUTPUT}" || true
   backup_path_if_exists "${STAGE1A_EVAL_PROGRESS}" || true
+  backup_path_if_exists "${STAGE1A_EVAL_PER_SAMPLE}" || true
   if [ "${START_STAGE}" = "stage1a" ] || [ "${START_STAGE}" = "stage1b" ]; then
     backup_path_if_exists "${STAGE1B_SAVE_DIR}" || true
   fi

@@ -11,9 +11,10 @@
     "num_workers": 2,
     "flow_steps": 10,
     "include_pid_override": true,
-    "pid_target_speed_kmh": 24.0,
-    "pid_kp": 1.0,
+    "pid_target_speed_kmh": 24,
+    "pid_kp": 1,
     "pid_ki": 0.05,
-    "pid_kd": 0.0
+    "pid_kd": 0,
+    "progress_json": "artifacts/eval/stage1/expert_cfm/canonical/perimeter_cw_curve128_eval.progress.json"
   }
 }

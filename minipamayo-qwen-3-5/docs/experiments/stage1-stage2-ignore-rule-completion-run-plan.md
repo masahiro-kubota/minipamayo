@@ -142,8 +142,8 @@ curve sample inference:
 - train / eval / inference の checkpoint と出力 artifact は、すべて `completion_001` 専用 config を使い、共有 canonical save dir には書かない
 - `Stage2 train preprocess` は毎回 fresh に再生成する。出力先は `datasets/processed/stage2/reasoning_sft/ignore_rule_data_k64_dt01_completion_001/<run>/samples_reasoning_sft.jsonl`
 - `Stage2 curve eval preprocess` も毎回 fresh に再生成する。出力先は `datasets/processed/stage2/reasoning_sft/ignore_rule_data_k64_dt01_completion_001_curve_eval/perimeter_cw_holdout_v1/samples_reasoning_sft.jsonl`
-- fresh run を始める前に、対象 `save_dir` と eval / inference の `output_json`, `progress_json` がすでに存在する場合は削除ではなく退避する。推奨は `<path>_bak_<YYYYMMDD_HHMMSS>` へ rename
-- curve eval / curve inference は `output_json` に加えて `progress_json` を出し、W&B online logging を必須にする。W&B init 失敗は command failure と同じ扱いにする
+- fresh run を始める前に、対象 `save_dir` と eval / inference の `output_json`, `progress_json` がすでに存在する場合は削除ではなく退避する。`Stage1A curve eval` はこれに加えて `per_sample_jsonl` も退避対象に含める。推奨は `<path>_bak_<YYYYMMDD_HHMMSS>` へ rename
+- curve eval / curve inference は `output_json` と `progress_json` の config 明示を必須にし、W&B online logging も必須にする。`Stage1A curve eval` は `per_sample_jsonl` の config 明示も必須にする。W&B init 失敗や path 設定漏れは command failure と同じ扱いにする
 - `Stage1A`, `Stage1B`, `Stage2 train` は retry 時にも同じ config を使い、毎回 partial save dir を退避してから rerun する
 - この plan は fresh-only。in-place resume は定義しない。再実行は退避後の fresh rerun として扱う
 

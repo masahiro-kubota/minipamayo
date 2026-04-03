@@ -40,7 +40,26 @@ def reporting_path_keys(*, include_per_sample_jsonl: bool) -> set[str]:
     return keys
 
 
-def validate_eval_reporting_args(args: argparse.Namespace) -> None:
+def _require_non_empty_string_arg(args: argparse.Namespace, arg_name: str) -> None:
+    if not hasattr(args, arg_name):
+        raise RuntimeError(f"`{arg_name}` must be defined on the argparse namespace.")
+    if not str(getattr(args, arg_name, "")):
+        raise RuntimeError(f"`{arg_name}` must be defined in the config JSON.")
+
+
+def validate_eval_reporting_args(
+    args: argparse.Namespace,
+    *,
+    require_output_json: bool = True,
+    require_progress_json: bool = True,
+    require_per_sample_jsonl: bool = False,
+) -> None:
+    if require_output_json:
+        _require_non_empty_string_arg(args, "output_json")
+    if require_progress_json:
+        _require_non_empty_string_arg(args, "progress_json")
+    if require_per_sample_jsonl:
+        _require_non_empty_string_arg(args, "per_sample_jsonl")
     if int(args.progress_every_samples) <= 0:
         raise RuntimeError("`progress_every_samples` must be > 0.")
     if float(args.progress_every_seconds) <= 0.0:
@@ -53,12 +72,15 @@ def _now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def _resolve_progress_json_path(progress_json: str, output_json: str) -> Path | None:
+def _resolve_optional_path(path_value: str) -> Path | None:
+    if path_value:
+        return Path(path_value).resolve()
+    return None
+
+
+def _resolve_progress_json_path(progress_json: str) -> Path | None:
     if progress_json:
         return Path(progress_json).resolve()
-    if output_json:
-        output_path = Path(output_json).resolve()
-        return output_path.with_name(f"{output_path.stem}.progress.json")
     return None
 
 
@@ -139,7 +161,7 @@ class EvalReporter:
     ) -> "EvalReporter":
         validate_eval_reporting_args(args)
         output_json = str(getattr(args, "output_json", ""))
-        progress_json = _resolve_progress_json_path(str(getattr(args, "progress_json", "")), output_json)
+        progress_json = _resolve_progress_json_path(str(getattr(args, "progress_json", "")))
         per_sample_jsonl = _resolve_per_sample_jsonl_path(str(getattr(args, "per_sample_jsonl", "")))
         run_name = str(getattr(args, "wandb_run_name", "")) or _default_wandb_run_name(
             stage=stage,
@@ -167,7 +189,7 @@ class EvalReporter:
         return cls(
             stage=stage,
             total_samples=total_samples,
-            output_json_path=Path(output_json).resolve() if output_json else None,
+            output_json_path=_resolve_optional_path(output_json),
             progress_json_path=progress_json,
             per_sample_jsonl_path=per_sample_jsonl,
             progress_every_samples=int(args.progress_every_samples),

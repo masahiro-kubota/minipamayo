@@ -154,6 +154,7 @@
 - Config:
 - Output json:
 - Progress json:
+- Per-sample jsonl:
 - Dataset:
   `perimeter_cw curve_holdout`, `569 samples`
 - Key metrics:

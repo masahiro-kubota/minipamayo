@@ -99,7 +99,7 @@ def parse_args() -> argparse.Namespace:
     if not args.test_jsonl:
         raise RuntimeError("`test_jsonl` must be defined in the config JSON.")
     validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
-    validate_eval_reporting_args(args)
+    validate_eval_reporting_args(args, require_per_sample_jsonl=True)
     return args
 
 
