@@ -10,6 +10,8 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
+import torch
+
 GPU_OTHER_USED_WARN_MIB = 1024
 GPU_FREE_WARN_MIB = 4096
 EXPECTED_CUDA_TOOLKIT_VERSION = "12.8"
@@ -120,6 +122,25 @@ def enforce_runtime_prerequisites(
 ) -> Path:
     require_expected_cuda_toolkit()
     return require_clean_git_worktree(git_cwd)
+
+
+def resolve_runtime_device(device_name: str) -> torch.device:
+    if device_name == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return torch.device(device_name)
+
+
+def require_cuda_device(
+    *,
+    device_name: str,
+    git_cwd: str | Path | None = None,
+    error_message: str,
+) -> torch.device:
+    device = resolve_runtime_device(device_name)
+    if device.type != "cuda" or not torch.cuda.is_available():
+        raise RuntimeError(error_message)
+    enforce_runtime_prerequisites(git_cwd=git_cwd)
+    return device
 
 
 def _run_nvidia_smi_query(query_target: str, fields: list[str]) -> list[dict[str, str]]:

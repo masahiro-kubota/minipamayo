@@ -10,14 +10,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import torch
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset
 
-from ...stage1.dataset import normalize_jsonl_paths, read_jsonl
-from ...contract.record_adapter import (
-    derive_future_tensors_from_global_poses,
-    saved_action_tensor_from_record,
+from ...stage1.dataset import (
+    CANONICAL_SHARED_RECORD_KEYS,
+    build_canonical_record_common_sample,
+    load_jsonl_record_bundle,
+    require_record_keys,
 )
-from ...contract.history_tokens import canonicalize_history_sample_tensors
+from ...stage1.stage1_train_data import build_jsonl_dataloader, build_jsonl_train_val_dataloaders
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -27,26 +28,13 @@ class ReasoningSftJsonlDataset(Dataset):
     """Stage 1 JSONL records with saved canonical actions plus reasoning supervision."""
 
     def __init__(self, jsonl_path: str | Path | list[str] | list[Path], max_samples: int = 0):
-        self.jsonl_paths = normalize_jsonl_paths(
+        self.jsonl_paths, self.records, self.record_root_dirs = load_jsonl_record_bundle(
             jsonl_path,
             dataset_name="ReasoningSftJsonlDataset",
+            max_samples=max_samples,
         )
         if len(self.jsonl_paths) == 1:
             self.jsonl_path = self.jsonl_paths[0]
-
-        records: list[dict] = []
-        record_root_dirs: list[Path] = []
-        for path in self.jsonl_paths:
-            source_records = read_jsonl(path)
-            records.extend(source_records)
-            record_root_dirs.extend([path.parent] * len(source_records))
-
-        if max_samples > 0:
-            records = records[:max_samples]
-            record_root_dirs = record_root_dirs[:max_samples]
-
-        self.records = records
-        self.record_root_dirs = record_root_dirs
 
     def __len__(self) -> int:
         return len(self.records)
@@ -54,48 +42,15 @@ class ReasoningSftJsonlDataset(Dataset):
     def __getitem__(self, index: int) -> dict:
         record = self.records[index]
         root_dir = self.record_root_dirs[index]
-        required_keys = [
-            "sample_id",
-            "image_path",
-            "action",
-            "v0",
-            "gt_waypoints",
-            "dt",
-            "ego_history_xyz",
-            "ego_history_rot",
-            "reasoning_text",
-        ]
-        missing_keys = [key for key in required_keys if key not in record]
-        if missing_keys:
-            raise RuntimeError(
-                "Reasoning SFT dataset record is missing canonical fields:\n"
-                + "\n".join(missing_keys)
-            )
-
-        ego_history_xyz, ego_history_rot = canonicalize_history_sample_tensors(
-            torch.tensor(record["ego_history_xyz"], dtype=torch.float32),
-            torch.tensor(record["ego_history_rot"], dtype=torch.float32),
+        require_record_keys(
+            record,
+            [*CANONICAL_SHARED_RECORD_KEYS, "dt", "reasoning_text"],
+            error_message="Reasoning SFT dataset record is missing canonical fields:",
         )
-        if "ego_future_xyz" in record and "ego_future_rot" in record:
-            ego_future_xyz, ego_future_rot = canonicalize_history_sample_tensors(
-                torch.tensor(record["ego_future_xyz"], dtype=torch.float32),
-                torch.tensor(record["ego_future_rot"], dtype=torch.float32),
-            )
-        else:
-            ego_future_xyz, ego_future_rot = derive_future_tensors_from_global_poses(record)
-        sample = {
-            "sample_id": str(record["sample_id"]),
-            "image_path": str(root_dir / str(record["image_path"])),
-            "action": saved_action_tensor_from_record(record),
-            "v0": torch.tensor(record["v0"], dtype=torch.float32),
-            "gt_waypoints": torch.tensor(record["gt_waypoints"], dtype=torch.float32),
-            "dt": float(record["dt"]),
-            "ego_history_xyz": ego_history_xyz,
-            "ego_history_rot": ego_history_rot,
-            "ego_future_xyz": ego_future_xyz,
-            "ego_future_rot": ego_future_rot,
-            "reasoning_text": str(record["reasoning_text"]),
-        }
+        sample = build_canonical_record_common_sample(record, root_dir=root_dir)
+        sample["sample_id"] = str(sample["sample_id"])
+        sample["dt"] = float(record["dt"])
+        sample["reasoning_text"] = str(record["reasoning_text"])
         if "command" in record:
             sample["command"] = str(record["command"])
         if "planner_state" in record:
@@ -140,14 +95,11 @@ def build_reasoning_sft_dataloader(
     num_workers: int,
     shuffle: bool,
 ) -> DataLoader:
-    return DataLoader(
+    return build_jsonl_dataloader(
         dataset,
         batch_size=batch_size,
-        shuffle=shuffle,
-        drop_last=False,
         num_workers=num_workers,
-        pin_memory=True,
-        persistent_workers=num_workers > 0,
+        shuffle=shuffle,
         collate_fn=reasoning_sft_collate,
     )
 
@@ -162,46 +114,18 @@ def build_stage2_train_val_dataloaders(
     num_workers: int,
     seed: int,
 ) -> tuple[DataLoader, DataLoader | None, int, int]:
-    train_dataset = ReasoningSftJsonlDataset(train_jsonl, max_samples=max_samples)
-    if len(train_dataset) == 0:
-        raise RuntimeError("Training dataset is empty.")
-
-    if val_jsonl:
-        val_dataset = ReasoningSftJsonlDataset(val_jsonl)
-        if len(val_dataset) == 0:
-            raise RuntimeError("Validation dataset is empty.")
-    elif len(train_dataset) >= 2 and val_fraction > 0:
-        val_size = max(1, int(round(len(train_dataset) * val_fraction)))
-        val_size = min(val_size, len(train_dataset) - 1)
-        train_size = len(train_dataset) - val_size
-        generator = torch.Generator().manual_seed(seed)
-        train_dataset, val_dataset = random_split(
-            train_dataset,
-            [train_size, val_size],
-            generator=generator,
-        )
-    else:
-        val_dataset = None
-
-    train_loader = build_reasoning_sft_dataloader(
-        train_dataset,
+    return build_jsonl_train_val_dataloaders(
+        dataset_ctor=ReasoningSftJsonlDataset,
+        collate_fn=reasoning_sft_collate,
+        train_jsonl=train_jsonl,
+        val_jsonl=val_jsonl,
+        train_max_samples=max_samples,
+        val_max_samples=0,
+        val_fraction=val_fraction,
         batch_size=batch_size,
         num_workers=num_workers,
-        shuffle=True,
-    )
-    val_loader = None
-    if val_dataset is not None:
-        val_loader = build_reasoning_sft_dataloader(
-            val_dataset,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            shuffle=False,
-        )
-    return (
-        train_loader,
-        val_loader,
-        len(train_dataset),
-        len(val_dataset) if val_dataset is not None else 0,
+        seed=seed,
+        require_validation_split=False,
     )
 
 

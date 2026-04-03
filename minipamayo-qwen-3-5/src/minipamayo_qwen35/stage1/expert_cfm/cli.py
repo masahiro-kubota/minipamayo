@@ -7,7 +7,7 @@ from pathlib import Path
 
 import torch
 
-from ...utils.preflight import enforce_runtime_prerequisites
+from ...utils.preflight import require_cuda_device
 from ..stage1_json_cli import load_stage1_config_args, parse_stage1_json_only_args
 
 COMMON_CONFIG_PATH_KEYS = {"checkpoint", "stage1_checkpoint", "output_json"}
@@ -75,7 +75,8 @@ def validate_stage1b_runtime_args(args: argparse.Namespace) -> None:
 
 
 def require_stage1b_cuda_device() -> torch.device:
-    if not torch.cuda.is_available():
-        raise RuntimeError("Canonical Stage 1B entrypoints require CUDA.")
-    enforce_runtime_prerequisites(git_cwd=Path(__file__).resolve().parent)
-    return torch.device("cuda")
+    return require_cuda_device(
+        device_name="cuda",
+        git_cwd=Path(__file__).resolve().parent,
+        error_message="Canonical Stage 1B entrypoints require CUDA.",
+    )

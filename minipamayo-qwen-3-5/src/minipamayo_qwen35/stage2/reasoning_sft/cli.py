@@ -8,7 +8,7 @@ from pathlib import Path
 import torch
 
 from ...stage1.stage1_json_cli import load_stage1_config_args, parse_stage1_json_only_args
-from ...utils.preflight import enforce_runtime_prerequisites
+from ...utils.preflight import require_cuda_device, resolve_runtime_device
 
 
 def load_stage2_config_args(
@@ -42,14 +42,12 @@ def parse_stage2_json_only_args(
 
 
 def resolve_stage2_device(device_name: str) -> torch.device:
-    return torch.device(
-        device_name if device_name != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
-    )
+    return resolve_runtime_device(device_name)
 
 
 def require_stage2_cuda_device(*, device_name: str, git_cwd: str | Path, error_message: str) -> torch.device:
-    device = resolve_stage2_device(device_name)
-    if device.type != "cuda":
-        raise RuntimeError(error_message)
-    enforce_runtime_prerequisites(git_cwd=Path(git_cwd))
-    return device
+    return require_cuda_device(
+        device_name=device_name,
+        git_cwd=Path(git_cwd),
+        error_message=error_message,
+    )

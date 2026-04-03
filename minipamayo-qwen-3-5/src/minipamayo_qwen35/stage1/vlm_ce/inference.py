@@ -6,14 +6,12 @@ import argparse
 import json
 from pathlib import Path
 
-import torch
-
 from ...contract.prompt import DEFAULT_SYSTEM_PROMPT, build_stage1_question_user_text
 from ...utils.image_budget import (
     CANONICAL_IMAGE_MAX_PIXELS,
     CANONICAL_IMAGE_MIN_PIXELS,
 )
-from ...utils.preflight import enforce_runtime_prerequisites
+from ...utils.preflight import require_cuda_device
 from ...utils.run_metadata import collect_processor_settings
 from ..checkpoint_completion import require_completed_training_run
 from ..dataset import Stage1JsonlDataset, stage1_collate
@@ -69,12 +67,11 @@ def main() -> None:
         required_summary_keys=["completed_epochs", "best_epoch", "stop_reason"],
         allowed_stop_reasons={"max_epochs", "early_stopping"},
     )
-    device = torch.device(
-        args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
+    device = require_cuda_device(
+        device_name=args.device,
+        git_cwd=Path(__file__).resolve().parent,
+        error_message="Stage 1 Alpamayo-style inference currently expects CUDA.",
     )
-    if device.type != "cuda":
-        raise RuntimeError("Stage 1 Alpamayo-style inference currently expects CUDA.")
-    enforce_runtime_prerequisites(git_cwd=Path(__file__).resolve().parent)
 
     runtime = load_stage1a_runtime(args, device=device)
     checkpoint_path = Path(args.checkpoint)
