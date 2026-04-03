@@ -343,9 +343,32 @@ def main(task_spec: Stage1TaskSpec | None = None) -> None:
                             {
                                 "event": "sample",
                                 "sample_index": sample_index,
+                                "record_sample_index": sample_record_index,
                                 "sample_id": sample_id,
+                                "source_frame_id": source_frame_id,
+                                "image_path": str(batch["image_path"][row_idx]),
                                 "match_tokens": ar_match_count,
                                 "target_dim": target_dim,
+                                "dt": dt,
+                                "command": command,
+                                "planner_state": planner_state,
+                                "ego_pose": {
+                                    "x": float(ego_pose["x"]),
+                                    "y": float(ego_pose["y"]),
+                                    "yaw_deg": float(ego_pose["yaw_deg"]),
+                                },
+                                "gt_action": [float(x) for x in gt_action_tensor.tolist()],
+                                "pred_action": [float(x) for x in pred_action_tensor.tolist()],
+                                "gt_action_bins": [int(x) for x in gt_bins],
+                                "pred_action_bins": [int(x) for x in pred_bins],
+                                "gt_waypoints": [
+                                    [float(point[0]), float(point[1])]
+                                    for point in gt_waypoint_tensor.tolist()
+                                ],
+                                "pred_waypoints": [
+                                    [float(point[0]), float(point[1])]
+                                    for point in pred_waypoint_tensor.tolist()
+                                ],
                                 "ade_m": sample_ade,
                                 "fde_m": sample_fde,
                                 "metrics": {
