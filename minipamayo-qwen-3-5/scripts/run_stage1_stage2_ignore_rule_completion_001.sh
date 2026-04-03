@@ -4,13 +4,14 @@ set -u -o pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CUDA_ENV_SCRIPT="${PROJECT_ROOT}/env/cuda-12.8.sh"
-ATTEMPT_NAME="completion_ignore_rule_full_001"
-SESSION_NAME="ignore-rule-completion-001"
+ATTEMPT_NAME="${ATTEMPT_NAME:-completion_ignore_rule_full_001}"
+SESSION_NAME="${SESSION_NAME:-ignore-rule-completion-001}"
 LOG_ROOT="${PROJECT_ROOT}/artifacts/run_logs/${ATTEMPT_NAME}"
 STATE_DIR="${LOG_ROOT}/state"
 MASTER_LOG="${LOG_ROOT}/master.log"
 EXIT_CODE_FILE="${LOG_ROOT}/run.exitcode"
 RUN_STATUS_FILE="${LOG_ROOT}/run.status.json"
+START_STAGE="${START_STAGE:-stage1a}"
 MAX_STAGE1A_ATTEMPTS="${MAX_STAGE1A_ATTEMPTS:-0}"
 STAGE1A_RETRY_SLEEP_S="${STAGE1A_RETRY_SLEEP_S:-30}"
 MAX_STAGE1B_ATTEMPTS="${MAX_STAGE1B_ATTEMPTS:-0}"
@@ -167,6 +168,18 @@ require_path() {
   return 0
 }
 
+require_stage1a_artifacts() {
+  require_path "${STAGE1A_SUMMARY}" && require_path "${STAGE1A_BEST}" && require_path "${STAGE1A_FINAL}"
+}
+
+require_stage1b_artifacts() {
+  require_path "${STAGE1B_SUMMARY}" && require_path "${STAGE1B_BEST}" && require_path "${STAGE1B_LAST}"
+}
+
+require_stage2_artifacts() {
+  require_path "${STAGE2_SUMMARY}" && require_path "${STAGE2_BEST}"
+}
+
 require_line_count() {
   local path="$1"
   local expected="$2"
@@ -206,10 +219,14 @@ prepare_preprocess_outputs() {
 }
 
 prepare_attempt_scoped_artifacts() {
-  backup_path_if_exists "${STAGE1A_SAVE_DIR}" || true
+  if [ "${START_STAGE}" = "stage1a" ]; then
+    backup_path_if_exists "${STAGE1A_SAVE_DIR}" || true
+  fi
   backup_path_if_exists "${STAGE1A_EVAL_OUTPUT}" || true
   backup_path_if_exists "${STAGE1A_EVAL_PROGRESS}" || true
-  backup_path_if_exists "${STAGE1B_SAVE_DIR}" || true
+  if [ "${START_STAGE}" = "stage1a" ] || [ "${START_STAGE}" = "stage1b" ]; then
+    backup_path_if_exists "${STAGE1B_SAVE_DIR}" || true
+  fi
   backup_path_if_exists "${STAGE1B_EVAL_OUTPUT}" || true
   backup_path_if_exists "${STAGE1B_EVAL_PROGRESS}" || true
   backup_path_if_exists "${STAGE2_SAVE_DIR}" || true
@@ -233,7 +250,7 @@ stage1b_retry_loop() {
         --config-json "${STAGE1B_TRAIN_CONFIG}"
     rc=$?
 
-    if [ "${rc}" -eq 0 ] && require_path "${STAGE1B_SUMMARY}" && require_path "${STAGE1B_BEST}" && require_path "${STAGE1B_LAST}"; then
+    if [ "${rc}" -eq 0 ] && require_stage1b_artifacts; then
       log_line "stage1b_success attempt=${attempt}"
       return 0
     fi
@@ -260,7 +277,7 @@ stage1a_retry_loop() {
         --config-json "${STAGE1A_TRAIN_CONFIG}"
     rc=$?
 
-    if [ "${rc}" -eq 0 ] && require_path "${STAGE1A_SUMMARY}" && require_path "${STAGE1A_BEST}" && require_path "${STAGE1A_FINAL}"; then
+    if [ "${rc}" -eq 0 ] && require_stage1a_artifacts; then
       log_line "stage1a_success attempt=${attempt}"
       return 0
     fi
@@ -287,7 +304,7 @@ stage2_retry_loop() {
         --config-json "${STAGE2_TRAIN_CONFIG}"
     rc=$?
 
-    if [ "${rc}" -eq 0 ] && require_path "${STAGE2_SUMMARY}" && require_path "${STAGE2_BEST}"; then
+    if [ "${rc}" -eq 0 ] && require_stage2_artifacts; then
       log_line "stage2_success attempt=${attempt}"
       return 0
     fi
@@ -303,6 +320,7 @@ stage2_retry_loop() {
 
 main() {
   prepare_log_root
+  log_line "launcher_config start_stage=${START_STAGE} attempt=${ATTEMPT_NAME} session=${SESSION_NAME}"
   prepare_preprocess_outputs
   prepare_attempt_scoped_artifacts
 
@@ -343,25 +361,75 @@ main() {
     }
   done
 
-  stage1a_retry_loop || {
-    write_run_status "failed" 20
-    return 20
-  }
+  case "${START_STAGE}" in
+    stage1a)
+      stage1a_retry_loop || {
+        write_run_status "failed" 20
+        return 20
+      }
 
-  run_stage \
-    "stage1a_curve_eval" \
-    uv run python -m minipamayo_qwen35.stage1.vlm_ce.eval \
-      --config-json "${STAGE1A_EVAL_CONFIG}" || log_line "non_blocking_failure stage=stage1a_curve_eval"
+      run_stage \
+        "stage1a_curve_eval" \
+        uv run python -m minipamayo_qwen35.stage1.vlm_ce.eval \
+          --config-json "${STAGE1A_EVAL_CONFIG}" || log_line "non_blocking_failure stage=stage1a_curve_eval"
 
-  stage1b_retry_loop || {
-    write_run_status "failed" 30
-    return 30
-  }
+      stage1b_retry_loop || {
+        write_run_status "failed" 30
+        return 30
+      }
 
-  run_stage \
-    "stage1b_curve_eval" \
-    uv run python -m minipamayo_qwen35.stage1.expert_cfm.eval \
-      --config-json "${STAGE1B_EVAL_CONFIG}" || log_line "non_blocking_failure stage=stage1b_curve_eval"
+      run_stage \
+        "stage1b_curve_eval" \
+        uv run python -m minipamayo_qwen35.stage1.expert_cfm.eval \
+          --config-json "${STAGE1B_EVAL_CONFIG}" || log_line "non_blocking_failure stage=stage1b_curve_eval"
+      ;;
+    stage1b)
+      require_stage1a_artifacts || {
+        write_run_status "failed" 21
+        return 21
+      }
+
+      stage1b_retry_loop || {
+        write_run_status "failed" 30
+        return 30
+      }
+
+      run_stage \
+        "stage1a_curve_eval" \
+        uv run python -m minipamayo_qwen35.stage1.vlm_ce.eval \
+          --config-json "${STAGE1A_EVAL_CONFIG}" || log_line "non_blocking_failure stage=stage1a_curve_eval"
+
+      run_stage \
+        "stage1b_curve_eval" \
+        uv run python -m minipamayo_qwen35.stage1.expert_cfm.eval \
+          --config-json "${STAGE1B_EVAL_CONFIG}" || log_line "non_blocking_failure stage=stage1b_curve_eval"
+      ;;
+    stage2)
+      require_stage1a_artifacts || {
+        write_run_status "failed" 21
+        return 21
+      }
+      require_stage1b_artifacts || {
+        write_run_status "failed" 31
+        return 31
+      }
+
+      run_stage \
+        "stage1a_curve_eval" \
+        uv run python -m minipamayo_qwen35.stage1.vlm_ce.eval \
+          --config-json "${STAGE1A_EVAL_CONFIG}" || log_line "non_blocking_failure stage=stage1a_curve_eval"
+
+      run_stage \
+        "stage1b_curve_eval" \
+        uv run python -m minipamayo_qwen35.stage1.expert_cfm.eval \
+          --config-json "${STAGE1B_EVAL_CONFIG}" || log_line "non_blocking_failure stage=stage1b_curve_eval"
+      ;;
+    *)
+      log_line "invalid_start_stage value=${START_STAGE}"
+      write_run_status "failed" 2
+      return 2
+      ;;
+  esac
 
   stage2_retry_loop || {
     write_run_status "failed" 40

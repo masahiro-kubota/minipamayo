@@ -165,6 +165,8 @@ runner の責務:
 - `Stage1A` は hard gate。`MAX_STAGE1A_ATTEMPTS=0` のとき無制限 retry、正数のときその回数まで retry する
 - `Stage1B` は hard gate。`MAX_STAGE1B_ATTEMPTS=0` のとき無制限 retry、正数のときその回数まで retry する
 - `Stage2 train` も hard gate。`MAX_STAGE2_ATTEMPTS=0` のとき無制限 retry、正数のときその回数まで retry する
+- `START_STAGE=stage1b` を指定した場合、`Stage1A` の既存 `best.pt` / `final.pt` / `summary.json` を前提に、`Stage1B -> Stage2` だけ fresh rerun する
+- `START_STAGE=stage2` を指定した場合、`Stage1A` / `Stage1B` の既存 artifact を前提に、eval を含めて `Stage2` 以降だけ fresh rerun する
 
 固定 path:
 
@@ -185,6 +187,14 @@ runner の責務:
 cd /home/masa/minipamayo/minipamayo-qwen-3-5
 tmux new-session -d -s ignore-rule-completion-001 \
   'MAX_STAGE1A_ATTEMPTS=0 STAGE1A_RETRY_SLEEP_S=30 MAX_STAGE1B_ATTEMPTS=0 STAGE1B_RETRY_SLEEP_S=30 MAX_STAGE2_ATTEMPTS=0 STAGE2_RETRY_SLEEP_S=30 bash scripts/run_stage1_stage2_ignore_rule_completion_001.sh'
+```
+
+`Stage1A` がすでに成功済みで、`Stage1B` から切り直す場合:
+
+```bash
+cd /home/masa/minipamayo/minipamayo-qwen-3-5
+tmux new-session -d -s ignore-rule-completion-stage1b-001 \
+  'ATTEMPT_NAME=completion_ignore_rule_stage1b_restart_001 SESSION_NAME=ignore-rule-completion-stage1b-001 START_STAGE=stage1b MAX_STAGE1B_ATTEMPTS=0 STAGE1B_RETRY_SLEEP_S=30 MAX_STAGE2_ATTEMPTS=0 STAGE2_RETRY_SLEEP_S=30 bash scripts/run_stage1_stage2_ignore_rule_completion_001.sh'
 ```
 
 fallback:
