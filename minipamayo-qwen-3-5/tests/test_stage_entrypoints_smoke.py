@@ -104,6 +104,30 @@ def _reporting_args(*, include_per_sample_jsonl: bool) -> dict:
             },
         ),
         (
+            "minipamayo_qwen35.stage1.vlm_ce.train",
+            {
+                "train_jsonl": "datasets/train.jsonl",
+                "image_min_pixels": CANONICAL_IMAGE_MIN_PIXELS,
+                "image_max_pixels": CANONICAL_IMAGE_MAX_PIXELS,
+            },
+            {
+                "train_jsonl": "train.jsonl",
+                "save_dir": "checkpoints/stage1/vlm_ce/canonical/config",
+            },
+        ),
+        (
+            "minipamayo_qwen35.stage1.expert_cfm.train",
+            {
+                "stage1_checkpoint": "checkpoints/stage1.pt",
+                "train_jsonl": "datasets/train.jsonl",
+            },
+            {
+                "stage1_checkpoint": "stage1.pt",
+                "train_jsonl": "train.jsonl",
+                "save_dir": "checkpoints/stage1/expert_cfm/canonical/config",
+            },
+        ),
+        (
             "minipamayo_qwen35.stage2.reasoning_sft.train",
             {
                 "stage1a_checkpoint": "checkpoints/stage1a.pt",

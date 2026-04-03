@@ -12,6 +12,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 
+from ...utils.checkpoint_paths import checkpoint_scope_from_config_path, resolve_checkpoint_run_dir
 from ..stage1_train_data import build_stage1_train_val_dataloaders
 from ..stage1_train_runtime import (
     format_gib,
@@ -57,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--save-dir",
         type=str,
-        default="minipamayo-qwen-3-5/checkpoints/stage1/expert_cfm/canonical",
+        default="",
     )
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--batch-size", type=int, default=1)
@@ -107,6 +108,18 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`decoder_num_layers` must be > 0.")
     if args.decoder_intermediate_size <= 0:
         raise RuntimeError("`decoder_intermediate_size` must be > 0.")
+    args.save_dir = str(
+        resolve_checkpoint_run_dir(
+            args.save_dir,
+            scope=checkpoint_scope_from_config_path(
+                args.config_json,
+                stage="stage1",
+                component="expert_cfm",
+                default_track="canonical",
+            ),
+            run_name=Path(args.config_json).resolve().stem,
+        )
+    )
     return args
 
 

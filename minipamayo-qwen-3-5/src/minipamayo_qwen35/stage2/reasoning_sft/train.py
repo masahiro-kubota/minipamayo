@@ -38,6 +38,11 @@ from ...utils.run_metadata import (
     collect_processor_settings,
 )
 from ...utils.checkpoint_paths import checkpoint_scope_from_config_path, resolve_checkpoint_run_dir
+from ...utils.train_artifacts import (
+    resolve_train_artifact_paths,
+    write_history_json,
+    write_summary_json,
+)
 from .cli import parse_stage2_json_only_args
 
 CONFIG_PATH_KEYS = {
@@ -229,8 +234,8 @@ def main() -> None:
             collect_dataset_view_fingerprint(val_loader.dataset) if val_loader is not None else None
         )
 
-        save_dir = Path(args.save_dir)
-        save_dir.mkdir(parents=True, exist_ok=True)
+        train_artifacts = resolve_train_artifact_paths(args.save_dir)
+        save_dir = train_artifacts.save_dir
 
         training_bundle = load_stage2_training_bundle(
             stage1a_checkpoint=args.stage1a_checkpoint,
@@ -341,7 +346,7 @@ def main() -> None:
                 {
                     "event": "stage2_setup",
                     "config_json": args.config_json,
-                    "run_config_path": str(save_dir / "run_config.json"),
+                    "run_config_path": str(train_artifacts.run_config_json),
                     "stage2_metadata": stage2_metadata,
                     "train_size": train_size,
                     "val_size": val_size,
@@ -575,7 +580,7 @@ def main() -> None:
                         metrics_history=metrics_history,
                         run_metadata=run_metadata,
                     ),
-                    save_dir / "best.pt",
+                    train_artifacts.best_pt,
                 )
 
             torch.save(
@@ -593,7 +598,7 @@ def main() -> None:
                     metrics_history=metrics_history,
                     run_metadata=run_metadata,
                 ),
-                save_dir / "last.pt",
+                train_artifacts.last_pt,
             )
             if handoff_improved:
                 torch.save(
@@ -611,10 +616,9 @@ def main() -> None:
                         metrics_history=metrics_history,
                         run_metadata=run_metadata,
                     ),
-                    save_dir / "best_handoff.pt",
+                    train_artifacts.checkpoint_path("best_handoff.pt"),
                 )
-            with (save_dir / "history.json").open("w", encoding="utf-8") as f:
-                json.dump(metrics_history, f, indent=2, ensure_ascii=False)
+            write_history_json(train_artifacts, metrics_history)
 
             completed_epochs = epoch
             if (
@@ -653,7 +657,7 @@ def main() -> None:
                 metrics_history=metrics_history,
                 run_metadata=run_metadata,
             ),
-            save_dir / "final.pt",
+            train_artifacts.final_pt,
         )
 
         summary = {
@@ -661,7 +665,7 @@ def main() -> None:
             "config_payload": args.config_payload,
             "config_args": args.config_args,
             "run_args": vars(args),
-            "run_config_path": str(save_dir / "run_config.json"),
+            "run_config_path": str(train_artifacts.run_config_json),
             "train_jsonl": args.train_jsonl,
             "val_jsonl": args.val_jsonl or None,
             "train_size": train_size,
@@ -687,8 +691,7 @@ def main() -> None:
             },
             "history": metrics_history,
         }
-        with (save_dir / "summary.json").open("w", encoding="utf-8") as f:
-            json.dump(summary, f, indent=2, ensure_ascii=False)
+        write_summary_json(train_artifacts, summary)
         maybe_wandb_log(
             wandb_run,
             {

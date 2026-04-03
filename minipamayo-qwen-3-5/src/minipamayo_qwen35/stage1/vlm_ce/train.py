@@ -19,6 +19,7 @@ from ...utils.image_budget import (
     CANONICAL_IMAGE_MIN_PIXELS,
     validate_canonical_image_budget,
 )
+from ...utils.checkpoint_paths import checkpoint_scope_from_config_path, resolve_checkpoint_run_dir
 from ...utils.json_config import normalize_optional_string_list, normalize_required_string_list
 from ...utils.preflight import enforce_training_prerequisites
 from ...utils.run_metadata import (
@@ -84,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--save-dir",
         type=str,
-        default="minipamayo-qwen-3-5/checkpoints/stage1/vlm_ce/canonical",
+        default="",
     )
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--batch-size", type=int, default=1)
@@ -141,6 +142,18 @@ def parse_args() -> argparse.Namespace:
         raise RuntimeError("`early_stopping_patience` must be >= 0.")
     if args.early_stopping_min_delta < 0:
         raise RuntimeError("`early_stopping_min_delta` must be >= 0.")
+    args.save_dir = str(
+        resolve_checkpoint_run_dir(
+            args.save_dir,
+            scope=checkpoint_scope_from_config_path(
+                args.config_json,
+                stage="stage1",
+                component="vlm_ce",
+                default_track="canonical",
+            ),
+            run_name=Path(args.config_json).resolve().stem,
+        )
+    )
     validate_canonical_image_budget(args.image_min_pixels, args.image_max_pixels)
     return args
 

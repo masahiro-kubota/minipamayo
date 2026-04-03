@@ -6,9 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset
 
 from ...reasoning.dataset import ReasoningSftJsonlDataset, reasoning_sft_collate
+from ...stage1.stage1_train_data import build_jsonl_dataloader, build_jsonl_train_val_dataloaders
 from ...utils.jsonl import read_jsonl
 
 
@@ -113,14 +114,11 @@ def build_stage3_dataloader(
     num_workers: int,
     shuffle: bool,
 ) -> DataLoader:
-    return DataLoader(
+    return build_jsonl_dataloader(
         dataset,
         batch_size=batch_size,
-        shuffle=shuffle,
-        drop_last=False,
         num_workers=num_workers,
-        pin_memory=True,
-        persistent_workers=num_workers > 0,
+        shuffle=shuffle,
         collate_fn=stage3_post_training_collate,
     )
 
@@ -136,48 +134,17 @@ def build_stage3_train_val_dataloaders(
     num_workers: int,
     seed: int,
 ) -> tuple[DataLoader, DataLoader | None, int, int]:
-    train_dataset = Stage3PostTrainingDataset(
-        train_jsonl,
-        manifest_jsonl=manifest_jsonl,
-        max_samples=max_samples,
-    )
-    if len(train_dataset) == 0:
-        raise RuntimeError("Stage 3 training dataset is empty.")
-
-    if val_jsonl:
-        val_dataset = Stage3PostTrainingDataset(val_jsonl, max_samples=max_samples)
-        if len(val_dataset) == 0:
-            raise RuntimeError("Stage 3 validation dataset is empty.")
-    elif len(train_dataset) >= 2 and val_fraction > 0:
-        val_size = max(1, int(round(len(train_dataset) * val_fraction)))
-        val_size = min(val_size, len(train_dataset) - 1)
-        train_size = len(train_dataset) - val_size
-        generator = torch.Generator().manual_seed(seed)
-        train_dataset, val_dataset = random_split(
-            train_dataset,
-            [train_size, val_size],
-            generator=generator,
-        )
-    else:
-        val_dataset = None
-
-    train_loader = build_stage3_dataloader(
-        train_dataset,
+    return build_jsonl_train_val_dataloaders(
+        dataset_ctor=Stage3PostTrainingDataset,
+        collate_fn=stage3_post_training_collate,
+        train_jsonl=train_jsonl,
+        val_jsonl=val_jsonl,
+        train_max_samples=max_samples,
+        val_max_samples=max_samples,
+        val_fraction=val_fraction,
         batch_size=batch_size,
         num_workers=num_workers,
-        shuffle=True,
-    )
-    val_loader = None
-    if val_dataset is not None:
-        val_loader = build_stage3_dataloader(
-            val_dataset,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            shuffle=False,
-        )
-    return (
-        train_loader,
-        val_loader,
-        len(train_dataset),
-        len(val_dataset) if val_dataset is not None else 0,
+        seed=seed,
+        require_validation_split=False,
+        dataset_ctor_kwargs_train={"manifest_jsonl": manifest_jsonl},
     )

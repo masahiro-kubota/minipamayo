@@ -7,9 +7,13 @@ from pathlib import Path
 
 import torch
 
-from ...utils.artifact_paths import ArtifactScope, scope_from_config_path
-from ...utils.preflight import require_cuda_device
-from ..stage1_json_cli import load_stage1_config_args, parse_stage1_json_only_args
+from ...utils.artifact_paths import ArtifactScope
+from ...utils.stage_cli import (
+    artifact_scope_for_config as build_artifact_scope_for_config,
+    load_stage_config_args,
+    parse_stage_json_only_args,
+    require_stage_cuda_device,
+)
 
 COMMON_CONFIG_PATH_KEYS = {"checkpoint", "stage1_checkpoint", "output_json"}
 
@@ -34,7 +38,7 @@ def load_stage1b_config_args(
     path_keys: set[str],
     list_keys: set[str] | None = None,
 ) -> tuple[str, dict, dict]:
-    return load_stage1_config_args(
+    return load_stage_config_args(
         config_json,
         parser,
         path_keys=path_keys,
@@ -49,11 +53,11 @@ def parse_stage1b_json_only_args(
     list_keys: set[str] | None = None,
     json_only_error: str,
 ) -> argparse.Namespace:
-    return parse_stage1_json_only_args(
+    return parse_stage_json_only_args(
         parser=parser,
         path_keys=path_keys,
         list_keys=list_keys,
-        error_message=json_only_error,
+        json_only_error=json_only_error,
     )
 
 
@@ -76,7 +80,7 @@ def validate_stage1b_runtime_args(args: argparse.Namespace) -> None:
 
 
 def require_stage1b_cuda_device() -> torch.device:
-    return require_cuda_device(
+    return require_stage_cuda_device(
         device_name="cuda",
         git_cwd=Path(__file__).resolve().parent,
         error_message="Canonical Stage 1B entrypoints require CUDA.",
@@ -84,7 +88,7 @@ def require_stage1b_cuda_device() -> torch.device:
 
 
 def artifact_scope_for_config(config_json: str, *, kind: str) -> ArtifactScope:
-    return scope_from_config_path(
+    return build_artifact_scope_for_config(
         config_json,
         kind=kind,
         stage="stage1",

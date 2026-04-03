@@ -14,63 +14,37 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
 
-from ...inspector.manifests import update_manifest_plots
-from ...utils.artifact_paths import apply_visualization_artifact_policy
-from ...utils.preflight import init_required_online_wandb
 from ..eval_viz_common import (
     cdf,
-    load_json,
-    load_jsonl,
     metric_array,
     select_rank_groups,
     trajectory_limits,
     write_json,
 )
+from ..eval_visualizer import (
+    CONFIG_PATH_KEYS,
+    Stage1VisualizationContext,
+    build_stage1_visualize_parser,
+    finalize_stage1_visualization,
+    load_visualization_context,
+    parse_stage1_visualize_args,
+)
 from .cli import artifact_scope_for_config, parse_config_json_only_args
 
-CONFIG_PATH_KEYS = {
-    "summary_json",
-    "per_sample_jsonl",
-    "output_dir",
-}
-
-
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Visualize canonical Stage 1A eval outputs.")
-    parser.add_argument("--config-json", type=str, default="")
-    parser.add_argument("--summary-json", type=str, default="")
-    parser.add_argument("--per-sample-jsonl", type=str, default="")
-    parser.add_argument("--output-dir", type=str, default="")
-    parser.add_argument("--wandb-project", type=str, default="")
-    parser.add_argument("--wandb-entity", type=str, default="")
-    parser.add_argument("--wandb-run-name", type=str, default="")
-    parser.add_argument("--overlay-count", type=int, default=16)
-    parser.add_argument("--worst-table-count", type=int, default=20)
-    parser.add_argument("--dpi", type=int, default=180)
-    return parser
+    return build_stage1_visualize_parser("Visualize canonical Stage 1A eval outputs.")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = build_parser()
-    args = parse_config_json_only_args(
-        parser,
-        path_keys=CONFIG_PATH_KEYS,
-        error_message="Stage 1A visualization accepts only --config-json. Put all settings in the JSON file.",
+    return parse_stage1_visualize_args(
+        parser=build_parser(),
+        parse_json_only_args=lambda parser: parse_config_json_only_args(
+            parser,
+            path_keys=CONFIG_PATH_KEYS,
+            error_message="Stage 1A visualization accepts only --config-json. Put all settings in the JSON file.",
+        ),
+        scope_for_config=lambda config_json: artifact_scope_for_config(config_json, kind="eval"),
     )
-    apply_visualization_artifact_policy(
-        args,
-        scope=artifact_scope_for_config(args.config_json, kind="eval"),
-    )
-    for key in ["summary_json", "per_sample_jsonl", "wandb_project", "wandb_run_name"]:
-        if not str(getattr(args, key, "")):
-            raise RuntimeError(f"`{key}` must be defined in the config JSON.")
-    if int(args.overlay_count) <= 0:
-        raise RuntimeError("`overlay_count` must be > 0.")
-    if int(args.worst_table_count) <= 0:
-        raise RuntimeError("`worst_table_count` must be > 0.")
-    if int(args.dpi) <= 0:
-        raise RuntimeError("`dpi` must be > 0.")
-    return args
 
 def _ensure_plot_fields(samples: list[dict[str, Any]]) -> None:
     required_top_level = {
@@ -287,24 +261,82 @@ def _save_single_overlay(sample: dict[str, Any], output_path: Path, *, dpi: int)
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
 
+
+def _populate_run_summary(run, context: Stage1VisualizationContext) -> None:
+    run.summary["checkpoint"] = context.summary.get("checkpoint", "")
+    run.summary["test_jsonl"] = context.summary.get("test_jsonl", "")
+    run.summary["num_samples"] = len(context.samples)
+    for metric_key in [
+        "teacher_forced_loss",
+        "teacher_forced_token_accuracy",
+        "autoregressive_token_accuracy",
+        "action_mae_accel",
+        "action_mae_kappa",
+        "ade_m",
+        "fde_m",
+    ]:
+        if metric_key in context.summary:
+            run.summary[f"summary/{metric_key}"] = context.summary[metric_key]
+
+
+def _log_wandb_artifacts(
+    run,
+    wandb,
+    context: Stage1VisualizationContext,
+    plot_paths: dict[str, Path],
+    worst_manifest_rows: list[dict[str, Any]],
+) -> None:
+    run.log(
+        {
+            "plots/histograms": wandb.Image(str(plot_paths["histograms"])),
+            "plots/cdfs": wandb.Image(str(plot_paths["cdfs"])),
+            "plots/scatter": wandb.Image(str(plot_paths["scatter"])),
+            "plots/sample_order": wandb.Image(str(plot_paths["sample_order"])),
+            "plots/bin_usage": wandb.Image(str(plot_paths["bin_usage"])),
+            "plots/trajectory_best": wandb.Image(str(plot_paths["trajectory_best"])),
+            "plots/trajectory_median": wandb.Image(str(plot_paths["trajectory_median"])),
+            "plots/trajectory_worst": wandb.Image(str(plot_paths["trajectory_worst"])),
+        },
+        step=len(context.samples),
+    )
+
+    table = wandb.Table(
+        columns=[
+            "rank",
+            "sample_id",
+            "sample_index",
+            "record_sample_index",
+            "ade_m",
+            "fde_m",
+            "tf_token_acc",
+            "ar_token_acc",
+            "action_mae_kappa",
+            "camera_image",
+            "trajectory_overlay",
+        ]
+    )
+    for row in worst_manifest_rows:
+        table.add_data(
+            row["rank"],
+            row["sample_id"],
+            row["sample_index"],
+            row["record_sample_index"],
+            row["ade_m"],
+            row["fde_m"],
+            row["teacher_forced_token_accuracy"],
+            row["autoregressive_token_accuracy"],
+            row["action_mae_kappa"],
+            wandb.Image(str(row["image_path"])),
+            wandb.Image(str(row["overlay_path"])),
+        )
+    run.log({"tables/worst_samples": table}, step=len(context.samples))
+
 def main() -> None:
     args = parse_args()
-    summary_path = Path(args.summary_json).resolve()
-    per_sample_path = Path(args.per_sample_jsonl).resolve()
-    output_dir = Path(args.output_dir).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    overlays_dir = output_dir / "worst_sample_overlays"
-    overlays_dir.mkdir(parents=True, exist_ok=True)
-
-    summary = load_json(summary_path)
-    samples = load_jsonl(per_sample_path)
-    _ensure_plot_fields(samples)
-
-    expected_samples = int(summary.get("num_samples", 0))
-    if expected_samples > 0 and expected_samples != len(samples):
-        raise RuntimeError(
-            f"Per-sample JSONL count {len(samples)} does not match summary num_samples {expected_samples}."
-        )
+    context = load_visualization_context(args, ensure_plot_fields=_ensure_plot_fields)
+    output_dir = context.output_dir
+    overlays_dir = context.overlays_dir
+    samples = context.samples
 
     plot_paths = {
         "histograms": output_dir / "metric_histograms.png",
@@ -340,7 +372,7 @@ def main() -> None:
         dpi=int(args.dpi),
     )
 
-    worst_table_count = min(int(args.worst_table_count), len(samples))
+    worst_table_count = context.worst_table_count
     worst_samples = sorted(samples, key=lambda sample: float(sample["fde_m"]), reverse=True)[:worst_table_count]
     worst_manifest_rows: list[dict[str, Any]] = []
     for rank, sample in enumerate(worst_samples, start=1):
@@ -363,107 +395,14 @@ def main() -> None:
         )
     write_json(plot_paths["worst_samples"], {"rows": worst_manifest_rows})
 
-    run = init_required_online_wandb(
-        project=str(args.wandb_project),
-        entity=str(getattr(args, "wandb_entity", "")),
-        name=str(args.wandb_run_name),
-        config={
-            "entrypoint": "stage1.vlm_ce.visualize_eval",
-            "config_json": str(args.config_json),
-            "summary_json": str(summary_path),
-            "per_sample_jsonl": str(per_sample_path),
-            "output_dir": str(output_dir),
-            "num_samples": len(samples),
-            "overlay_count": int(args.overlay_count),
-            "worst_table_count": worst_table_count,
-        },
+    finalize_stage1_visualization(
+        context=context,
+        entrypoint="stage1.vlm_ce.visualize_eval",
+        plot_paths=plot_paths,
+        worst_manifest_rows=worst_manifest_rows,
+        populate_run_summary=_populate_run_summary,
+        log_wandb_artifacts=_log_wandb_artifacts,
     )
-    try:
-        import wandb
-
-        run.summary["checkpoint"] = summary.get("checkpoint", "")
-        run.summary["test_jsonl"] = summary.get("test_jsonl", "")
-        run.summary["num_samples"] = len(samples)
-        for metric_key in [
-            "teacher_forced_loss",
-            "teacher_forced_token_accuracy",
-            "autoregressive_token_accuracy",
-            "action_mae_accel",
-            "action_mae_kappa",
-            "ade_m",
-            "fde_m",
-        ]:
-            if metric_key in summary:
-                run.summary[f"summary/{metric_key}"] = summary[metric_key]
-
-        run.log(
-            {
-                "plots/histograms": wandb.Image(str(plot_paths["histograms"])),
-                "plots/cdfs": wandb.Image(str(plot_paths["cdfs"])),
-                "plots/scatter": wandb.Image(str(plot_paths["scatter"])),
-                "plots/sample_order": wandb.Image(str(plot_paths["sample_order"])),
-                "plots/bin_usage": wandb.Image(str(plot_paths["bin_usage"])),
-                "plots/trajectory_best": wandb.Image(str(plot_paths["trajectory_best"])),
-                "plots/trajectory_median": wandb.Image(str(plot_paths["trajectory_median"])),
-                "plots/trajectory_worst": wandb.Image(str(plot_paths["trajectory_worst"])),
-            },
-            step=len(samples),
-        )
-
-        table = wandb.Table(
-            columns=[
-                "rank",
-                "sample_id",
-                "sample_index",
-                "record_sample_index",
-                "ade_m",
-                "fde_m",
-                "tf_token_acc",
-                "ar_token_acc",
-                "action_mae_kappa",
-                "camera_image",
-                "trajectory_overlay",
-            ]
-        )
-        for row in worst_manifest_rows:
-            table.add_data(
-                row["rank"],
-                row["sample_id"],
-                row["sample_index"],
-                row["record_sample_index"],
-                row["ade_m"],
-                row["fde_m"],
-                row["teacher_forced_token_accuracy"],
-                row["autoregressive_token_accuracy"],
-                row["action_mae_kappa"],
-                wandb.Image(str(row["image_path"])),
-                wandb.Image(str(row["overlay_path"])),
-            )
-        run.log({"tables/worst_samples": table}, step=len(samples))
-
-        manifest = {
-            "summary_json": str(summary_path),
-            "per_sample_jsonl": str(per_sample_path),
-            "output_dir": str(output_dir),
-            "plots": {key: str(path) for key, path in plot_paths.items() if key != "manifest"},
-            "worst_samples": worst_manifest_rows,
-            "wandb": {
-                "project": args.wandb_project,
-                "run_name": args.wandb_run_name,
-                "run_url": getattr(run, "url", ""),
-            },
-        }
-        write_json(plot_paths["manifest"], manifest)
-        update_manifest_plots(
-            summary_json=summary_path,
-            plots_dir=output_dir,
-            plots={key: str(path) for key, path in plot_paths.items() if key != "manifest"},
-            wandb_run_url=getattr(run, "url", ""),
-        )
-        run.summary["manifest_path"] = str(plot_paths["manifest"])
-        run.summary["output_dir"] = str(output_dir)
-    finally:
-        run.finish()
 
 
 if __name__ == "__main__":

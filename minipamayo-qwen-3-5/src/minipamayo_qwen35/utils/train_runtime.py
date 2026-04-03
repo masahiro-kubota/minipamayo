@@ -11,6 +11,7 @@ from pathlib import Path
 import torch
 
 from .preflight import collect_gpu_preflight_snapshot
+from .train_artifacts import write_run_config_json
 
 
 def set_seed(seed: int) -> None:
@@ -50,18 +51,13 @@ def log_gpu_preflight(device: torch.device) -> dict:
 
 
 def write_run_config(save_dir: Path, args, run_metadata: dict) -> None:
-    with (save_dir / "run_config.json").open("w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "config_json": args.config_json,
-                "config_payload": args.config_payload,
-                "resolved_args": vars(args),
-                "run_metadata": run_metadata,
-            },
-            f,
-            indent=2,
-            ensure_ascii=False,
-        )
+    write_run_config_json(
+        save_dir,
+        config_json=args.config_json,
+        config_payload=args.config_payload,
+        resolved_args=vars(args),
+        run_metadata=run_metadata,
+    )
 
 
 def maybe_wandb_log(run, data: dict, step: int | None = None) -> None:

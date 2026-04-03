@@ -42,13 +42,23 @@ def build_jsonl_train_val_dataloaders(
     num_workers: int,
     seed: int,
     require_validation_split: bool,
+    dataset_ctor_kwargs_train: dict[str, Any] | None = None,
+    dataset_ctor_kwargs_val: dict[str, Any] | None = None,
 ) -> tuple[DataLoader, DataLoader | None, int, int]:
-    train_dataset = dataset_ctor(train_jsonl, max_samples=train_max_samples)
+    train_dataset = dataset_ctor(
+        train_jsonl,
+        max_samples=train_max_samples,
+        **(dataset_ctor_kwargs_train or {}),
+    )
     if len(train_dataset) == 0:
         raise RuntimeError("Training dataset is empty.")
 
     if val_jsonl:
-        val_dataset = dataset_ctor(val_jsonl, max_samples=val_max_samples)
+        val_dataset = dataset_ctor(
+            val_jsonl,
+            max_samples=val_max_samples,
+            **(dataset_ctor_kwargs_val or {}),
+        )
         if len(val_dataset) == 0:
             raise RuntimeError("Validation dataset is empty.")
     else:

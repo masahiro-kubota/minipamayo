@@ -21,6 +21,11 @@ from ...utils.run_metadata import (
     collect_git_metadata,
     collect_gpu_info,
 )
+from ...utils.train_artifacts import (
+    resolve_train_artifact_paths,
+    write_history_json,
+    write_summary_json,
+)
 from ...utils.train_runtime import (
     format_gib,
     log_gpu_preflight,
@@ -40,7 +45,7 @@ from .common import (
 from .dataset import build_stage3_train_val_dataloaders
 from .bundle import load_stage3_rollout_bundle
 from .rewards import RewardWeights, build_reasoning_reward_scorer
-from .runtime import sample_view_from_batch, score_stage3_rollout, write_json
+from .runtime import sample_view_from_batch, score_stage3_rollout
 from .sampler import generate_grouped_rollouts
 
 CONFIG_PATH_KEYS = {
@@ -177,8 +182,8 @@ def main() -> None:
             collect_dataset_view_fingerprint(val_loader.dataset) if val_loader is not None else None
         )
 
-        save_dir = Path(args.save_dir)
-        save_dir.mkdir(parents=True, exist_ok=True)
+        train_artifacts = resolve_train_artifact_paths(args.save_dir)
+        save_dir = train_artifacts.save_dir
 
         bundle = load_stage3_rollout_bundle(
             stage2_checkpoint_path=args.stage2_checkpoint,
@@ -400,7 +405,7 @@ def main() -> None:
                 "epoch_seconds": round(time.perf_counter() - epoch_start, 3),
             }
             metrics_history.append(epoch_metrics)
-            write_json(save_dir / "history.json", metrics_history)
+            write_history_json(train_artifacts, metrics_history)
 
             checkpoint = stage3_checkpoint_payload(
                 model=policy_model,
@@ -412,11 +417,11 @@ def main() -> None:
                 epoch=epoch,
                 global_step=global_step,
             )
-            torch.save(checkpoint, save_dir / "last.pt")
+            torch.save(checkpoint, train_artifacts.last_pt)
             if avg_reward > best_reward:
                 best_reward = avg_reward
                 best_epoch = epoch
-                torch.save(checkpoint, save_dir / "best.pt")
+                torch.save(checkpoint, train_artifacts.best_pt)
 
             summary = {
                 "best_reward": best_reward,
@@ -433,7 +438,7 @@ def main() -> None:
                 ),
                 "elapsed_seconds": round(time.perf_counter() - wall_start, 3),
             }
-            write_json(save_dir / "summary.json", summary)
+            write_summary_json(train_artifacts, summary)
             maybe_wandb_log(
                 wandb_run,
                 {

@@ -169,6 +169,42 @@ def test_stage3_train_parse_args_rejects_artifact_save_dir(
         module.parse_args()
 
 
+@pytest.mark.parametrize(
+    "module_name,config_args",
+    [
+        (
+            "minipamayo_qwen35.stage1.vlm_ce.train",
+            {
+                "train_jsonl": "datasets/train.jsonl",
+                "save_dir": "artifacts/eval/stage1/vlm_ce/canonical/not_allowed",
+                "image_min_pixels": CANONICAL_IMAGE_MIN_PIXELS,
+                "image_max_pixels": CANONICAL_IMAGE_MAX_PIXELS,
+            },
+        ),
+        (
+            "minipamayo_qwen35.stage1.expert_cfm.train",
+            {
+                "stage1_checkpoint": "checkpoints/stage1.pt",
+                "train_jsonl": "datasets/train.jsonl",
+                "save_dir": "artifacts/eval/stage1/expert_cfm/canonical/not_allowed",
+            },
+        ),
+    ],
+)
+def test_stage1_train_parse_args_reject_artifact_save_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    module_name: str,
+    config_args: dict[str, Any],
+) -> None:
+    module = importlib.import_module(module_name)
+    config_path = _write_config(tmp_path, "config.json", config_args)
+
+    monkeypatch.setattr(sys, "argv", ["prog", "--config-json", str(config_path)])
+    with pytest.raises(RuntimeError, match="Checkpoint run directory must match the canonical location"):
+        module.parse_args()
+
+
 def test_stage3_eval_parse_args_rejects_checkpoint_owner_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
