@@ -56,7 +56,13 @@ def discover_manifest_paths(artifact_root: str | Path) -> list[Path]:
     root = Path(artifact_root).resolve()
     if not root.exists():
         return []
-    return sorted(path for path in root.rglob("*.manifest.json") if path.is_file())
+    manifest_paths: list[Path] = []
+    for artifact_kind in ("eval", "inference"):
+        subtree = root / artifact_kind
+        if not subtree.exists():
+            continue
+        manifest_paths.extend(path for path in subtree.rglob("*.manifest.json") if path.is_file())
+    return sorted(manifest_paths)
 
 
 def _sort_stage_manifests(manifests: tuple[ArtifactManifest, ...]) -> tuple[ArtifactManifest, ...]:

@@ -34,6 +34,37 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
 
 
 class RegistryTests(unittest.TestCase):
+    def test_registry_ignores_non_inspector_manifests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            artifact_root = Path(tmp_dir) / "artifacts"
+
+            preprocess_manifest = (
+                artifact_root
+                / "preprocess/stage1/curve_train_pools/canonical/run/curve_block_train_pool.manifest.json"
+            )
+            _write_json(
+                preprocess_manifest,
+                {
+                    "curve_json": "/tmp/curve.json",
+                    "runs": [],
+                },
+            )
+
+            summary_path = artifact_root / "eval/stage1/vlm_ce/canonical/stage1a.json"
+            _write_json(summary_path, {"num_samples": 0})
+            write_manifest(
+                ArtifactManifest(
+                    artifact_kind="eval",
+                    stage="stage1a_eval",
+                    run_name="stage1a",
+                    summary_json=str(summary_path),
+                )
+            )
+
+            registry = load_manifest_registry(artifact_root)
+            self.assertEqual(len(registry.manifests), 1)
+            self.assertEqual(registry.manifests[0].run_name, "stage1a")
+
     def test_registry_sorts_per_sample_manifests_ahead_of_summary_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             artifact_root = Path(tmp_dir) / "artifacts"
