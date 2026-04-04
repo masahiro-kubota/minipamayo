@@ -1,0 +1,25 @@
+{
+  "path_base": "project_root",
+  "args": {
+    "checkpoint": "checkpoints/stage1/expert_cfm/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_included_12gb_safe/best.pt",
+    "stage1_checkpoint": "checkpoints/stage1/vlm_ce/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_included_12gb/best.pt",
+    "eval_jsonl": [
+      "artifacts/preprocess/stage1/curve_splits/canonical/perimeter_cw_holdout_v1/curve_holdout.jsonl"
+    ],
+    "output_json": "artifacts/eval/stage1/expert_cfm/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_included_curve_eval_safe.json",
+    "progress_json": "artifacts/eval/stage1/expert_cfm/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_included_curve_eval_safe.progress.json",
+    "per_sample_jsonl": "artifacts/eval/stage1/expert_cfm/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_included_curve_eval_safe.per_sample.jsonl",
+    "batch_size": 1,
+    "num_workers": 0,
+    "flow_steps": 10,
+    "include_pid_override": true,
+    "pid_target_speed_kmh": 24,
+    "pid_kp": 1,
+    "pid_ki": 0.05,
+    "pid_kd": 0,
+    "progress_every_samples": 25,
+    "progress_every_seconds": 60,
+    "wandb_project": "minipamayo-qwen35",
+    "wandb_run_name": "stage1b-eval-ignore-rule-k64-dt01-curve-block-only-included-curve"
+  }
+}

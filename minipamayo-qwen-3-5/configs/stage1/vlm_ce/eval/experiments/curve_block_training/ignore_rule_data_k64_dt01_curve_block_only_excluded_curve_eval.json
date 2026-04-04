@@ -1,0 +1,20 @@
+{
+  "path_base": "project_root",
+  "args": {
+    "checkpoint": "checkpoints/stage1/vlm_ce/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_excluded_12gb/best.pt",
+    "test_jsonl": "artifacts/preprocess/stage1/curve_splits/canonical/perimeter_cw_holdout_v1/curve_holdout.jsonl",
+    "device": "cuda",
+    "batch_size": 1,
+    "num_workers": 2,
+    "show_samples": 10,
+    "image_min_pixels": 163840,
+    "image_max_pixels": 196608,
+    "output_json": "artifacts/eval/stage1/vlm_ce/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_excluded_curve_eval.json",
+    "progress_json": "artifacts/eval/stage1/vlm_ce/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_excluded_curve_eval.progress.json",
+    "progress_every_samples": 25,
+    "progress_every_seconds": 60,
+    "wandb_project": "minipamayo-qwen35",
+    "wandb_run_name": "stage1a-eval-ignore-rule-k64-dt01-curve-block-only-excluded-curve",
+    "per_sample_jsonl": "artifacts/eval/stage1/vlm_ce/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_excluded_curve_eval.per_sample.jsonl"
+  }
+}

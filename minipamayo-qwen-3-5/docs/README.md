@@ -14,6 +14,8 @@
   - `stage3-post-training-design.md`
 - `experiments/`
   - `ignore-rule-run-entrypoints.md`
+  - `stage1-curve-block-training-experiment-plan.md`
+  - `stage1-curve-block-training-experiment-results.md`
   - `stage1b-lateral-pid-experiment-plan.md`
   - `stage1b-lateral-pid-experiment-results.md`
   - `stage1-stage2-ignore-rule-completion-run-plan.md`
