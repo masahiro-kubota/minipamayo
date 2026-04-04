@@ -7,9 +7,9 @@
 - experiment id: `stage1_curve_block_training_v1`
 - plan:
   [stage1-curve-block-training-experiment-plan.md](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/docs/experiments/stage1-curve-block-training-experiment-plan.md)
-- status: `pending`
-- owner: `pending`
-- last_updated_at: `pending`
+- status: `running`
+- owner: `codex`
+- last_updated_at: `2026-04-04`
 
 ## Dataset Materialization
 
@@ -70,15 +70,19 @@ Purpose: `sanity only`
   [ignore_rule_data_k64_dt01_curve_block_only_included_12gb.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage1/vlm_ce/train/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_included_12gb.json)
 - eval config:
   [ignore_rule_data_k64_dt01_curve_block_only_included_curve_eval.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage1/vlm_ce/eval/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_included_curve_eval.json)
-- save_dir: `pending`
-- wandb: `pending`
-- status: `pending`
+- artifact:
+  [ignore_rule_data_k64_dt01_curve_block_only_included_curve_eval.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/eval/stage1/vlm_ce/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_included_curve_eval.json)
+- save_dir:
+  [ignore_rule_data_k64_dt01_curve_block_only_included_12gb](/home/masa/minipamayo/minipamayo-qwen-3-5/checkpoints/stage1/vlm_ce/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_included_12gb)
+- wandb:
+  `train=stage1-vlm-ce-ignore-rule-k64-dt01-curve-block-only-included-12gb`, `eval=stage1a-eval-ignore-rule-k64-dt01-curve-block-only-included-curve`
+- status: `completed`
 - metrics:
-  - `teacher_forced_token_accuracy = pending`
-  - `autoregressive_token_accuracy = pending`
-  - `action_mae_kappa = pending`
-  - `ade_m = pending`
-  - `fde_m = pending`
+  - `teacher_forced_token_accuracy = 0.5991`
+  - `autoregressive_token_accuracy = 0.3184`
+  - `action_mae_kappa = 0.02891`
+  - `ade_m = 6.8475`
+  - `fde_m = 20.4462`
 
 ### Stage1B
 
@@ -86,16 +90,20 @@ Purpose: `sanity only`
   [ignore_rule_data_k64_dt01_curve_block_only_included_12gb_safe.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage1/expert_cfm/train/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_included_12gb_safe.json)
 - eval config:
   [ignore_rule_data_k64_dt01_curve_block_only_included_curve_eval_safe.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage1/expert_cfm/eval/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_included_curve_eval_safe.json)
-- save_dir: `pending`
-- wandb: `pending`
-- status: `pending`
+- artifact:
+  [ignore_rule_data_k64_dt01_curve_block_only_included_curve_eval_safe.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/eval/stage1/expert_cfm/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_included_curve_eval_safe.json)
+- save_dir:
+  [ignore_rule_data_k64_dt01_curve_block_only_included_12gb_safe](/home/masa/minipamayo/minipamayo-qwen-3-5/checkpoints/stage1/expert_cfm/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_included_12gb_safe)
+- wandb:
+  `train=stage1-expert-cfm-ignore-rule-k64-dt01-curve-block-only-included-12gb-safe`, `eval=stage1b-eval-ignore-rule-k64-dt01-curve-block-only-included-curve`
+- status: `completed`
 - metrics:
-  - `ade_m = pending`
-  - `fde_m = pending`
-  - `mean_max_lateral_error_m = pending`
-  - `global_max_lateral_error_m = pending`
-  - `action_mae_kappa = pending`
-  - `pid_override.fde_m = pending`
+  - `ade_m = 7.4529`
+  - `fde_m = 20.9618`
+  - `mean_max_lateral_error_m = 17.2714`
+  - `global_max_lateral_error_m = 38.6750`
+  - `action_mae_kappa = 0.03178`
+  - `pid_override.fde_m = 20.9802`
 
 ## B2 Curve-Block-Only + Holdout Excluded
 
@@ -107,15 +115,19 @@ Purpose: `decision`
   [ignore_rule_data_k64_dt01_curve_block_only_excluded_12gb.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage1/vlm_ce/train/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_excluded_12gb.json)
 - eval config:
   [ignore_rule_data_k64_dt01_curve_block_only_excluded_curve_eval.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage1/vlm_ce/eval/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_excluded_curve_eval.json)
-- save_dir: `pending`
-- wandb: `pending`
-- status: `pending`
+- artifact:
+  [ignore_rule_data_k64_dt01_curve_block_only_excluded_curve_eval.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/eval/stage1/vlm_ce/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_excluded_curve_eval.json)
+- save_dir:
+  [ignore_rule_data_k64_dt01_curve_block_only_excluded_12gb](/home/masa/minipamayo/minipamayo-qwen-3-5/checkpoints/stage1/vlm_ce/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_excluded_12gb)
+- wandb:
+  `train=stage1-vlm-ce-ignore-rule-k64-dt01-curve-block-only-excluded-12gb`, `eval=stage1a-eval-ignore-rule-k64-dt01-curve-block-only-excluded-curve`
+- status: `completed`
 - metrics:
-  - `teacher_forced_token_accuracy = pending`
-  - `autoregressive_token_accuracy = pending`
-  - `action_mae_kappa = pending`
-  - `ade_m = pending`
-  - `fde_m = pending`
+  - `teacher_forced_token_accuracy = 0.5617`
+  - `autoregressive_token_accuracy = 0.3107`
+  - `action_mae_kappa = 0.02698`
+  - `ade_m = 6.5422`
+  - `fde_m = 19.0951`
 
 ### Stage1B
 
@@ -123,16 +135,20 @@ Purpose: `decision`
   [ignore_rule_data_k64_dt01_curve_block_only_excluded_12gb_safe.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage1/expert_cfm/train/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_excluded_12gb_safe.json)
 - eval config:
   [ignore_rule_data_k64_dt01_curve_block_only_excluded_curve_eval_safe.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage1/expert_cfm/eval/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_excluded_curve_eval_safe.json)
-- save_dir: `pending`
-- wandb: `pending`
-- status: `pending`
+- artifact:
+  [ignore_rule_data_k64_dt01_curve_block_only_excluded_curve_eval_safe.json](/home/masa/minipamayo/minipamayo-qwen-3-5/artifacts/eval/stage1/expert_cfm/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_excluded_curve_eval_safe.json)
+- save_dir:
+  [ignore_rule_data_k64_dt01_curve_block_only_excluded_12gb_safe](/home/masa/minipamayo/minipamayo-qwen-3-5/checkpoints/stage1/expert_cfm/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_only_excluded_12gb_safe)
+- wandb:
+  `train=stage1-expert-cfm-ignore-rule-k64-dt01-curve-block-only-excluded-12gb-safe`, `eval=stage1b-eval-ignore-rule-k64-dt01-curve-block-only-excluded-curve`
+- status: `completed`
 - metrics:
-  - `ade_m = pending`
-  - `fde_m = pending`
-  - `mean_max_lateral_error_m = pending`
-  - `global_max_lateral_error_m = pending`
-  - `action_mae_kappa = pending`
-  - `pid_override.fde_m = pending`
+  - `ade_m = 7.4957`
+  - `fde_m = 21.0906`
+  - `mean_max_lateral_error_m = 17.4149`
+  - `global_max_lateral_error_m = 38.5248`
+  - `action_mae_kappa = 0.02886`
+  - `pid_override.fde_m = 21.1049`
 
 ## C Full + Curve Upweight x2
 
@@ -146,7 +162,7 @@ Purpose: `decision`
   [ignore_rule_data_k64_dt01_curve_block_upweight_x2_curve_eval.json](/media/masa/ssd_data/minipamayo/minipamayo-qwen-3-5/configs/stage1/vlm_ce/eval/experiments/curve_block_training/ignore_rule_data_k64_dt01_curve_block_upweight_x2_curve_eval.json)
 - save_dir: `pending`
 - wandb: `pending`
-- status: `pending`
+- status: `running`
 - metrics:
   - `teacher_forced_token_accuracy = pending`
   - `autoregressive_token_accuracy = pending`
