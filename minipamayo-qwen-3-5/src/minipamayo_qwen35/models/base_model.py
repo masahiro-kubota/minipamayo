@@ -201,10 +201,15 @@ class ReasoningVLAConfig(PretrainedConfig):
     """Configuration for the ReasoningVLA model."""
 
     model_type = "alpamayo_reasoning_vla"
+    # MiniPamayo local edit:
+    # Alpamayo upstream defaulted `vlm_name_or_path` to
+    # "Qwen/Qwen3-VL-8B-Instruct". This branch standardizes the default on the
+    # local Qwen3.5-0.8B checkpoint used by the recorded Stage1/Stage2 runs.
+    DEFAULT_VLM_NAME_OR_PATH = "/home/masa/minipamayo/shared_checkpoints/hf_models/Qwen3.5-0.8B"
 
     def __init__(
         self,
-        vlm_name_or_path: str = "Qwen/Qwen3-VL-8B-Instruct",
+        vlm_name_or_path: str = DEFAULT_VLM_NAME_OR_PATH,
         vlm_backend: str = "qwenvl3",
         traj_tokenizer_cfg: dict[str, Any] | None = None,
         hist_traj_tokenizer_cfg: dict[str, Any] | None = None,
@@ -365,10 +370,12 @@ class ReasoningVLA(PreTrainedModel, TrajectoryFusionMixin):
             self._initialize_qwenvl3_vlm(config)
 
     def _initialize_qwenvl3_vlm(self, config: ReasoningVLAConfig) -> None:
-        """Initialize Qwen3-VL VLM backbone.
+        """Initialize the Qwen3.5-0.8B VLM backbone.
 
-        Qwen3-VL uses Qwen3VLForConditionalGeneration from transformers.
-        See: https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct
+        This branch loads the local `Qwen3.5-0.8B` checkpoint through
+        `Qwen3VLForConditionalGeneration`, which is the transformers backend
+        used by the saved model. Alpamayo upstream described this path as
+        `Qwen3-VL-8B-Instruct`; that is not the backbone used in this branch.
         """
         vlm_config = Qwen3VLConfig.from_pretrained(
             config.vlm_name_or_path,

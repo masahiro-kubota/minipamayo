@@ -22,7 +22,11 @@ import collections.abc
 
 MIN_PIXELS = 163840
 MAX_PIXELS = 196608
-BASE_PROCESSOR_NAME = "Qwen/Qwen3-VL-2B-Instruct"
+# MiniPamayo local edit:
+# Alpamayo upstream used "Qwen/Qwen3-VL-2B-Instruct" here as the helper-side
+# fallback processor source. This branch standardizes helper/inference fallback
+# loading on the same local Qwen3.5-0.8B checkpoint used by Stage1 training.
+BASE_PROCESSOR_NAME = "/home/masa/minipamayo/shared_checkpoints/hf_models/Qwen3.5-0.8B"
 
 
 def create_message(frames: torch.Tensor):
