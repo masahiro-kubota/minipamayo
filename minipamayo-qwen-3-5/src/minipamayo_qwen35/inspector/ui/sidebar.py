@@ -10,19 +10,17 @@ import streamlit as st
 from ..models import ArtifactManifest, NormalizedRun
 from ..registry import ManifestRegistry
 
-STAGE_GROUP_LABELS = {
-    "stage1a": "Stage1A",
-    "stage1b": "Stage1B",
-    "stage2": "Stage2",
-    "stage3": "Stage3",
-}
-
-FOCUS_STAGE_LABELS = {
+ARTIFACT_STAGE_LABELS = {
     "stage1a_eval": "Stage1A Eval",
     "stage1b_eval": "Stage1B Eval",
     "stage2_eval": "Stage2 Eval",
     "stage2_inference": "Stage2 Inference",
     "stage3_eval": "Stage3 Eval",
+}
+
+VIEW_MODE_LABELS = {
+    "inspect": "Inspect",
+    "compare": "Compare",
 }
 
 BLOCK_SORT_LABELS = {
@@ -40,11 +38,21 @@ FILTERABLE_METRICS = [
     ("token_accuracy", "Token Accuracy"),
 ]
 
+MANIFEST_ATTRS_BY_STAGE = {
+    "stage1a_eval": "stage1a_manifests",
+    "stage1b_eval": "stage1b_manifests",
+    "stage2_eval": "stage2_eval_manifests",
+    "stage2_inference": "stage2_inference_manifests",
+    "stage3_eval": "stage3_eval_manifests",
+}
 
-def _manifest_label(manifest: ArtifactManifest) -> str:
+
+def _manifest_label(manifest: ArtifactManifest, *, include_stage: bool) -> str:
+    stage_label = ARTIFACT_STAGE_LABELS.get(manifest.stage, manifest.stage)
     summary_name = Path(manifest.summary_json).name
-    suffix = "summary-only" if manifest.per_sample_jsonl is None else "per-sample"
-    return f"{manifest.run_name} [{summary_name} | {suffix}]"
+    suffix = "per-sample" if manifest.per_sample_jsonl else "summary-only"
+    prefix = f"{stage_label} | " if include_stage else ""
+    return f"{prefix}{manifest.run_name} [{summary_name} | {suffix}]"
 
 
 def _select_manifest(
@@ -52,111 +60,81 @@ def _select_manifest(
     label: str,
     manifests: tuple[ArtifactManifest, ...],
     key: str,
+    include_stage: bool,
 ) -> ArtifactManifest | None:
     if not manifests:
         st.caption(f"{label}: no artifacts")
         return None
-    labels = [_manifest_label(manifest) for manifest in manifests]
+    labels = [_manifest_label(manifest, include_stage=include_stage) for manifest in manifests]
     label_to_manifest = {display: manifest for display, manifest in zip(labels, manifests)}
     selected = st.selectbox(label, labels, key=key)
     return label_to_manifest[selected]
 
 
-def render_registry_controls(default_artifact_root: str) -> tuple[str, bool, list[str]]:
+def _manifests_for_stage(registry: ManifestRegistry, stage: str) -> tuple[ArtifactManifest, ...]:
+    attr_name = MANIFEST_ATTRS_BY_STAGE[stage]
+    return getattr(registry, attr_name)
+
+
+def _available_stage_keys(registry: ManifestRegistry) -> list[str]:
+    return [
+        stage
+        for stage in MANIFEST_ATTRS_BY_STAGE
+        if _manifests_for_stage(registry, stage)
+    ]
+
+
+def render_registry_controls(default_artifact_root: str) -> tuple[str, bool, str]:
     with st.sidebar:
         st.header("Inspector")
         artifact_root = st.text_input("Artifact Root", value=default_artifact_root)
         request_backfill = st.button("Backfill Manifests")
-        enabled_stage_groups = st.multiselect(
-            "Stage Toggle",
-            options=list(STAGE_GROUP_LABELS),
-            default=list(STAGE_GROUP_LABELS),
-            format_func=lambda key: STAGE_GROUP_LABELS[key],
+        view_mode = st.radio(
+            "View Mode",
+            options=["inspect", "compare"],
+            index=0,
+            format_func=lambda key: VIEW_MODE_LABELS[key],
+            key="inspector_view_mode",
         )
-    return artifact_root, request_backfill, enabled_stage_groups
+    return artifact_root, request_backfill, str(view_mode)
 
 
-def render_run_selectors(
-    registry: ManifestRegistry,
-    *,
-    enabled_stage_groups: list[str],
-) -> dict[str, ArtifactManifest | str | None]:
+def render_inspect_selectors(registry: ManifestRegistry) -> dict[str, ArtifactManifest | None]:
     with st.sidebar:
-        st.header("Runs")
-        selected_stage1a = (
-            _select_manifest(
-                label="Stage1A Run",
-                manifests=registry.stage1a_manifests,
-                key="inspector_stage1a_manifest",
-            )
-            if "stage1a" in enabled_stage_groups
-            else None
+        st.header("Inspect")
+        available_stage_keys = _available_stage_keys(registry)
+        if not available_stage_keys:
+            st.caption("No artifacts are available.")
+            return {"active_manifest": None}
+        active_stage = st.selectbox(
+            "Active Stage",
+            options=available_stage_keys,
+            format_func=lambda key: ARTIFACT_STAGE_LABELS[key],
+            key="inspector_active_stage",
         )
-        selected_stage1b = (
-            _select_manifest(
-                label="Stage1B Run",
-                manifests=registry.stage1b_manifests,
-                key="inspector_stage1b_manifest",
-            )
-            if "stage1b" in enabled_stage_groups
-            else None
+        manifests = _manifests_for_stage(registry, str(active_stage))
+        active_manifest = _select_manifest(
+            label="Active Artifact",
+            manifests=manifests,
+            key=f"inspector_active_manifest_{active_stage}",
+            include_stage=False,
         )
-        selected_stage2_eval = (
-            _select_manifest(
-                label="Stage2 Eval Run",
-                manifests=registry.stage2_eval_manifests,
-                key="inspector_stage2_eval_manifest",
-            )
-            if "stage2" in enabled_stage_groups
-            else None
-        )
-        selected_stage2_inference = (
-            _select_manifest(
-                label="Stage2 Inference Run",
-                manifests=registry.stage2_inference_manifests,
-                key="inspector_stage2_inference_manifest",
-            )
-            if "stage2" in enabled_stage_groups
-            else None
-        )
-        selected_stage3_eval = (
-            _select_manifest(
-                label="Stage3 Eval Run",
-                manifests=registry.stage3_eval_manifests,
-                key="inspector_stage3_eval_manifest",
-            )
-            if "stage3" in enabled_stage_groups
-            else None
-        )
+    return {"active_manifest": active_manifest}
 
-        focus_stage_options: list[str] = []
-        if selected_stage1a is not None:
-            focus_stage_options.append("stage1a_eval")
-        if selected_stage1b is not None:
-            focus_stage_options.append("stage1b_eval")
-        if selected_stage2_eval is not None:
-            focus_stage_options.append("stage2_eval")
-        if selected_stage2_inference is not None:
-            focus_stage_options.append("stage2_inference")
-        if selected_stage3_eval is not None:
-            focus_stage_options.append("stage3_eval")
 
-        focus_stage = None
-        if focus_stage_options:
-            focus_stage = st.selectbox(
-                "Focus Artifact",
-                options=focus_stage_options,
-                format_func=lambda key: FOCUS_STAGE_LABELS[key],
-                key="inspector_focus_stage",
+def render_compare_selectors(registry: ManifestRegistry) -> dict[str, ArtifactManifest | None]:
+    with st.sidebar:
+        st.header("Compare")
+        selected: dict[str, ArtifactManifest | None] = {}
+        available_stage_keys = _available_stage_keys(registry)
+        for stage in available_stage_keys:
+            selected[stage] = _select_manifest(
+                label=f"{ARTIFACT_STAGE_LABELS[stage]} Artifact",
+                manifests=_manifests_for_stage(registry, stage),
+                key=f"inspector_compare_manifest_{stage}",
+                include_stage=False,
             )
-    return {
-        "stage1a_eval": selected_stage1a,
-        "stage1b_eval": selected_stage1b,
-        "stage2_eval": selected_stage2_eval,
-        "stage2_inference": selected_stage2_inference,
-        "stage3_eval": selected_stage3_eval,
-        "focus_stage": focus_stage,
-    }
+    return selected
 
 
 def render_filter_controls(active_run: NormalizedRun | None) -> dict[str, Any]:
@@ -164,7 +142,7 @@ def render_filter_controls(active_run: NormalizedRun | None) -> dict[str, Any]:
         st.header("Filters")
         sample_id_jump = st.text_input("Sample ID Jump", value="")
         if active_run is None:
-            st.caption("No active run.")
+            st.caption("No active artifact.")
             return {
                 "sample_id_jump": sample_id_jump,
                 "block_sort": "dataset_order",

@@ -10,6 +10,14 @@ from ..grouping import summarize_group_samples
 from ..models import NormalizedGroup, NormalizedRun, NormalizedSample
 from ..plotting import build_group_metric_timeline_figure, build_trajectory_overlay_figure
 
+STAGE_LABELS = {
+    "stage1a_eval": "Stage1A Eval",
+    "stage1b_eval": "Stage1B Eval",
+    "stage2_eval": "Stage2 Eval",
+    "stage2_inference": "Stage2 Inference",
+    "stage3_eval": "Stage3 Eval",
+}
+
 
 def _group_metric_value(group: NormalizedGroup, metric_name: str | None, *, mode: str) -> float:
     if metric_name == "token_accuracy":
@@ -160,7 +168,10 @@ def render_block_browser(
     filtered_samples: list[NormalizedSample],
     filters: dict,
 ) -> NormalizedSample | None:
-    st.subheader("Curve Block Browser")
+    st.subheader("Curve Blocks")
+    st.caption(
+        f"Active Artifact: {STAGE_LABELS.get(active_run.stage, active_run.stage)} | {active_run.run_name}"
+    )
     if active_run.browser_unavailable_reason:
         st.info(active_run.browser_unavailable_reason)
         return None
@@ -241,7 +252,8 @@ def render_block_browser(
 
     st.caption(
         f"Selected block: {selected_group.group_id} | "
-        f"{selected_group.start_sample_index}-{selected_group.end_sample_index}"
+        f"{selected_group.start_sample_index}-{selected_group.end_sample_index} | "
+        f"{active_run.run_name}"
     )
     image_col, trajectory_col = st.columns([1.3, 0.7])
     if selected_sample.image_path and Path(selected_sample.image_path).exists():

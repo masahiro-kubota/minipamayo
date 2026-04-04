@@ -140,13 +140,19 @@ def compare_runs_by_sample_id(
     stage1b_run: NormalizedRun | None = None,
     stage2_eval_run: NormalizedRun | None = None,
     stage2_inference_run: NormalizedRun | None = None,
+    stage3_eval_run: NormalizedRun | None = None,
 ) -> list[dict[str, Any]]:
     stage1a_lookup = sample_lookup(stage1a_run)
     stage1b_lookup = sample_lookup(stage1b_run)
     stage2_eval_lookup = sample_lookup(stage2_eval_run)
     stage2_inference_lookup = sample_lookup(stage2_inference_run)
+    stage3_lookup = sample_lookup(stage3_eval_run)
     sample_ids = sorted(
-        set(stage1a_lookup) | set(stage1b_lookup) | set(stage2_eval_lookup) | set(stage2_inference_lookup)
+        set(stage1a_lookup)
+        | set(stage1b_lookup)
+        | set(stage2_eval_lookup)
+        | set(stage2_inference_lookup)
+        | set(stage3_lookup)
     )
     rows: list[dict[str, Any]] = []
     for sample_id in sample_ids:
@@ -157,6 +163,7 @@ def compare_runs_by_sample_id(
                 "stage1b": select_matching_sample(stage1b_run, sample_id),
                 "stage2_eval": select_matching_sample(stage2_eval_run, sample_id),
                 "stage2_inference": select_matching_sample(stage2_inference_run, sample_id),
+                "stage3": select_matching_sample(stage3_eval_run, sample_id),
             }
         )
     return rows

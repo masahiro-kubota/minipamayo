@@ -1,4 +1,4 @@
-"""Overview page for the Streamlit eval inspector."""
+"""Summary page for the Streamlit eval inspector."""
 
 from __future__ import annotations
 
@@ -10,6 +10,14 @@ import pandas as pd
 import streamlit as st
 
 from ..models import NormalizedRun
+
+STAGE_LABELS = {
+    "stage1a_eval": "Stage1A Eval",
+    "stage1b_eval": "Stage1B Eval",
+    "stage2_eval": "Stage2 Eval",
+    "stage2_inference": "Stage2 Inference",
+    "stage3_eval": "Stage3 Eval",
+}
 
 SUMMARY_PRIORITY = {
     "stage1a_eval": [
@@ -76,6 +84,12 @@ def _summary_items(run: NormalizedRun) -> list[tuple[str, Any]]:
     return items[:12]
 
 
+def _basename(value: str | None) -> str:
+    if value is None or not value:
+        return "-"
+    return Path(value).name
+
+
 def _render_summary_cards(run: NormalizedRun) -> None:
     summary_items = _summary_items(run)
     if not summary_items:
@@ -130,18 +144,38 @@ def _render_block_table(run: NormalizedRun) -> None:
     st.dataframe(pd.DataFrame(block_rows), use_container_width=True, hide_index=True)
 
 
-def render_overview(run: NormalizedRun, filtered_rows: pd.DataFrame) -> None:
-    st.subheader("Overview")
-    st.write(f"`{run.run_name}`")
+def _render_artifact_details(run: NormalizedRun, *, title: str | None) -> None:
+    stage_label = STAGE_LABELS.get(run.stage, run.stage)
+    if title:
+        st.subheader(title)
+    title_col, link_col = st.columns([4, 1])
+    title_col.markdown(f"**{stage_label}**")
+    title_col.code(run.run_name)
+    if run.manifest.wandb_run_url:
+        link_col.link_button("Open W&B Run", run.manifest.wandb_run_url)
+
+    meta_cols = st.columns(4)
+    meta_cols[0].caption("Summary JSON")
+    meta_cols[0].write(f"`{_basename(run.manifest.summary_json)}`")
+    meta_cols[1].caption("Dataset")
+    meta_cols[1].write(f"`{_basename(run.manifest.dataset_path)}`")
+    meta_cols[2].caption("Checkpoint")
+    meta_cols[2].write(f"`{_basename(run.manifest.checkpoint)}`")
+    meta_cols[3].caption("Per-Sample Payload")
+    payload_status = "available" if run.manifest.per_sample_jsonl else "summary-only"
+    meta_cols[3].write(f"`{payload_status}`")
+
+
+def render_active_artifact_header(run: NormalizedRun) -> None:
+    _render_artifact_details(run, title="Active Artifact")
     if run.invalid_reason:
         st.warning(run.invalid_reason)
-    if run.manifest.wandb_run_url:
-        st.link_button("Open W&B Run", run.manifest.wandb_run_url)
+
+
+def render_summary(run: NormalizedRun) -> None:
+    st.subheader("Summary")
+    with st.expander("Artifact Details", expanded=False):
+        _render_artifact_details(run, title=None)
     _render_summary_cards(run)
     _render_plot_gallery(run)
     _render_block_table(run)
-    st.subheader("Filtered Frames")
-    if filtered_rows.empty:
-        st.info("No samples matched the current filters.")
-        return
-    st.dataframe(filtered_rows, use_container_width=True, hide_index=True)

@@ -2,32 +2,36 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 import streamlit as st
 
 from minipamayo_qwen35.inspector.backfill import backfill_artifact_manifests
 from minipamayo_qwen35.inspector.manifests import load_manifest
 from minipamayo_qwen35.inspector.models import ArtifactManifest, NormalizedRun, NormalizedSample
-from minipamayo_qwen35.inspector.registry import (
-    default_artifact_root,
-    load_manifest_registry,
-    load_normalized_run,
-)
+from minipamayo_qwen35.inspector.registry import default_artifact_root, load_manifest_registry, load_normalized_run
 from minipamayo_qwen35.inspector.ui import (
+    render_active_artifact_header,
     render_block_browser,
     render_compare,
+    render_compare_selectors,
     render_filter_controls,
-    render_overview,
+    render_inspect_selectors,
     render_raw_json,
     render_registry_controls,
-    render_run_selectors,
     render_sample_browser,
+    render_summary,
 )
 
 
 st.set_page_config(page_title="Eval Inspector", layout="wide")
+
+COMPARE_STAGE_KEYS = [
+    "stage1a_eval",
+    "stage1b_eval",
+    "stage2_eval",
+    "stage2_inference",
+    "stage3_eval",
+]
 
 
 @st.cache_data(show_spinner=False)
@@ -105,7 +109,7 @@ def _filtered_rows(samples: list[NormalizedSample]) -> pd.DataFrame:
 def main() -> None:
     st.title("Eval Inspector")
     default_root = str(default_artifact_root())
-    artifact_root, request_backfill, enabled_stage_groups = render_registry_controls(default_root)
+    artifact_root, request_backfill, view_mode = render_registry_controls(default_root)
     if request_backfill:
         written_paths = backfill_artifact_manifests(artifact_root)
         cached_registry.clear()
@@ -117,42 +121,37 @@ def main() -> None:
         st.warning("No inspector manifests found. Run backfill or generate new eval artifacts first.")
         return
 
-    selected_manifests = render_run_selectors(
-        registry,
-        enabled_stage_groups=enabled_stage_groups,
-    )
-    focus_stage = selected_manifests.get("focus_stage")
-    if focus_stage is None:
-        st.info("Select at least one run from the sidebar.")
+    if view_mode == "compare":
+        selected_manifests = render_compare_selectors(registry)
+        compare_runs = {
+            stage: _load_selected_run(selected_manifests.get(stage))
+            for stage in COMPARE_STAGE_KEYS
+        }
+        render_compare(compare_runs=compare_runs)
         return
 
-    selected_runs = {
-        stage: _load_selected_run(selected_manifests.get(stage))
-        for stage in ["stage1a_eval", "stage1b_eval", "stage2_eval", "stage2_inference", "stage3_eval"]
-    }
-    active_run = selected_runs.get(str(focus_stage))
-    filters = render_filter_controls(active_run)
-    filtered_samples = _filter_samples(active_run, filters)
-    filtered_rows = _filtered_rows(filtered_samples)
+    selected = render_inspect_selectors(registry)
+    active_manifest = selected.get("active_manifest")
+    if active_manifest is None:
+        st.info("Select an active artifact from the sidebar.")
+        return
 
+    active_run = _load_selected_run(active_manifest)
     if active_run is None:
         st.info("The selected artifact could not be loaded.")
         return
 
-    counterpart_run = None
-    if active_run.stage == "stage2_eval":
-        counterpart_run = selected_runs.get("stage2_inference")
-    elif active_run.stage == "stage2_inference":
-        counterpart_run = selected_runs.get("stage2_eval")
-    if counterpart_run is not None and counterpart_run.invalid_reason:
-        counterpart_run = None
+    render_active_artifact_header(active_run)
+    filters = render_filter_controls(active_run)
+    filtered_samples = _filter_samples(active_run, filters)
+    filtered_rows = _filtered_rows(filtered_samples)
 
-    overview_tab, block_tab, browser_tab, compare_tab, raw_tab = st.tabs(
-        ["Overview", "Curve Block Browser", "Sample Browser", "Cross-Stage Compare", "Raw JSON"]
+    summary_tab, block_tab, samples_tab, raw_tab = st.tabs(
+        ["Summary", "Curve Blocks", "Samples", "Raw"]
     )
     selected_block_sample_id = str(filters.get("sample_id_jump", ""))
-    with overview_tab:
-        render_overview(active_run, filtered_rows)
+    with summary_tab:
+        render_summary(active_run)
     with block_tab:
         selected_block_sample = render_block_browser(
             active_run=active_run,
@@ -161,19 +160,11 @@ def main() -> None:
         )
         if selected_block_sample is not None:
             selected_block_sample_id = selected_block_sample.sample_id
-    with browser_tab:
+    with samples_tab:
         render_sample_browser(
             active_run=active_run,
             filtered_samples=filtered_samples,
-            sample_id_hint=selected_block_sample_id,
-            counterpart_run=counterpart_run,
-        )
-    with compare_tab:
-        render_compare(
-            stage1a_run=selected_runs.get("stage1a_eval"),
-            stage1b_run=selected_runs.get("stage1b_eval"),
-            stage2_eval_run=selected_runs.get("stage2_eval"),
-            stage2_inference_run=selected_runs.get("stage2_inference"),
+            filtered_rows=filtered_rows,
             sample_id_hint=selected_block_sample_id,
         )
     with raw_tab:
@@ -181,7 +172,6 @@ def main() -> None:
             active_run=active_run,
             filtered_samples=filtered_samples,
             sample_id_hint=selected_block_sample_id,
-            counterpart_run=counterpart_run,
         )
 
 

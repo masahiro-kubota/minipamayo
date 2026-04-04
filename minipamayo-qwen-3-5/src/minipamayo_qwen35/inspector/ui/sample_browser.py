@@ -4,11 +4,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 from ..models import NormalizedRun, NormalizedSample
 from ..plotting import build_trajectory_overlay_figure
-from ..registry import sample_lookup
+
+STAGE_LABELS = {
+    "stage1a_eval": "Stage1A Eval",
+    "stage1b_eval": "Stage1B Eval",
+    "stage2_eval": "Stage2 Eval",
+    "stage2_inference": "Stage2 Inference",
+    "stage3_eval": "Stage3 Eval",
+}
 
 
 def _sample_label(sample: NormalizedSample) -> str:
@@ -109,10 +117,13 @@ def render_sample_browser(
     *,
     active_run: NormalizedRun,
     filtered_samples: list[NormalizedSample],
+    filtered_rows: pd.DataFrame,
     sample_id_hint: str = "",
-    counterpart_run: NormalizedRun | None = None,
 ) -> None:
-    st.subheader("Sample Browser")
+    st.subheader("Samples")
+    st.caption(
+        f"Active Artifact: {STAGE_LABELS.get(active_run.stage, active_run.stage)} | {active_run.run_name}"
+    )
     if active_run.browser_unavailable_reason:
         st.info(active_run.browser_unavailable_reason)
         return
@@ -128,10 +139,14 @@ def render_sample_browser(
         st.info("No sample selected.")
         return
 
-    _render_sample_panel(selected_sample, title=f"Active Artifact: {active_run.run_name}")
+    _render_sample_panel(
+        selected_sample,
+        title=f"Active Artifact: {STAGE_LABELS.get(active_run.stage, active_run.stage)} | {active_run.run_name}",
+    )
 
-    if counterpart_run is not None:
-        matched = sample_lookup(counterpart_run).get(selected_sample.sample_id)
-        if matched is not None:
-            st.divider()
-            _render_sample_panel(matched, title=f"Matched Artifact: {counterpart_run.run_name}")
+    st.divider()
+    st.markdown("**Filtered Frames**")
+    if filtered_rows.empty:
+        st.info("No samples matched the current filters.")
+        return
+    st.dataframe(filtered_rows, use_container_width=True, hide_index=True)

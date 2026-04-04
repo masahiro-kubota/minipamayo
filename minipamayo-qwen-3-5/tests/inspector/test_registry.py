@@ -242,12 +242,14 @@ class RegistryTests(unittest.TestCase):
                 stage1a_run=stage1a_run,
                 stage2_eval_run=stage2_eval_run,
                 stage2_inference_run=stage2_inference_run,
+                stage3_eval_run=stage3_eval_run,
             )
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["sample_id"], "sample-001")
             self.assertIsNotNone(rows[0]["stage1a"])
             self.assertIsNotNone(rows[0]["stage2_eval"])
             self.assertIsNotNone(rows[0]["stage2_inference"])
+            self.assertIsNotNone(rows[0]["stage3"])
 
 
 if __name__ == "__main__":
