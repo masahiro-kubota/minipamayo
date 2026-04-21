@@ -103,26 +103,4 @@ uv run python -m minipamayo_qwen35.stage1.vlm_ce.train \
 
 From there, continue with `eval`, `inference`, `stage2`, and `stage3` as needed.
 
-## Documentation
 
-Useful entry points by purpose:
-
-- High-level project overview: [`minipamayo-qwen-3-5/README.md`](./minipamayo-qwen-3-5/README.md)
-- Dataset layout and data prep: [`minipamayo-qwen-3-5/datasets/README.md`](./minipamayo-qwen-3-5/datasets/README.md)
-- Design notes and experiment records: [`minipamayo-qwen-3-5/docs/README.md`](./minipamayo-qwen-3-5/docs/README.md)
-- Telemetry format reference: [`mcap_spec.md`](./mcap_spec.md)
-- Shared checkpoints: [`shared_checkpoints/README.md`](./shared_checkpoints/README.md)
-
-## Shared Assets
-
-[`shared_checkpoints/`](./shared_checkpoints/) contains shareable checkpoints and a small GUI for quick manual inspection.
-
-- Overview: [`shared_checkpoints/README.md`](./shared_checkpoints/README.md)
-- GUI details: [`shared_checkpoints/VLM_GUI.md`](./shared_checkpoints/VLM_GUI.md)
-
-## Notes
-
-- The main code is not at the repo root; it lives under `minipamayo-qwen-3-5/`
-- Canonical runs assume CUDA 12.8
-- The environment can be sensitive to dependency differences because it includes `flash-attn`
-- Config files are treated as run records, so `configs/` is often the best place to start when tracing a workflow
