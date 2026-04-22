@@ -1,7 +1,8 @@
 # MiniPamayo
 
-This repository collects MiniPamayo-related training experiments, data specifications, and shared checkpoints.  
-The main implementation lives under [`minipamayo-qwen-3-5/`](./minipamayo-qwen-3-5/), which contains a Qwen3.5-based multi-stage training pipeline.
+MiniPamayo is a reimplementation of [Alpamayo](https://github.com/NVlabs/alpamayo) built on the Qwen3.5-0.8B VLM.  
+This repository collects its training experiments, data specifications, and shared checkpoints.  
+The main implementation lives under [`minipamayo-qwen-3-5/`](./minipamayo-qwen-3-5/), which contains the Qwen3.5-0.8B-based multi-stage training pipeline.
 
 ## Overview
 
